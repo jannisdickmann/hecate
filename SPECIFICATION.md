@@ -390,7 +390,7 @@ timestamp order; the result must be identical to streaming (verified by US-10).
 
 ### 6.1 Prerequisites
 
-- Android Studio (current stable), JDK 17
+- Android Studio (current stable), JDK 25 (the `jvmToolchain` every module declares; app bytecode stays at 17)
 - Pixel Watch 4 with Developer options enabled
 - Android phone paired to the watch
 - Android SDK platform-tools on `PATH`

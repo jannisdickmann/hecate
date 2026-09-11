@@ -33,59 +33,99 @@ From a clean Ubuntu install, assuming nothing but `sudo`. Everything below is
 what the current build is actually verified against — no Android Studio needed,
 though it will happily open the project if you want it.
 
-**1. JDK and the basics.** Gradle 9.7 and AGP 9.4 want a modern JDK; 21 is what
-this is built and tested with, and it is in Ubuntu's own repositories.
+**1. JDK and the basics.** Every module declares `jvmToolchain(25)`, so 25 is
+the JDK that compiles this project and Gradle will not quietly substitute
+another. It is in Ubuntu's own repositories.
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-21-jdk unzip curl git
-java -version          # expect 21.x
+sudo apt install -y openjdk-25-jdk unzip curl git
+javac -version         # expect 25.x — javac, not java
 ```
 
+Check `javac` rather than `java`, and install `-jdk` rather than `-jre`. A JRE
+arriving as some other package's dependency can end up ahead of every real JDK
+on the `PATH`, giving you `java` and no compiler, and the resulting Gradle
+failure names a capability instead of a version: `Toolchain installation
+'/usr/lib/jvm/java-25-openjdk-amd64' does not provide the required
+capabilities: [JAVA_COMPILER]`. If the JDK is missing entirely, the toolchain
+says so plainly — `Cannot find a Java installation … matching:
+{languageVersion=25}` — and it cannot fetch one, because no toolchain download
+repository is configured here. Install the package.
+
 **2. The Android SDK command-line tools.** No GUI installer, no login. The
-nested `latest/` directory is not decoration — `sdkmanager` refuses to run
+nested `latest/` directory is not decoration — the tools refuse to run
 without it.
 
 ```bash
-mkdir -p ~/android-sdk/cmdline-tools
+sudo mkdir -p /usr/local/android-sdk/cmdline-tools
+sudo chown -R "$USER":"$USER" /usr/local/android-sdk
 cd /tmp
 curl -O https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 unzip -q commandlinetools-linux-*.zip
-mv cmdline-tools ~/android-sdk/cmdline-tools/latest
+mv cmdline-tools /usr/local/android-sdk/cmdline-tools/latest
 ```
 
 That build number ages. If the link 404s, take the current "Command line tools
 only" Linux zip from <https://developer.android.com/studio#command-line-tools-only>;
 nothing else about these steps changes.
 
-**3. Put the tools on your PATH**, in `~/.bashrc` so it survives a new shell:
+The `chown` is not optional. The SDK tools write into the root of the SDK — the
+accepted licences, the package index, their own bookkeeping — so a tree left
+owned by `root` fails in a way that reads like something else entirely. With the
+older `sdkmanager` it is a licence prompt that reappears however often you
+accept it, then `Warning: Failed to read or create install properties file.` and
+a silent stop. Put the SDK under `$HOME` instead if you prefer; nothing below
+cares which, only that you can write to it.
+
+**3. Put both toolchains in the environment**, in `~/.bashrc` so it survives a
+new shell:
 
 ```bash
 cat >> ~/.bashrc <<'EOF'
-export ANDROID_HOME="$HOME/android-sdk"
+export JAVA_HOME="/usr/lib/jvm/java-25-openjdk-amd64"
+export ANDROID_HOME="/usr/local/android-sdk"
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 EOF
 source ~/.bashrc
 ```
 
-**4. Accept the licences and install the three packages this project needs.**
-Nothing else is required — in particular no emulator image, which is a large
-download that §6.5 explains cannot test the interesting part anyway.
+`JAVA_HOME` here decides only which JVM the Gradle daemon itself runs on, and
+Gradle 9.7 accepts anything from 17 to 26 for that. The compiler comes from the
+`jvmToolchain(25)` in each module either way — the build succeeds with
+`JAVA_HOME` pointing at 21 — so this line is about keeping the daemon and the
+toolchain on one JVM rather than about making the build work.
+
+**4. Install the three packages this project needs.** Nothing else is required —
+in particular no emulator image, which is a large download that §6.5 explains
+cannot test the interesting part anyway.
 
 ```bash
-yes | sdkmanager --licenses
-sdkmanager --install "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+android sdk install platform-tools platforms/android-37.0 build-tools/37.0.0
 ```
 
 Platform **37** because `compileSdk = 37`, which Compose BOM 2026.09 requires.
 `targetSdk` stays at 36 deliberately — see the note in `phone/build.gradle.kts`.
+
+No licence step is needed: `android sdk install` accepts the SDK licence itself
+and writes it to `$ANDROID_HOME/licenses`, which is where Gradle looks later.
+The `sdkmanager` incantation you may have seen — `yes | sdkmanager --licenses`
+then `sdkmanager --install "platforms;android-37.0" …` — still works and takes
+the same package names with `;` in place of `/`, but current cmdline-tools
+deprecate that tool in favour of `android sdk` and say so on every run. Two
+things to know about `android`: the first invocation downloads an ~85 MB CLI into
+`~/.android/bin` and prints Google's terms plus a note that it reports usage
+metrics, which `--no-metrics` on any `android` command turns off; and `android
+sdk install` exits `0` even when it installed nothing, so read its output rather
+than trusting the status — a mistyped package gets you `Package … not found.`
+and a successful exit.
 
 **5. Point the build at the SDK.** Either the `ANDROID_HOME` you just exported
 is enough, or be explicit — `local.properties` is git-ignored and wins:
 
 ```bash
 cd /path/to/hecate
-echo "sdk.dir=$HOME/android-sdk" > local.properties
+echo "sdk.dir=/usr/local/android-sdk" > local.properties
 ```
 
 **6. USB access to a phone**, if you plan to plug one in. Ubuntu needs the udev
@@ -114,8 +154,10 @@ dependency graph, so give it a few minutes:
 
 `:wear` and `:phone` are only configured when an Android SDK is found —
 `sdk.dir` in `local.properties`, or `ANDROID_HOME` / `ANDROID_SDK_ROOT`. Without
-one, Gradle says so and configures `:core` alone, so the test suite runs
-anywhere. Force the matter with `-Phecate.androidModules=true|false`.
+one, Gradle says so and configures `:core` alone, so the test suite runs without
+an SDK installed. It still needs the plugins: the root project declares AGP, so
+resolving the build script classpath reaches Google's Maven even for a
+`:core`-only run. Force the matter with `-Phecate.androidModules=true|false`.
 
 Do not ship with the debug keystore. See §6.3 of the specification and §1.2 of
 the open points: a signature mismatch means an uninstall, and an uninstall means

@@ -1,7 +1,9 @@
 pluginManagement {
     repositories {
-        // mavenCentral() first: everything :core needs lives there, so a machine
-        // without access to Google's Maven can still build and test the algorithms.
+        // mavenCentral() first: it serves everything :core itself depends on. Note
+        // that this no longer makes :core buildable without Google's Maven — the
+        // root project declares AGP (see build.gradle.kts), so every invocation
+        // resolves it whether or not the Android modules are in the build.
         mavenCentral()
         google {
             content {

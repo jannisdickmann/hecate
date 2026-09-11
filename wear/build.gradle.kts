@@ -62,6 +62,11 @@ android {
 }
 
 kotlin {
+    // The JDK that runs the compiler, pinned so the build does not silently
+    // inherit whatever `default-java` happens to be after an `apt upgrade`
+    // (README step 1). Independent of `jvmTarget` below, which is the bytecode
+    // level Android consumes and stays at 17.
+    jvmToolchain(25)
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
