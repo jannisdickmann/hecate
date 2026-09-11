@@ -161,22 +161,34 @@ interface RouteDao {
     suspend fun profile(routeId: Long): List<RouteProfileEntity>
 
     /** US-8: the route list shows name, length, count, median time and best time.
-     *  The median is the lower median of the members' active durations, taken in
-     *  SQL so the list is one query rather than one query per row. */
+     *  Taken in SQL so the list is one query rather than one query per row.
+     *
+     *  A correlated `OFFSET (SELECT COUNT(*) ... WHERE mm.route_id = r.id)` is what
+     *  this wants to say and is not legal SQLite — a LIMIT/OFFSET expression cannot
+     *  reach the outer query, so it fails with "no such column: r.id". Ranking the
+     *  members once in a window function says the same thing and is a single pass.
+     *
+     *  The median is the mean of the two middle values for an even member count,
+     *  matching `HecateViewModel.median()` so that the list row and the detail
+     *  screen show the same number for the same route. */
     @Query(
         """
+        WITH member_duration AS (
+            SELECT m.route_id AS route_id,
+                   s.active_duration_ms AS duration_ms,
+                   ROW_NUMBER() OVER (PARTITION BY m.route_id ORDER BY s.active_duration_ms) AS rn,
+                   COUNT(*) OVER (PARTITION BY m.route_id) AS n
+              FROM route_member m JOIN session s ON s.id = m.session_id
+        )
         SELECT r.id, r.name, r.exercise_type AS exerciseType, r.length_m AS lengthM,
                r.member_count AS memberCount, r.priority,
-               (SELECT s.active_duration_ms
-                  FROM route_member m JOIN session s ON s.id = m.session_id
-                 WHERE m.route_id = r.id
-                 ORDER BY s.active_duration_ms
-                 LIMIT 1
-                OFFSET (SELECT COUNT(*) / 2 FROM route_member mm WHERE mm.route_id = r.id)
+               (SELECT CAST(AVG(d.duration_ms) AS INTEGER)
+                  FROM member_duration d
+                 WHERE d.route_id = r.id AND d.rn IN ((d.n + 1) / 2, (d.n + 2) / 2)
                ) AS medianDurationMs,
-               (SELECT MIN(s.active_duration_ms)
-                  FROM route_member m JOIN session s ON s.id = m.session_id
-                 WHERE m.route_id = r.id
+               (SELECT MIN(d.duration_ms)
+                  FROM member_duration d
+                 WHERE d.route_id = r.id
                ) AS bestDurationMs
         FROM route r WHERE r.active = 1 ORDER BY r.member_count DESC, r.id
         """,
