@@ -130,16 +130,11 @@ Once you have ten or so real sessions, `adb pull` them off the watch
 (`/data/data/de.hecate.wear/files/sessions/`) into a `fixtures/` directory and
 commit the ones that are interesting.
 
-### 2.3 Route priority is a blunt instrument on purpose
+### 2.3 Route priority in use
 
 Priority (Appendix A.4b) breaks ties between routes that share the same ground.
-It is a single integer per route, compared only against other *contenders*, and
-it is deliberately not context-aware: the same ranking applies on a Tuesday
-morning and a Sunday afternoon. If you habitually take the long route on
-weekdays and the shortcut at weekends, priority cannot express that — the
-start-of-session prior already buckets by weekday and time of day, and the
-obvious extension is to let priority do the same. Left simple until there is
-evidence that the simple version is not enough.
+One integer per route, compared only against other *contenders*, and not
+context-aware — see §4 for why that is settled rather than pending.
 
 Two things to watch once you are using it:
 
@@ -227,8 +222,19 @@ Everything in §8 of the specification, as specified: route variant hierarchies,
 automatic session start, the route graph, Google Health API integration, maps,
 charts, localization, and the rest of §8.5.
 
-Two more worth naming explicitly, because they look like oversights:
+Three more worth naming explicitly, because they look like oversights:
 
+- **Route priority does not vary by weekday or time of day.** The obvious
+  extension, since the start-of-session prior already buckets by exactly that,
+  would be a per-route map of context key to priority, resolved once at session
+  start and falling back specific-to-general (this weekday-and-time bucket → all
+  weekdays → the base value). It was designed and costed and then declined: one
+  number per route is what gets used, twelve cells per route is what gets left at
+  the default, and the automatic variant — ranking contenders by how often each
+  was taken in this context, which the bundle already carries — follows habit
+  rather than intent and is confidently wrong on exactly the days you do
+  something unusual. The simple version is the decision, not a placeholder for a
+  better one.
 - **No phone-side recording.** §8.5 defers it. The phone app has no record
   button and the manifest asks for no location permission.
 - **No network permission anywhere.** NFR-7. Neither manifest declares
