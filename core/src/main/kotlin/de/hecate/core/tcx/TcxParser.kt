@@ -9,7 +9,9 @@ import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
 import org.w3c.dom.Element
 import org.w3c.dom.Node
+import org.xml.sax.InputSource
 import java.io.InputStream
+import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
@@ -37,15 +39,29 @@ object TcxParser {
     fun parse(input: InputStream, idFor: (startedAtUtcMs: Long, index: Int) -> String): List<RecordedSession> {
         val doc = try {
             val f = DocumentBuilderFactory.newInstance()
+            f.isNamespaceAware = false
             // Backfill files come from the user's own export, but an XML parser
             // that resolves external entities is never worth the risk.
-            f.isNamespaceAware = false
+            //
+            // Every line of this hardening is best-effort, because the two platforms
+            // disagree about it. Android's factory does not merely ignore
+            // `setXIncludeAware` — it throws UnsupportedOperationException from the
+            // base class — and it does not recognise Xerces' feature names either,
+            // while the desktop JVM accepts all of them. Setting any of it directly
+            // therefore fails every import on a phone while every test on a laptop
+            // passes.
             runCatching { f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
             runCatching { f.setFeature("http://xml.org/sax/features/external-general-entities", false) }
             runCatching { f.setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
-            f.isXIncludeAware = false
-            f.isExpandEntityReferences = false
-            f.newDocumentBuilder().parse(input)
+            runCatching { f.isXIncludeAware = false }
+            runCatching { f.isExpandEntityReferences = false }
+
+            // The guarantee, as opposed to the hope above: an entity resolver that
+            // hands back nothing resolves every external reference to the empty
+            // string on both platforms, whatever the factory did with the flags.
+            f.newDocumentBuilder()
+                .apply { setEntityResolver { _, _ -> InputSource(StringReader("")) } }
+                .parse(input)
         } catch (e: Exception) {
             throw TcxException("TCX konnte nicht gelesen werden", e)
         }

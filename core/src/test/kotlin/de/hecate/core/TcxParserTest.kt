@@ -99,6 +99,32 @@ class TcxParserTest {
     }
 
     @Test
+    fun `external entities are never resolved`() {
+        // The factory flags that used to guarantee this are best-effort — Android
+        // rejects some of them outright — so the entity resolver carries the weight.
+        // Either the document is refused or the entity expands to nothing; what must
+        // never happen is the file's contents reaching a parsed field.
+        val secret = java.io.File.createTempFile("hecate-xxe", ".txt").apply {
+            writeText("TOP-SECRET-CONTENT")
+            deleteOnExit()
+        }
+        val xxe = """<?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE TrainingCenterDatabase [ <!ENTITY xxe SYSTEM "file://${secret.absolutePath}"> ]>
+            <TrainingCenterDatabase>
+              <Activities>
+                <Activity Sport="&xxe;">
+                  <Id>2024-03-04T07:30:00.000Z</Id>
+                </Activity>
+              </Activities>
+            </TrainingCenterDatabase>
+        """.trimIndent()
+
+        val parsed = runCatching { TcxParser.parse(xxe.byteInputStream()) { _, i -> "x$i" } }
+        val rendered = parsed.getOrNull()?.toString().orEmpty()
+        assertTrue("TOP-SECRET-CONTENT" !in rendered, "external entity was resolved: $rendered")
+    }
+
+    @Test
     fun `duplicate detection uses start time and duration`() {
         val t = 1_709_537_400_000L
         assertTrue(de.hecate.core.geo.Track.likelyDuplicate(t, 3_600_000, t + 60_000, 3_500_000))

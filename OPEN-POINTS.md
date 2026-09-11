@@ -165,15 +165,63 @@ Both modules pick it up automatically when the file exists and fall back to an
 unsigned release build when it does not. `keystore.properties` and `*.jks` are
 git-ignored. **Upload before reinstalling, every time.**
 
-### 1.3 The watch↔phone contract has never seen a real message
+Two things learned creating one. An incomplete `keystore.properties` fails as
+`Keystore file not set for signing config release` even when `storeFile` is
+perfectly set — the missing key was `storePassword`, and the message points at
+the wrong field. And a missing file does not fail at all: `assembleRelease`
+succeeds and quietly produces `phone-release-unsigned.apk`, which only refuses at
+install time.
 
-`de.hecate.wear.Wire` and `de.hecate.phone.Wire` are two copies of the same ten
-constants, deliberately not shared through `:core` (which must not learn about
-transports). Nothing checks that they agree. The first end-to-end session is the
-test. If sessions never arrive, check in this order: both `WearableListenerService`
-declarations are exported with the `/hecate` path prefix; both APKs are signed
-with the *same* key (the Data Layer will not deliver between differently signed
-apps); and the phone app has been launched at least once.
+For the backup: a `.jks` is binary, so it is not an "SSH key" entry in a password
+manager — it is an attachment, or `base64 -w0` into a secure note. Store the
+alias and store type beside it, and the certificate fingerprint, which is what
+Android actually compares on upgrade:
+
+```bash
+keytool -list -keystore <path>.jks -alias hecate       # SHA-256 fingerprint
+apksigner verify --print-certs <apk>                   # same value, from the APK
+```
+
+Then restore it once, into a scratch path, and check the fingerprints match. The
+restore is the only part of a backup that can be wrong in a way you cannot see.
+
+### 1.3 ~~The watch↔phone contract has never seen a real message~~ It has now
+
+**Resolved.** Sessions recorded on a Pixel Watch 4 reach a Pixel 8, are stored,
+acknowledged, deleted from the watch, and come back as a route bundle. The two
+`Wire` copies agree; none of the ten constants was wrong.
+
+What was wrong was never in the list above. Both modules had their own
+`applicationId` — `de.hecate.wear` and `de.hecate.phone` — and **the Wearable Data
+Layer is package-scoped**: a `DataItem` published by one applicationId is only
+ever delivered to the *same* applicationId on the other node. `IngestService` was
+never a candidate to receive anything, however correct its intent filter. Both
+modules now share `applicationId = "de.hecate"`; the build files say why.
+
+The diagnosis is worth keeping, because the symptom points elsewhere:
+
+```
+W WearableService: Failed to deliver message to AppKey[<hidden#ee576074>,2768f7f6…]
+```
+
+That hash is the target *package*, hidden precisely because it is not installed
+locally — a known-installed app appears by name in the same warning. The cert
+digest beside it matched ours exactly, so the signing check everyone reaches for
+first was passing the whole time. Signature identical, filter correct, app in the
+foreground, nothing delivered.
+
+Two gaps that first contact exposed, neither yet fixed:
+
+- **The phone never asks for a resend.** `PATH_RESEND` is defined in both `Wire`
+  objects and handled on the watch — `PhoneListenerService` calls `uploadPending()`
+  — but nothing in `phone/` ever sends it. The recovery path is dead code.
+- **Nothing reconciles missed items.** The phone acts only on the live
+  `onDataChanged` callback and never scans for `DataItem`s that arrived while it
+  was unbound. Combined with the above, a session whose delivery event is missed
+  is re-offered only on a watch reboot or at the end of the *next* recording.
+
+Neither cost us data — the watch keeps its copy until acked, exactly as designed —
+but together they mean the system's only retry is another workout.
 
 ---
 
@@ -258,7 +306,7 @@ ones do, the golden-file regression testing §6.5 calls for has nothing to guard
 
 Once you have ten or so real sessions, copy them off the watch into a
 `fixtures/` directory and commit the ones that are interesting. Note that
-`/data/data/de.hecate.wear/files/sessions/` is private storage: a plain
+`/data/data/de.hecate/files/sessions/` is private storage: a plain
 `adb pull` reaches it only on a rooted watch, and `adb shell run-as` only on a
 debuggable build — which is a signature change, and therefore an uninstall.
 README's "Testing on the wrist" has the workable spellings. The phone is no help
@@ -332,6 +380,30 @@ both of which are manual. This is a reasonable position for a single-user
 sideloaded app, but it does mean every Android-side regression will be found by
 wearing it.
 
+The first session on real hardware produced three defects, and the suite was
+green through all of them. That is not a failure of the tests; it is the exact
+shape of what they cannot see:
+
+- **The Data Layer never delivered anything** (§1.3). No JVM test can observe
+  `applicationId` scoping between two devices.
+- **Every Health Connect write was rejected** with `route can not be out of
+  parent time range`. The session's end time was taken from its last sample, and
+  Health Connect requires route points *strictly* before the end —
+  `location.time.isBefore(endTime)`, an exclusive bound. Ingest had been
+  discarding the footer's real `endedAtUtcMs`, so the column now exists
+  (schema v2) and the writer uses it.
+- **Every TCX import failed** before parsing a byte. `DocumentBuilderFactory
+  .setXIncludeAware` throws `UnsupportedOperationException` on Android and works
+  on the desktop JVM, so `TcxParserTest` passed while the phone refused every
+  file. The XML hardening is now best-effort, with an `EntityResolver` doing the
+  actual work, and a test pins the security property rather than the mechanism.
+
+All three lived in platform behaviour: cross-device delivery, a vendor library's
+validation, a JDK-versus-Android API difference. The replay harness is excellent
+at the algorithms and structurally blind to every one of them. Anything that
+talks to `com.google.android.gms`, `androidx.health`, or `javax.xml` should be
+assumed unverified until it has run on the device.
+
 ### 3.3 Battery has not been measured
 
 NFR-3 asks for battery cost comparable to Google's Exercise app. The matcher's
@@ -347,6 +419,24 @@ a unit test, `batched processing equals streamed processing`. What has not been
 seen is how large the batches actually are on a Pixel Watch 4, which determines
 how stale the Route page looks mid-run. §7 says to leave batching at its default
 until measured; that is still the position.
+
+---
+
+### 3.5 The recorder logs an unexpected state on resume
+
+Pausing a recording by hand and resuming it produced, once, on a Pixel Watch 4:
+
+```
+W RecorderService: Unerwarteter Zustand: USER_RESUMING
+```
+
+The session itself was unharmed — it recorded, stopped cleanly, transferred, and
+reached Health Connect with its pauses intact. But `USER_RESUMING` is a state
+Health Services does emit and `RecorderService` does not expect, on a path every
+real run will take. Reproduce it deliberately, then decide whether it is a
+missing branch or a state that is genuinely safe to ignore. Until then, treat
+auto-pause as unverified: §3.1 already says its broadcast test has not been run,
+and this is the same gap seen from the other side.
 
 ---
 

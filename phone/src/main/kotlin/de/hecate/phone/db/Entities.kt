@@ -26,6 +26,9 @@ object HcWriteState {
 data class SessionEntity(
     @PrimaryKey @ColumnInfo(name = "id") val id: String,
     @ColumnInfo(name = "started_at_utc") val startedAtUtc: Long,
+    /** Wall-clock stop time from the session footer. Null when the recording was
+     *  interrupted and never wrote one (NFR-1); such a session is still ingested. */
+    @ColumnInfo(name = "ended_at_utc") val endedAtUtc: Long? = null,
     @ColumnInfo(name = "tz_offset") val tzOffsetMinutes: Int,
     @ColumnInfo(name = "exercise_type") val exerciseType: String,
     @ColumnInfo(name = "active_duration_ms") val activeDurationMs: Long,

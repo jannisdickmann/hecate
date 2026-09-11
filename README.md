@@ -203,32 +203,101 @@ The layer nothing above can substitute for: real GNSS noise, ambient batching,
 battery, and whether any of this survives an hour outdoors. No debugger survives
 a run, so the method is to record, come back, and pull the files.
 
-**Connect to the watch.** There is no USB port; it is wireless debugging only.
-On the watch: Settings → Developer options → ADB debugging **on**, Wireless
-debugging **on**, then "Pair new device" for the pairing port and code.
+**Connect both devices.** The watch has no USB port, so it is wireless debugging
+or nothing. The phone can go either way: USB is faster for repeated installs of a
+30 MB APK and gives a stable serial, wireless is one less cable and survives a
+flaky port. The flow is identical.
+
+The toggles are named differently on the two, which costs more time than it
+should. The watch says **ADB debugging** and **Wireless debugging**; a phone says
+**USB-Debugging** and **Drahtloses Debugging**, under a *Debugging* heading a long
+way down Developer options. Searching the settings for `Debug` beats scrolling.
+Then *Pair new device* on either, for the pairing port and a six-digit code.
 
 ```bash
-adb pair <watch-ip>:<pair-port>        # asks for the six-digit code
-adb connect <watch-ip>:<debug-port>    # a different port from the pairing one
-adb devices                            # expect the watch, "device", not "unauthorized"
+adb pair <ip>:<pair-port>       # asks for the six-digit code
+adb connect <ip>:<debug-port>   # a different port from the pairing one
+adb devices -l                  # both "device", not "unauthorized"
 ```
 
-Both ports change; re-read them off the watch each time. With a phone also
-attached, every command below needs `-s <serial>` from `adb devices`.
-
-**Install.** Release builds, both of them, signed with the *same* key — the
-Wearable Data Layer will not deliver between differently signed apps, and
-§1.3 of the open points lists that first when sessions fail to arrive. Set up
-`keystore.properties` (§1.2) before the first install, not after.
+Both ports change on every reboot; re-read them off the device each time. A
+wireless serial is the unlovely `adb-<serial>-XXXXXX._adb-tls-connect._tcp`, and
+**every** command below needs it after `-s`. With two devices attached nothing is
+implicit, and the phone module's `minSdk 34` is perfectly installable on an API
+36 watch — so an unpinned install will cheerfully put the phone app on your
+wrist. Tell them apart without guessing:
 
 ```bash
-./gradlew :phone:installRelease
-./gradlew :wear:installRelease
+adb -s <serial> shell getprop ro.build.characteristics    # "nosdcard,watch" is the watch
 ```
 
-Then grant the permissions listed under "Permissions to grant by hand" below,
-launch the phone app at least once, and check the watch has received a route
-bundle.
+**Install.** Release builds, both of them, and note that both modules share the
+`applicationId` `de.hecate` — that is not tidiness, it is what makes the Data
+Layer work at all (§1.3). Set up `keystore.properties` (§1.2) before the first
+install, not after.
+
+```bash
+adb -s <phone> install -r phone/build/outputs/apk/release/phone-release.apk
+adb -s <watch> install -r wear/build/outputs/apk/release/wear-release.apk
+```
+
+`./gradlew :phone:installRelease` works too, but the APKs are already built by
+then and `adb` is explicit about which device it is talking to.
+
+Confirm the two carry one signature, which is the other Data Layer requirement
+and the first thing §1.3 tells you to check:
+
+```bash
+apksigner verify --print-certs phone/build/outputs/apk/release/phone-release.apk
+apksigner verify --print-certs wear/build/outputs/apk/release/wear-release.apk
+```
+
+**Grant the permissions** (§6.4) from here rather than tapping through eleven
+dialogs on a 480×480 screen:
+
+```bash
+for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACCESS_BACKGROUND_LOCATION \
+         ACTIVITY_RECOGNITION POST_NOTIFICATIONS ; do
+  adb -s <watch> shell pm grant de.hecate android.permission.$p
+done
+adb -s <watch> shell pm grant de.hecate android.permission.health.READ_HEART_RATE
+for p in WRITE_EXERCISE WRITE_EXERCISE_ROUTE WRITE_HEART_RATE WRITE_DISTANCE ; do
+  adb -s <phone> shell pm grant de.hecate android.permission.health.$p
+done
+adb -s <phone> shell pm grant de.hecate android.permission.POST_NOTIFICATIONS
+```
+
+An adb grant is indistinguishable from a tapped one. Check what took:
+
+```bash
+adb -s <serial> shell dumpsys package de.hecate | sed -n '/runtime permissions:/,/^$/p'
+```
+
+The one thing that cannot be done from here is turning **off** the watch's own
+automatic activity detection, which otherwise files a second session for the same
+workout.
+
+**Watch a session cross.** Both apps log in German under their own tags, and a
+healthy round trip is four lines across two devices:
+
+```bash
+adb -s <watch> logcat -s RecorderService:* Uploader:* BundleStore:* PhoneListener:*
+adb -s <phone> logcat -s IngestService:* SessionRepository:* HealthConnectWriter:* BundlePusher:*
+```
+
+```
+watch  Uploader: Sitzung <id> angeboten (2435 B gzip)
+phone  IngestService: Sitzung <id> bestätigt
+watch  Uploader: Sitzung <id> bestätigt und gelöscht
+watch  BundleStore: Neues Routen-Bundle gespeichert: Version 4
+```
+
+The watch's home screen says `Keine Routen` until that last line, then `Routen vN`.
+If the phone side stays silent, look for `W WearableService: Failed to deliver
+message to AppKey[<hidden#…>,<cert-sha1>]` in the *phone's* log: a hashed package
+name there means the Data Layer is looking for an app that is not installed, which
+is what a mismatched `applicationId` looks like from the outside. A named package
+in that warning — Fitbit's, say — is routine noise and not about you.
 
 **Record something**, then get the file off the watch. Sessions are JSONL, one
 line per sample, readable with `cat` — but they live in the app's private
@@ -236,14 +305,14 @@ storage, so **a plain `adb pull` will not reach them on a release build**. That
 needs either a rooted watch or a debuggable build:
 
 ```bash
-adb shell run-as de.hecate.wear ls files/sessions/
-adb shell run-as de.hecate.wear cat files/sessions/session-<id>.jsonl > fixtures/a.jsonl
+adb shell run-as de.hecate ls files/sessions/
+adb shell run-as de.hecate cat files/sessions/session-<id>.jsonl > fixtures/a.jsonl
 ```
 
 `run-as` only works against a debuggable APK, and swapping a release build for a
 debug one is a signature change, which means an uninstall, which means losing any
 session the watch has not uploaded yet (§6.3). Upload first, every time. On a
-rooted watch `adb root && adb pull /data/data/de.hecate.wear/files/sessions/`
+rooted watch `adb root && adb pull /data/data/de.hecate/files/sessions/`
 avoids the whole problem.
 
 The phone is not a shortcut here: it ingests sessions into Room and does not keep
@@ -344,7 +413,7 @@ be reproduced exactly on a laptop. That is what makes tuning tractable.
 ./gradlew :core:run --args="selfcheck --bundle bundle.json --session fixtures/a.jsonl"
 ```
 
-Sessions live on the watch at `/data/data/de.hecate.wear/files/sessions/` and
+Sessions live on the watch at `/data/data/de.hecate/files/sessions/` and
 are plain JSONL — one line per sample, readable with `cat`.
 
 ## Permissions to grant by hand after install

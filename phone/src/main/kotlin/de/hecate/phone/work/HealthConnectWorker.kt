@@ -45,6 +45,7 @@ class HealthConnectWorker(context: Context, params: WorkerParameters) :
             val result = writer.write(
                 sessionId = session.id,
                 startedAtUtcMs = session.startedAtUtc,
+                endedAtUtcMs = session.endedAtUtc,
                 tzOffsetMinutes = session.tzOffsetMinutes,
                 exerciseType = ExerciseType.valueOf(session.exerciseType),
                 activeDurationMs = session.activeDurationMs,

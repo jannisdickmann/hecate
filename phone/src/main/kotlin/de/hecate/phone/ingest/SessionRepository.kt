@@ -76,6 +76,7 @@ class SessionRepository(
         val entity = SessionEntity(
             id = session.id,
             startedAtUtc = session.header.startedAtUtcMs,
+            endedAtUtc = session.footer?.endedAtUtcMs,
             tzOffsetMinutes = session.header.tzOffsetMinutes,
             exerciseType = session.header.exerciseType.name,
             activeDurationMs = session.activeDurationMs,

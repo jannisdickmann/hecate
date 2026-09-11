@@ -19,7 +19,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "de.hecate.phone"
+        // Shared with the other module on purpose. The Wearable Data Layer is
+        // package-scoped: a DataItem published by one applicationId is only
+        // deliverable to the same applicationId on the other node, so two
+        // different ids mean the phone never sees a session (§5.4).
+        applicationId = "de.hecate"
         minSdk = 34
         targetSdk = 36
         versionCode = 1

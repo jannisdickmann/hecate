@@ -289,6 +289,7 @@ class ArchiveRepository(
         fun SessionEntity.toArchive() = Archive.Session(
             id = id,
             startedAtUtc = startedAtUtc,
+            endedAtUtc = endedAtUtc,
             tzOffsetMinutes = tzOffsetMinutes,
             exerciseType = exerciseType,
             activeDurationMs = activeDurationMs,
@@ -306,6 +307,7 @@ class ArchiveRepository(
         fun Archive.Session.toEntity() = SessionEntity(
             id = id,
             startedAtUtc = startedAtUtc,
+            endedAtUtc = endedAtUtc,
             tzOffsetMinutes = tzOffsetMinutes,
             exerciseType = exerciseType,
             activeDurationMs = activeDurationMs,

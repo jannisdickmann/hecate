@@ -97,6 +97,7 @@ object Archive {
     data class Session(
         val id: String,
         val startedAtUtc: Long,
+        val endedAtUtc: Long? = null,
         val tzOffsetMinutes: Int,
         val exerciseType: String,
         val activeDurationMs: Long,

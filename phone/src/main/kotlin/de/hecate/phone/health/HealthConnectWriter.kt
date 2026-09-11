@@ -60,6 +60,7 @@ class HealthConnectWriter(private val context: Context) {
     suspend fun write(
         sessionId: String,
         startedAtUtcMs: Long,
+        endedAtUtcMs: Long?,
         tzOffsetMinutes: Int,
         exerciseType: ExerciseType,
         activeDurationMs: Long,
@@ -72,7 +73,16 @@ class HealthConnectWriter(private val context: Context) {
 
         val zone = ZoneOffset.ofTotalSeconds(tzOffsetMinutes * 60)
         val start = Instant.ofEpochMilli(startedAtUtcMs)
-        val end = Instant.ofEpochMilli(startedAtUtcMs + (samples.last().tOffsetMs))
+        // The recording's real stop time, from the session footer. A session that
+        // was interrupted never wrote a footer (NFR-1) and has no stop time; then the
+        // last sample is the best answer available.
+        //
+        // Either way the end is held strictly after the final sample, because Health
+        // Connect tests `location.time.isBefore(endTime)` and rejects the whole record
+        // with "route can not be out of parent time range" otherwise — which a stop
+        // recorded in the same millisecond as the last GPS fix would otherwise trip.
+        val lastSampleMs = startedAtUtcMs + samples.maxOf { it.tOffsetMs }
+        val end = Instant.ofEpochMilli(maxOf(endedAtUtcMs ?: 0L, lastSampleMs + 1))
 
         return try {
             val routeLocations = samples
