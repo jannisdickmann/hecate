@@ -22,7 +22,10 @@ healthServices = "1.1.0-alpha05"
 # classpath. Pinned to the version health-services-client itself resolves to, and
 # consumed `compileOnly`: it is already in the APK transitively.
 guava = "31.1-android"
-healthConnect = "1.1.0-alpha11"
+# alpha12 is where the Metadata factories (activelyRecordedWithId etc.) arrive;
+# alpha11 had only the raw constructor. 1.1.0 stable exists with the same API —
+# see OPEN-POINTS.md §1.1 before taking it.
+healthConnect = "1.1.0-alpha12"
 room = "2.7.1"
 work = "2.10.1"
 playServicesWearable = "19.0.0"
