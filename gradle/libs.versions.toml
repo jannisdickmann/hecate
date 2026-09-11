@@ -17,6 +17,11 @@ wearCompose = "1.4.1"
 wearOngoing = "1.0.0"
 wearToolingPreview = "1.0.0"
 healthServices = "1.1.0-alpha05"
+# Health Services declares Guava at *runtime* scope only, so ListenableFuture — the
+# return type of every ExerciseClient.*Async method — is absent from the compile
+# classpath. Pinned to the version health-services-client itself resolves to, and
+# consumed `compileOnly`: it is already in the APK transitively.
+guava = "31.1-android"
 healthConnect = "1.1.0-alpha11"
 room = "2.7.1"
 work = "2.10.1"
@@ -50,6 +55,7 @@ wear-ongoing = { module = "androidx.wear:wear-ongoing", version.ref = "wearOngoi
 wear-tooling-preview = { module = "androidx.wear:wear-tooling-preview", version.ref = "wearToolingPreview" }
 
 health-services-client = { module = "androidx.health:health-services-client", version.ref = "healthServices" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
 health-connect-client = { module = "androidx.health.connect:connect-client", version.ref = "healthConnect" }
 
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }

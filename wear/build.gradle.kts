@@ -93,5 +93,9 @@ dependencies {
     implementation(libs.wear.tooling.preview)
 
     implementation(libs.health.services.client)
+    // Health Services returns ListenableFuture from every *Async call but declares
+    // Guava runtime-scope only, so the type is missing at compile time. It is on the
+    // runtime classpath transitively already — compileOnly adds nothing to the APK.
+    compileOnly(libs.guava)
     implementation(libs.play.services.wearable)
 }

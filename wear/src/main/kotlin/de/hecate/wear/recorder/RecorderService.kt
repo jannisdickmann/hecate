@@ -12,6 +12,7 @@ import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.ExerciseState
 import androidx.health.services.client.data.ExerciseUpdate
+import androidx.health.services.client.data.LocationAccuracy
 import androidx.health.services.client.data.LocationAvailability
 import androidx.health.services.client.data.LocationData
 import androidx.health.services.client.data.SampleDataPoint
@@ -360,9 +361,15 @@ class RecorderService : Service() {
             activeMs = activeMs,
             lat = d.latitude,
             lon = d.longitude,
-            altM = d.altitude?.takeIf { it.isFinite() },
+            altM = d.altitude.takeIf { it.isFinite() },
             hrBpm = hr,
-            accuracyM = d.horizontalPositionErrorMeters?.takeIf { it.isFinite() },
+            // LocationData carries only lat/lon/altitude/bearing; the horizontal
+            // error lives on the data point's accuracy, which is null whenever
+            // Health Services has no estimate to give. Altitude and bearing signal
+            // "unavailable" with NaN, which isFinite() already rejects.
+            accuracyM = (point.accuracy as? LocationAccuracy)
+                ?.horizontalPositionErrorMeters
+                ?.takeIf { it.isFinite() },
             cumDistanceM = distance,
             paused = paused,
         )
