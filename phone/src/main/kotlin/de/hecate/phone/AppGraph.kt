@@ -3,6 +3,7 @@ package de.hecate.phone
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
+import de.hecate.phone.archive.ArchiveRepository
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.ingest.SessionRepository
@@ -26,6 +27,8 @@ object AppGraph {
         private set
     lateinit var importer: TcxImporter
         private set
+    lateinit var archive: ArchiveRepository
+        private set
 
     @Volatile
     private var initialised = false
@@ -39,6 +42,7 @@ object AppGraph {
             healthConnect = HealthConnectWriter(app)
             repository = SessionRepository(app, db)
             importer = TcxImporter(app, repository)
+            archive = ArchiveRepository(app, db)
             initialised = true
         }
     }

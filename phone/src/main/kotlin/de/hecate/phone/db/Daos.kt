@@ -229,4 +229,8 @@ interface MetaDao {
 
     @Query("SELECT value FROM meta WHERE key = :key")
     suspend fun get(key: String): String?
+
+    /** Every row, for the backup archive. */
+    @Query("SELECT * FROM meta")
+    suspend fun all(): List<MetaEntity>
 }

@@ -19,6 +19,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
@@ -63,6 +65,8 @@ import de.hecate.phone.db.SessionSummary
 fun HecateApp(
     vm: HecateViewModel,
     onPickTcx: () -> Unit,
+    onExportArchive: () -> Unit,
+    onRestoreArchive: () -> Unit,
     onRequestHealthConnect: () -> Unit,
 ) {
     val screen by vm.screen.collectAsStateWithLifecycle()
@@ -93,9 +97,29 @@ fun HecateApp(
                     },
                     actions = {
                         when (screen) {
+                            // Four actions is past what fits across a phone top
+                            // bar, so they live behind one button.
                             is Screen.Sessions -> {
-                                TextButton(onClick = onPickTcx) { Text("Import") }
-                                TextButton(onClick = onRequestHealthConnect) { Text("HC") }
+                                var open by remember { mutableStateOf(false) }
+                                IconButton(onClick = { open = true }) { Text("⋮", fontSize = 22.sp) }
+                                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("TCX importieren") },
+                                        onClick = { open = false; onPickTcx() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Sicherung exportieren") },
+                                        onClick = { open = false; onExportArchive() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Sicherung einlesen") },
+                                        onClick = { open = false; onRestoreArchive() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Health Connect einrichten") },
+                                        onClick = { open = false; onRequestHealthConnect() },
+                                    )
+                                }
                             }
                             is Screen.Routes -> TextButton(onClick = { vm.recluster() }) { Text("Neu") }
                             else -> Unit

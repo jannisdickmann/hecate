@@ -177,6 +177,45 @@ apps); and the phone app has been launched at least once.
 
 ---
 
+### 1.4 The backup archive has never been written on a device
+
+**What exists.** Export to a file and restore from a file, both through the
+system file picker (Appendix A.10). The phone menu on the sessions screen has
+"Sicherung exportieren" and "Sicherung einlesen". No cloud, no network, no
+storage permission: NFR-7 is untouched, and moving the file to Drive or anywhere
+else is something the user does outside the app.
+
+This closes the gap that used to be here — the database was the only complete
+copy of anything, the watch deletes its files on acknowledgement, Health Connect
+is write-only and lossy, and a TCX re-import could not bring back route names or
+priorities.
+
+**What is verified.** `ArchiveCodec`, the ZIP and JSON layer, has eleven JVM
+tests covering a full session round trip, nullable sample fields, many sessions
+addressed by id, a 40-session archive whose last entry must still be complete, a
+future format version, a ZIP that is not a Hecate archive, unreadable JSON, and
+unknown fields from a future version. `./gradlew :phone:testDebugUnitTest`.
+
+**What is not.** Everything that needs a device:
+
+- The Storage Access Framework halves — that a picked `content://` Uri really
+  opens for writing, that the suggested filename survives, and that a large
+  archive does not hit a timeout on a real phone.
+- `ArchiveRepository` itself: the Room-to-DTO mapping, and the restore path's
+  transactions and foreign-key ordering. Only the format layer is tested;
+  testing the rest needs Robolectric or an instrumented test, which §3.2 has
+  deliberately not taken on.
+- The one thing worth doing first: **export, wipe the app's data, restore, and
+  check the route names and priorities came back.** Until that has been done
+  once, this is a backup nobody has restored.
+
+**Decided while building it,** both recorded in A.10: restore merges rather than
+replaces, so it can never destroy what is already there; and it writes rows back
+directly rather than through `SessionRepository.ingest`, so `hcWriteState` and
+`committedAtM` survive.
+
+---
+
 ## 2. Needs a decision
 
 ### 2.1 Tuning constants have only ever met synthetic GPS

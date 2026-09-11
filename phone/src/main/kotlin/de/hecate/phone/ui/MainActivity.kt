@@ -11,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import de.hecate.phone.AppGraph
+import de.hecate.phone.archive.Archive
 import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.work.Jobs
 
@@ -36,6 +37,23 @@ class MainActivity : ComponentActivity() {
         vm.importTcx(uris)
     }
 
+    /**
+     * §1.4 of the open points: backup to a file the user places themselves. The
+     * Storage Access Framework means no storage permission and no opinion from
+     * this app about where the file belongs.
+     */
+    private val createArchive = registerForActivityResult(
+        ActivityResultContracts.CreateDocument(Archive.MIME),
+    ) { uri: Uri? ->
+        uri?.let { vm.exportArchive(it) }
+    }
+
+    private val openArchive = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        uri?.let { vm.restoreArchive(it) }
+    }
+
     private val requestHealthConnect = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { granted: Set<String> ->
@@ -57,6 +75,11 @@ class MainActivity : ComponentActivity() {
                     // Google Health exports TCX; a few exporters use text/xml.
                     pickTcx.launch(arrayOf("*/*"))
                 },
+                onExportArchive = { createArchive.launch(Archive.suggestedFileName(System.currentTimeMillis())) },
+                // "*/*" for the same reason the TCX picker uses it: providers
+                // disagree about the type of a .zip, and a backup the user cannot
+                // select is worse than a picker that shows too much.
+                onRestoreArchive = { openArchive.launch(arrayOf("*/*")) },
                 onRequestHealthConnect = { startHealthConnectFlow() },
             )
         }

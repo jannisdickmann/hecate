@@ -9,6 +9,7 @@ import de.hecate.core.geo.LatLon
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.phone.AppGraph
+import de.hecate.phone.archive.Archive
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.tcx.TcxImporter
@@ -121,6 +122,44 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             if (report.duplicates > 0) append(", ${report.duplicates} Duplikate")
             if (report.failed > 0) append(", ${report.failed} fehlgeschlagen")
         }
+    }
+
+    /**
+     * §1.4 of the open points: write the whole database to a file the user picked.
+     * What happens to that file afterwards — Drive, a cable, nothing — is theirs
+     * to decide; the app neither knows nor asks (NFR-7).
+     */
+    fun exportArchive(uri: Uri) = viewModelScope.launch {
+        _busy.value = true
+        val result = runCatching { AppGraph.archive.export(uri) }
+        _busy.value = false
+        _status.value = result.fold(
+            onSuccess = { r ->
+                "Gesichert: ${r.sessions} Sitzungen, ${r.routes} Routen (${Format.fileSize(r.bytes)})"
+            },
+            onFailure = { "Sicherung fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+        )
+    }
+
+    /**
+     * Read a backup back in. Merges: anything already present is left alone, so
+     * this can never cost the user data they still have.
+     */
+    fun restoreArchive(uri: Uri) = viewModelScope.launch {
+        _busy.value = true
+        val result = runCatching { AppGraph.archive.restore(uri) }
+        _busy.value = false
+        _status.value = result.fold(
+            onSuccess = { r: Archive.RestoreReport ->
+                buildString {
+                    append("${r.sessionsRestored} Sitzungen wiederhergestellt")
+                    if (r.routesRestored > 0) append(", ${r.routesRestored} Routen")
+                    if (r.sessionsSkipped > 0) append(", ${r.sessionsSkipped} schon vorhanden")
+                    if (r.failed > 0) append(", ${r.failed} fehlgeschlagen")
+                }
+            },
+            onFailure = { "Wiederherstellen fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+        )
     }
 
     fun rename(routeId: Long, name: String) = viewModelScope.launch {

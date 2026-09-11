@@ -112,4 +112,11 @@ dependencies {
     implementation(libs.work.runtime.ktx)
     implementation(libs.health.connect.client)
     implementation(libs.play.services.wearable)
+
+    // §3.2 stands — no instrumented tests, and no Robolectric. These are plain
+    // JVM tests of the backup archive's ZIP/JSON layer, which touches neither
+    // Android nor Room and is the one part of this module where a silent bug
+    // costs the user their history.
+    testImplementation(libs.junit)
+    testImplementation(kotlin("test"))
 }

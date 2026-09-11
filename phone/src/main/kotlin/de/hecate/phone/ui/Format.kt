@@ -43,6 +43,13 @@ object Format {
         return 3600.0 / seconds
     }
 
+    /** "14,8 MB" or "412 kB". Decimal units, as file managers show them. */
+    fun fileSize(bytes: Long): String = when {
+        bytes >= 1_000_000 -> String.format(DE, "%.1f MB", bytes / 1_000_000.0)
+        bytes >= 1_000 -> String.format(DE, "%d kB", bytes / 1_000)
+        else -> String.format(DE, "%d B", bytes)
+    }
+
     /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
     fun dateTime(utcMs: Long, tzOffsetMinutes: Int): String {
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {

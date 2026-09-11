@@ -132,6 +132,7 @@ Everything that can be checked without a wrist:
 
 ```bash
 ./gradlew :core:test                                 # 77 JVM tests, a few seconds
+./gradlew :phone:testDebugUnitTest                   # 11 JVM tests of the backup archive
 ./gradlew :phone:lintDebug :wear:lintDebug           # both should say "No issues found"
 ./gradlew :phone:assembleDebug :wear:assembleDebug   # both APKs
 ./gradlew :phone:assembleRelease :wear:assembleRelease
@@ -142,9 +143,11 @@ the clustering, the profile maths and the CPU budget all live there, and none of
 it needs an SDK, a device or a network. A readable report lands in
 `core/build/reports/tests/test/index.html`.
 
-Neither Android module has any test of its own (§3.2 of the open points). Lint
-and the compiler are the whole of the automated safety net on that side, which
-is why both are expected to stay clean.
+`:phone` has exactly one test class, over the backup archive's ZIP and JSON
+layer — the one place in that module where a silent bug costs you your history.
+Everything else in `:wear` and `:phone` has no test of its own (§3.2 of the open
+points): lint and the compiler are the whole of the automated safety net there,
+which is why both are expected to stay clean.
 
 To re-run something Gradle thinks is already done — after changing a version, say:
 
@@ -235,6 +238,50 @@ A Wear emulator can exercise service lifecycle, permissions and layout, but §6.
 is blunt about its limit: its synthetic data emits a single default route with
 identical values every run, so it can never test matching. Use it for plumbing,
 never for the matcher.
+
+## Backup and restore
+
+The phone's database is the only complete copy of anything you have recorded.
+The watch deletes each session once the phone confirms it, Health Connect is
+written to and never read back, and it never receives your route names or
+priorities. So there is an export.
+
+On the phone, sessions screen, the **⋮** menu:
+
+- **Sicherung exportieren** — writes a ZIP wherever you point the file picker.
+- **Sicherung einlesen** — reads one back.
+
+No network is involved and no storage permission is asked for; the system file
+picker hands the app one file. Putting the result on Google Drive, a laptop or
+an SD card is something you do afterwards, outside the app — which is why
+neither manifest declares `INTERNET` (NFR-7) and why there is no cloud backup:
+see Appendix A.10 of the specification for the measurements behind that.
+
+**Restore merges, and never replaces.** Anything already present is left exactly
+as it is, so reading a backup into a database that still has data cannot cost
+you anything. Into an empty database — a new phone, a reinstall — it is exact,
+route names and priorities included.
+
+Inside the archive:
+
+```
+hecate-sicherung-20260911-1432.zip
+├── manifest.json          format version, export time, counts
+├── database.json          every table except samples
+└── sessions/<id>.jsonl    one file per session
+```
+
+Those session files are the watch's own format, so the archive doubles as a
+fixture source — unzip and replay, no converter:
+
+```bash
+unzip hecate-sicherung-*.zip 'sessions/*' -d .
+./gradlew :core:run --args="bundle --sessions ./sessions --out bundle.json"
+```
+
+Roughly 15 MB for 300 sessions of 45 minutes. Copying the SQLite file instead
+would be 145 MB, which is why the samples live in the per-session files and not
+in `database.json`.
 
 ## The replay harness
 
