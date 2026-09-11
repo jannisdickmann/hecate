@@ -16,7 +16,7 @@ val keystoreProperties: Properties? = rootProject.file("keystore.properties")
 
 android {
     namespace = "de.hecate.phone"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "de.hecate.phone"
@@ -55,6 +55,14 @@ android {
 
     buildFeatures { compose = true }
 
+    lint {
+        // targetSdk deliberately trails compileSdk. compileSdk 37 is what Compose
+        // 2026.09 requires and changes no runtime behaviour on its own; raising
+        // targetSdk opts the app into new platform behaviour, and there is no
+        // device here to check that against (OPEN-POINTS §1.2, §1.3). Raise it in
+        // a session that can wear the result.
+        disable += "OldTargetApi"
+    }
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")

@@ -5,35 +5,39 @@
 agp = "9.4.0"
 kotlin = "2.4.20"
 ksp = "2.3.12"
-kotlinxSerialization = "1.8.0"
-kotlinxCoroutines = "1.10.1"
+kotlinxSerialization = "1.11.0"
+kotlinxCoroutines = "1.11.0"
 
-androidxCore = "1.16.0"
-androidxActivityCompose = "1.10.1"
-androidxLifecycle = "2.8.7"
-androidxConcurrentFutures = "1.2.0"
+androidxCore = "1.19.0"
+androidxActivityCompose = "1.13.0"
+androidxLifecycle = "2.11.0"
+androidxConcurrentFutures = "1.3.0"
 # Not used directly by either module. play-services-basement drags in
 # androidx.fragment 1.1.0, which is old enough that lint refuses the
 # ActivityResult APIs; this constrains it up to the AndroidX generation the rest
 # of these pins come from. See the `constraints` block in each module.
-androidxFragment = "1.8.6"
-composeBom = "2025.04.00"
-wearCompose = "1.4.1"
-wearOngoing = "1.0.0"
+androidxFragment = "1.9.0"
+composeBom = "2026.09.00"
+wearCompose = "1.6.2"
+wearOngoing = "1.1.0"
 wearToolingPreview = "1.0.0"
-healthServices = "1.1.0-alpha05"
+healthServices = "1.1.0-rc02"
 # Health Services declares Guava at *runtime* scope only, so ListenableFuture — the
 # return type of every ExerciseClient.*Async method — is absent from the compile
-# classpath. Pinned to the version health-services-client itself resolves to, and
-# consumed `compileOnly`: it is already in the APK transitively.
-guava = "31.1-android"
+# classpath. Consumed `compileOnly`: it is already in the APK transitively.
+#
+# Deliberately NOT the newest Guava. This must be exactly what health-services-client
+# drags in at runtime, or the module compiles against a Guava the APK does not ship.
+# Check it after any healthServices bump: ./gradlew :wear:dependencyInsight
+#   --configuration debugRuntimeClasspath --dependency com.google.guava:guava
+guava = "32.0.1-android"
 # alpha12 is where the Metadata factories (activelyRecordedWithId etc.) arrive;
 # alpha11 had only the raw constructor. 1.1.0 stable exists with the same API —
 # see OPEN-POINTS.md §1.1 before taking it.
-healthConnect = "1.1.0-alpha12"
-room = "2.7.1"
-work = "2.10.1"
-playServicesWearable = "19.0.0"
+healthConnect = "1.1.0"
+room = "2.8.5"
+work = "2.11.2"
+playServicesWearable = "20.0.1"
 
 junit = "4.13.2"
 

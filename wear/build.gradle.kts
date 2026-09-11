@@ -15,7 +15,7 @@ val keystoreProperties: Properties? = rootProject.file("keystore.properties")
 
 android {
     namespace = "de.hecate.wear"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "de.hecate.wear"
