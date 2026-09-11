@@ -11,9 +11,9 @@ Tuesday's run. Hecate does exactly that and not much else.
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.
 [OPEN-POINTS.md](OPEN-POINTS.md) lists what still needs a human, a device, or a
-decision — **read it before installing anything**, in particular the parts about
-the release keystore and the fact that the Android modules have not yet been
-compiled.
+decision — **read it before installing anything**, in particular §1.2 on the
+release keystore. All three modules build and lint clean, but nothing has ever
+run on a watch, so none of the device behaviour is verified.
 
 ## Modules
 
@@ -27,9 +27,84 @@ compiled.
 list rather than by good intentions. Everything algorithmic lives there so it
 can be tested on a laptop in thirteen seconds instead of on a wrist in the rain.
 
-## Building
+## Setting up a development machine
 
-Needs JDK 17 or newer and an Android SDK with platform 36.
+From a clean Ubuntu install, assuming nothing but `sudo`. Everything below is
+what the current build is actually verified against — no Android Studio needed,
+though it will happily open the project if you want it.
+
+**1. JDK and the basics.** Gradle 9.7 and AGP 9.4 want a modern JDK; 21 is what
+this is built and tested with, and it is in Ubuntu's own repositories.
+
+```bash
+sudo apt update
+sudo apt install -y openjdk-21-jdk unzip curl git
+java -version          # expect 21.x
+```
+
+**2. The Android SDK command-line tools.** No GUI installer, no login. The
+nested `latest/` directory is not decoration — `sdkmanager` refuses to run
+without it.
+
+```bash
+mkdir -p ~/android-sdk/cmdline-tools
+cd /tmp
+curl -O https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip -q commandlinetools-linux-*.zip
+mv cmdline-tools ~/android-sdk/cmdline-tools/latest
+```
+
+That build number ages. If the link 404s, take the current "Command line tools
+only" Linux zip from <https://developer.android.com/studio#command-line-tools-only>;
+nothing else about these steps changes.
+
+**3. Put the tools on your PATH**, in `~/.bashrc` so it survives a new shell:
+
+```bash
+cat >> ~/.bashrc <<'EOF'
+export ANDROID_HOME="$HOME/android-sdk"
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+EOF
+source ~/.bashrc
+```
+
+**4. Accept the licences and install the three packages this project needs.**
+Nothing else is required — in particular no emulator image, which is a large
+download that §6.5 explains cannot test the interesting part anyway.
+
+```bash
+yes | sdkmanager --licenses
+sdkmanager --install "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+```
+
+Platform **37** because `compileSdk = 37`, which Compose BOM 2026.09 requires.
+`targetSdk` stays at 36 deliberately — see the note in `phone/build.gradle.kts`.
+
+**5. Point the build at the SDK.** Either the `ANDROID_HOME` you just exported
+is enough, or be explicit — `local.properties` is git-ignored and wins:
+
+```bash
+cd /path/to/hecate
+echo "sdk.dir=$HOME/android-sdk" > local.properties
+```
+
+**6. USB access to a phone**, if you plan to plug one in. Ubuntu needs the udev
+rules and your user in `plugdev`; the group change needs a logout to take
+effect. Skip this if you are only using wireless debugging on the watch.
+
+```bash
+sudo apt install -y android-sdk-platform-tools-common
+sudo usermod -aG plugdev "$USER"
+```
+
+**7. Check it works.** The first run downloads Gradle itself and the whole
+dependency graph, so give it a few minutes:
+
+```bash
+./gradlew :core:test :phone:assembleDebug :wear:assembleDebug
+```
+
+## Building
 
 ```bash
 ./gradlew :core:test                    # the algorithms — no SDK needed
@@ -45,6 +120,121 @@ anywhere. Force the matter with `-Phecate.androidModules=true|false`.
 Do not ship with the debug keystore. See §6.3 of the specification and §1.2 of
 the open points: a signature mismatch means an uninstall, and an uninstall means
 losing any session the watch has not uploaded yet.
+
+Versions are pinned in `gradle/libs.versions.toml`, every one of them, with the
+reasoning beside anything that is not simply the newest release. §7 of the
+specification asks for upgrades to be deliberate; that file is where you make
+them.
+
+## Testing locally
+
+Everything that can be checked without a wrist:
+
+```bash
+./gradlew :core:test                                 # 77 JVM tests, a few seconds
+./gradlew :phone:lintDebug :wear:lintDebug           # both should say "No issues found"
+./gradlew :phone:assembleDebug :wear:assembleDebug   # both APKs
+./gradlew :phone:assembleRelease :wear:assembleRelease
+```
+
+`:core:test` is the one that matters and the one to run constantly — the matcher,
+the clustering, the profile maths and the CPU budget all live there, and none of
+it needs an SDK, a device or a network. A readable report lands in
+`core/build/reports/tests/test/index.html`.
+
+Neither Android module has any test of its own (§3.2 of the open points). Lint
+and the compiler are the whole of the automated safety net on that side, which
+is why both are expected to stay clean.
+
+To re-run something Gradle thinks is already done — after changing a version, say:
+
+```bash
+./gradlew :core:test --rerun-tasks --no-build-cache
+```
+
+## Testing on the wrist
+
+The layer nothing above can substitute for: real GNSS noise, ambient batching,
+battery, and whether any of this survives an hour outdoors. No debugger survives
+a run, so the method is to record, come back, and pull the files.
+
+**Connect to the watch.** There is no USB port; it is wireless debugging only.
+On the watch: Settings → Developer options → ADB debugging **on**, Wireless
+debugging **on**, then "Pair new device" for the pairing port and code.
+
+```bash
+adb pair <watch-ip>:<pair-port>        # asks for the six-digit code
+adb connect <watch-ip>:<debug-port>    # a different port from the pairing one
+adb devices                            # expect the watch, "device", not "unauthorized"
+```
+
+Both ports change; re-read them off the watch each time. With a phone also
+attached, every command below needs `-s <serial>` from `adb devices`.
+
+**Install.** Release builds, both of them, signed with the *same* key — the
+Wearable Data Layer will not deliver between differently signed apps, and
+§1.3 of the open points lists that first when sessions fail to arrive. Set up
+`keystore.properties` (§1.2) before the first install, not after.
+
+```bash
+./gradlew :phone:installRelease
+./gradlew :wear:installRelease
+```
+
+Then grant the permissions listed under "Permissions to grant by hand" below,
+launch the phone app at least once, and check the watch has received a route
+bundle.
+
+**Record something**, then get the file off the watch. Sessions are JSONL, one
+line per sample, readable with `cat` — but they live in the app's private
+storage, so **a plain `adb pull` will not reach them on a release build**. That
+needs either a rooted watch or a debuggable build:
+
+```bash
+adb shell run-as de.hecate.wear ls files/sessions/
+adb shell run-as de.hecate.wear cat files/sessions/session-<id>.jsonl > fixtures/a.jsonl
+```
+
+`run-as` only works against a debuggable APK, and swapping a release build for a
+debug one is a signature change, which means an uninstall, which means losing any
+session the watch has not uploaded yet (§6.3). Upload first, every time. On a
+rooted watch `adb root && adb pull /data/data/de.hecate.wear/files/sessions/`
+avoids the whole problem.
+
+The phone is not a shortcut here: it ingests sessions into Room and does not keep
+the raw JSONL, so the watch is the only place a fixture exists.
+
+Those files are the fixture set §6.5 asks you to build first — work route, two
+shortcuts, the reverse direction, a novel path, one with a 90 s GPS dropout, one
+with a long pause — and they are what makes the replay harness below useful.
+Commit the interesting ones.
+
+**Check the watch agreed with itself.** Every decision the watch made is stored
+in the session file, so a laptop can re-derive them and compare. Any difference
+is a bug by definition:
+
+```bash
+./gradlew :core:run --args="bundle --sessions ./fixtures --out bundle.json"
+./gradlew :core:run --args="onwrist --bundle bundle.json --session fixtures/a.jsonl"
+```
+
+**Inject an auto-pause**, which is hard to produce on purpose and easy to get
+wrong (§3.1 of the open points — this has never actually been run):
+
+```bash
+adb shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.android.wearable.healthservices
+```
+
+**Watch the logs live** while it is on the bench rather than on a wrist:
+
+```bash
+adb logcat -s RecorderService:* ExerciseSource:* Uploader:* BootReceiver:*
+```
+
+A Wear emulator can exercise service lifecycle, permissions and layout, but §6.5
+is blunt about its limit: its synthetic data emits a single default route with
+identical values every run, so it can never test matching. Use it for plumbing,
+never for the matcher.
 
 ## The replay harness
 
@@ -67,15 +257,6 @@ be reproduced exactly on a laptop. That is what makes tuning tractable.
 
 Sessions live on the watch at `/data/data/de.hecate.wear/files/sessions/` and
 are plain JSONL — one line per sample, readable with `cat`.
-
-## Watch debugging
-
-```bash
-# Watch: Settings → Developer options → ADB debugging ON, Wireless debugging ON
-adb pair <watch-ip>:<pair-port>
-adb connect <watch-ip>:<debug-port>
-adb devices
-```
 
 ## Permissions to grant by hand after install
 

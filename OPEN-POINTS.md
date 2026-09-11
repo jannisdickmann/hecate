@@ -39,7 +39,7 @@ two places it did not look. Item by item, against the original list:
   enum list was the right call and needed no change.
 
   **`LocationData` was wrong, and no version fixes it.** It carries four fields
-  — latitude, longitude, altitude, bearing — in the pinned 1.1.0-alpha05 and in
+  — latitude, longitude, altitude, bearing — in 1.1.0-alpha05 and in
   1.1.0-rc02 alike. `horizontalPositionErrorMeters` lives on `LocationAccuracy`,
   reached through the data point's `accuracy`, which is null whenever Health
   Services has no estimate to give. `altitude` is a non-null `Double` that
@@ -53,21 +53,25 @@ two places it did not look. Item by item, against the original list:
   `com.google.guava:listenablefuture` to the empty
   `9999.0-empty-to-avoid-conflict-with-guava` marker, and AGP's consistent
   resolution propagates that to the compile classpath, so androidx.concurrent's
-  own copy is empty too. Fixed with a `compileOnly` dependency on
-  `com.google.guava:guava:31.1-android`, the version health-services-client
-  itself resolves to. It is already in the APK transitively, so the artifact is
-  unchanged, and NFR-8 / Appendix A.7's count of non-AndroidX *runtime*
-  dependencies is unchanged with it.
+  own copy is empty too. Fixed with a `compileOnly` dependency on Guava — at
+  **32.0.1-android**, which is deliberately *not* the newest Guava (33.7.1 is):
+  it has to be exactly what health-services-client drags in at runtime, or the
+  module compiles against a Guava the APK does not ship. Re-check it after any
+  `healthServices` bump; the failure mode is silent. It is already in the APK
+  transitively, so the artifact is unchanged, and NFR-8 / Appendix A.7's count of
+  non-AndroidX *runtime* dependencies is unchanged with it.
 
-  `health-services-client` stays pinned at **1.1.0-alpha05**. Nothing here
-  needed a newer one. 1.1.0-rc02 exists if you want it, and is a deliberate
-  decision (§7), not a compile fix.
+  `health-services-client` is pinned at **1.1.0-rc02**, the best available. This
+  artifact has no stable 1.1.0 and never has — the only stable release on it is
+  1.0.0, an older API generation — so a pre-release pin here is close to forced
+  rather than an oversight.
 
 - **Health Connect** (`HealthConnectWriter`).
   `Metadata.activelyRecorded(device, clientRecordId)` was spelled correctly; the
   *pin* was too early. alpha11 exposes only the raw `Metadata(...)` constructor,
-  and the named factories arrive in **1.1.0-alpha12**, which is now what is
-  pinned. Not one line of the writer changed.
+  and the named factories arrive in alpha12. Pinned to **1.1.0**, the stable
+  release, which carries the identical `Metadata` surface. Not one line of the
+  writer changed.
 
   Worth knowing if you touch it: `activelyRecordedWithId`'s `id` is Health
   Connect's own record UUID, for updating a record that already exists — not a
@@ -76,10 +80,6 @@ two places it did not look. Item by item, against the original list:
 
   ~~verify that `ExerciseRoute.Location` still takes `horizontalAccuracy` as a
   `Length`~~ — it does.
-
-  **1.1.0 has since gone stable** with an identical `Metadata` surface. Moving
-  to it is a one-line change and has deliberately been left as a decision rather
-  than folded into a compile fix.
 
 - **Room** (`Daos.kt`). ~~this will either work or tell you exactly what it
   dislikes~~ — it told us exactly, and it was right: a LIMIT/OFFSET expression
@@ -98,8 +98,9 @@ two places it did not look. Item by item, against the original list:
 
 - **Wear Compose** (`HecateWearApp`). ~~`Chip`, `ChipDefaults.primaryChipColors`
   and `Button`~~ — nothing to fix. All three are where they were expected, in
-  `androidx.wear.compose.material` at the pinned wear-compose 1.4.1. The warning
-  about `wear.compose.material3` still stands for anyone tempted.
+  `androidx.wear.compose.material`, at 1.4.1 when first compiled and still there
+  after the bump to 1.6.2. The warning about `wear.compose.material3` still
+  stands for anyone tempted.
 
 Two things this section did not think to look at:
 
@@ -115,17 +116,33 @@ Two things this section did not think to look at:
   Neither app uses fragments — androidx.fragment 1.1.0 arrives through
   play-services-wearable → play-services-basement, and every basement release
   from 18.4.0 to 18.9.0 names that same 1.1.0, so bumping Play Services would not
-  have helped. A `constraints` block raises it to 1.8.6. Both modules also had
+  have helped. A `constraints` block raises it. Both modules also had
   twenty warnings between them; all are now fixed or suppressed with the reason
   written at the suppression, and `lintDebug` reports "No issues found" for both.
   The two suppressions are `StaticFieldLeak` on the `AppGraph` objects (what they
   hold is the *application* context) and `UnnecessaryRequiredFeature` on the
   watch's GPS feature (it is required, meant literally).
 
-Every version that changed is pinned in `gradle/libs.versions.toml` with the
-reason beside it: health-connect alpha11 → alpha12, plus two new pins that were
-not there before, guava 31.1-android and androidx.fragment 1.8.6. Nothing is
-left to "latest", and §7 still applies — upgrade deliberately.
+**Then everything else was swept too.** Compiling was the point, but it exposed
+how old the catalog had become: the pins dated from April 2025 and every one of
+the twenty was behind. All of them now sit at their current release, with the
+reasoning written beside anything that is deliberately *not* the newest:
+
+- Toolchain: Gradle 8.14.3 → 9.7.1, AGP 8.9.1 → 9.4.0, Kotlin 2.1.20 → 2.4.20,
+  KSP 2.1.20-1.0.32 → 2.3.12 (KSP versions independently of Kotlin since 2.3.0).
+  AGP 9 has built-in Kotlin support and refuses to start alongside the standalone
+  `org.jetbrains.kotlin.android` plugin, which is gone from both modules.
+- `compileSdk` 36 → **37**, forced by Compose BOM 2026.09. **`targetSdk` stays at
+  36 on purpose**: compileSdk only decides which APIs compile, while targetSdk
+  opts the app into new *runtime* behaviour, and that needs a device to verify.
+  Lint's `OldTargetApi` is disabled in `:phone` with exactly that reasoning at
+  the suppression. Raising it is a job for a session that can wear the result.
+- Libraries: Compose BOM 2025.04.00 → 2026.09.00, Room 2.7.1 → 2.8.5,
+  wear-compose 1.4.1 → 1.6.2, play-services-wearable 19.0.0 → 20.0.1, and the
+  rest of the AndroidX set with them.
+
+No application source changed for any of it. Nothing is left to "latest", and §7
+still applies — upgrade deliberately, which is what the catalog comments are for.
 
 **What is still open here is device work, and only device work**: nothing below
 §1.2 has moved.
@@ -200,9 +217,13 @@ All seven exist as *synthetic* geometries in `core/src/test/.../Synthetic.kt`
 and the unit tests exercise them. None exists as a real recording. Until real
 ones do, the golden-file regression testing §6.5 calls for has nothing to guard.
 
-Once you have ten or so real sessions, `adb pull` them off the watch
-(`/data/data/de.hecate.wear/files/sessions/`) into a `fixtures/` directory and
-commit the ones that are interesting.
+Once you have ten or so real sessions, copy them off the watch into a
+`fixtures/` directory and commit the ones that are interesting. Note that
+`/data/data/de.hecate.wear/files/sessions/` is private storage: a plain
+`adb pull` reaches it only on a rooted watch, and `adb shell run-as` only on a
+debuggable build — which is a signature change, and therefore an uninstall.
+README's "Testing on the wrist" has the workable spellings. The phone is no help
+either; it ingests into Room and keeps no raw JSONL.
 
 ### 2.3 Route priority in use
 
