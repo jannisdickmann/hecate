@@ -6,7 +6,11 @@
          a network; the only off-device channel is the Wearable Data Layer. -->
 
     <uses-feature android:name="android.hardware.type.watch" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+    <!-- Required, and meant literally: without GNSS there is no track to record
+         and nothing for the matcher to match. tools:ignore because lint asks
+         every app this question and this is the answer. -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="true"
+        tools:ignore="UnnecessaryRequiredFeature" />
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -28,8 +32,10 @@
     <application
         android:name=".HecateApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="false"
         android:theme="@android:style/Theme.DeviceDefault">
 

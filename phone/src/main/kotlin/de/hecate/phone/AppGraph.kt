@@ -1,5 +1,6 @@
 package de.hecate.phone
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
 import de.hecate.phone.db.HecateDatabase
@@ -8,9 +9,14 @@ import de.hecate.phone.ingest.SessionRepository
 import de.hecate.phone.tcx.TcxImporter
 
 /**
- * §4: manual constructor wiring, one object. Hilt would add build complexity for
- * about fifteen objects.
+ * §4: no dependency injection framework. Manual constructor wiring, one object;
+ * Hilt would add build complexity for about fifteen objects.
+ *
+ * Lint sees a singleton holding objects that hold a Context and calls it a leak.
+ * What [init] stores is `context.applicationContext`, whose lifetime is the
+ * process — there is nothing shorter-lived here to leak.
  */
+@SuppressLint("StaticFieldLeak")
 object AppGraph {
     lateinit var db: HecateDatabase
         private set

@@ -49,9 +49,11 @@ object OngoingNotification {
         val open = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
+            // No FLAG_ACTIVITY_NEW_TASK / CLEAR_TOP: on Wear those break the
+            // recents model, PendingIntent.getActivity already starts the
+            // activity in its own task, and MainActivity is singleTask with an
+            // empty taskAffinity, which is what the flags were reaching for.
+            Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 

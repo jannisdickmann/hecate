@@ -19,6 +19,10 @@ import kotlinx.coroutines.launch
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
+        // Both declared actions are protected broadcasts, so only the system can
+        // send them — but the receiver must say so itself, or an intent with no
+        // action at all reaches this code.
+        if (intent?.action !in HANDLED) return
         AppGraph.init(context)
         val pending = AppGraph.sessions.unacked()
         if (pending.isEmpty()) return
@@ -35,5 +39,7 @@ class BootReceiver : BroadcastReceiver() {
 
     private companion object {
         const val TAG = "BootReceiver"
+
+        val HANDLED = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)
     }
 }

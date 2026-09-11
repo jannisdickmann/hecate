@@ -2,6 +2,7 @@ package de.hecate.wear.transfer
 
 import android.content.Context
 import android.util.Log
+import androidx.core.net.toUri
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -78,7 +79,7 @@ class Uploader(
         // Drop the now-redundant data item so the Data Layer does not keep it.
         runCatching {
             Wearable.getDataClient(context).deleteDataItems(
-                android.net.Uri.parse("wear://*" + Wire.PATH_SESSION_PREFIX + sessionId),
+                ("wear://*" + Wire.PATH_SESSION_PREFIX + sessionId).toUri(),
             )
         }
         Log.i(TAG, "Sitzung $sessionId bestätigt und gelöscht")

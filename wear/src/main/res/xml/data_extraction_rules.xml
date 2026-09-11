@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android:allowBackup="false" stopped being the whole story at Android 12, which
+  splits the question in two.
+
+  Cloud backup stays off, which is what allowBackup="false" has always meant here:
+  NFR-7 keeps this app off the network, and sessions and the route database are
+  not worth uploading to Google's servers on its behalf.
+
+  Device-to-device transfer is deliberately left at its default of "carry
+  everything". There is no export path — no network, no cloud backup — so blocking
+  it would mean a new phone starts with no route history at all, and that is a
+  bigger loss than the transfer is a risk.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+</data-extraction-rules>
