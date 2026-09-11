@@ -144,6 +144,9 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     medoidSessionId = cluster.medoidSessionId,
                     createdAt = prior?.createdAt ?: System.currentTimeMillis(),
                     active = true,
+                    // Like the name, the user's ranking is theirs and survives
+                    // every re-clustering pass.
+                    priority = prior?.priority ?: Tuning.DEFAULT_ROUTE_PRIORITY,
                 )
                 val routeId = if (existingId != null) {
                     routeDao.upsert(row)
@@ -229,6 +232,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         medianHr = profile.map { it.medianHr },
                     ),
                     prior = de.hecate.core.model.RoutePrior(members.size, priors),
+                    priority = route.priority,
                 ),
             )
         }

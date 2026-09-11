@@ -97,6 +97,20 @@ data class RouteEntry(
     val geometry: RouteGeometry,
     val profile: RouteProfile,
     val prior: RoutePrior,
+    /**
+     * The user's own ranking of this route, 1..10.
+     *
+     * Purely a tie-breaker, and only where the evidence cannot break the tie
+     * itself: while two routes share the same ground they explain every sample
+     * equally well, so the matcher will not choose between them. If exactly one
+     * of them outranks the rest, the user has already answered the question and
+     * the matcher takes their word for it.
+     *
+     * It does not touch the probabilistic weights. A high priority cannot make
+     * the matcher believe you are on a route you are demonstrably not on; it only
+     * decides which of several equally good explanations to show.
+     */
+    val priority: Int = de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY,
 )
 
 /**

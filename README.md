@@ -86,6 +86,23 @@ adb devices
 - Turn **off** the watch's automatic activity detection, or Health Connect gets
   every workout twice.
 
+## Route priority
+
+Shortcuts and variants are independent routes that happen to share a prefix
+(§8.1), and while two routes are on the same ground the matcher will not guess
+between them — it shows `Suche…`, with no ETA, until the paths part. On a route
+family that shares most of its length, that is most of the run.
+
+Each route therefore carries a priority from 1 to 10, set on its detail screen.
+Where several routes currently coincide and exactly one outranks the rest, the
+watch assumes that one and gives you its name, remaining distance and ETA from
+the start. A tie decides nothing, so leaving everything at the default 5 keeps
+the cautious behaviour — the feature turns itself on when you first use it.
+
+It is a tie-breaker and nothing more. It cannot put you on a route you are not
+on: the moment the ground contradicts it, the evidence wins and the label
+switches. An assumed route shows blue on the watch, a worked-out one green.
+
 ## Tuning
 
 Every constant in the system is in `core/src/main/kotlin/de/hecate/core/Tuning.kt`,

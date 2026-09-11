@@ -14,10 +14,16 @@ and worn, none of the device behaviour is verified.
 
 ### 1.1 The Android modules have never been compiled
 
-**Why.** The build environment reaches Maven Central but `dl.google.com` is
-blocked by network policy, so the Android Gradle Plugin, AndroidX, Compose,
-Room, Health Services, Health Connect and Play Services cannot be resolved. No
-Android SDK is installed either.
+**Why.** The build environment reaches Maven Central but **`dl.google.com`** is
+refused by the egress policy, so the Android Gradle Plugin, AndroidX, Compose,
+Room, Health Services, Health Connect and Play Services cannot be resolved.
+`maven.google.com` is only a redirector and lands on the same host. No Android
+SDK is installed either, and the SDK downloads come from that host too.
+
+Allowing that single domain in the environment's network policy would let a
+future session install the SDK, resolve everything, and actually compile both
+modules — which is most of what this section is about. Running the app would
+still need a device.
 
 **What was done instead.** `settings.gradle.kts` includes `:wear` and `:phone`
 only when an SDK is present (`sdk.dir` in `local.properties`, or `ANDROID_HOME`
@@ -124,7 +130,28 @@ Once you have ten or so real sessions, `adb pull` them off the watch
 (`/data/data/de.hecate.wear/files/sessions/`) into a `fixtures/` directory and
 commit the ones that are interesting.
 
-### 2.3 Ahead/behind sign convention
+### 2.3 Route priority is a blunt instrument on purpose
+
+Priority (Appendix A.4b) breaks ties between routes that share the same ground.
+It is a single integer per route, compared only against other *contenders*, and
+it is deliberately not context-aware: the same ranking applies on a Tuesday
+morning and a Sunday afternoon. If you habitually take the long route on
+weekdays and the shortcut at weekends, priority cannot express that — the
+start-of-session prior already buckets by weekday and time of day, and the
+obvious extension is to let priority do the same. Left simple until there is
+evidence that the simple version is not enough.
+
+Two things to watch once you are using it:
+
+- Setting a priority rebuilds and pushes the bundle immediately, so it takes
+  effect on the next workout rather than after the next ingest. If the watch is
+  out of range when you change it, it takes effect whenever the watch next syncs.
+- Preferring the long route costs roughly twenty seconds of wrong label on the
+  days you take the shortcut — one `COMMIT_HOLD_SAMPLES` window after the paths
+  part. That is the trade you are making, and it is the right way round only if
+  you take the preferred route most of the time.
+
+### 2.4 Ahead/behind sign convention
 
 `deltaVsMedianS` is `elapsed − median`, so **positive means slower than usual**.
 The watch shows `+45 s` in red with "langsamer als sonst" beneath, `−12 s` in
@@ -132,7 +159,7 @@ green with "schneller als sonst". Runners are used to the opposite sign from
 race splits. Change `Format.delta` and the colour test in `RoutePage` together
 if you want it the other way round.
 
-### 2.4 A parallel street 80 m away will match a learned route
+### 2.5 A parallel street 80 m away will match a learned route
 
 With `NULL_DISTANCE_M` at 120 m (Appendix A.3), a path running 80 m from a known
 route still scores better than "unknown", so it will be reported as that route —
@@ -141,7 +168,7 @@ combination is arguably the right behaviour ("you're doing the work route, but
 you're off it"), but it has not been tried in a real street grid, where routes
 80 m apart are common. Watch for it.
 
-### 2.5 Clustering is O(n²) and recomputed on every ingest
+### 2.6 Clustering is O(n²) and recomputed on every ingest
 
 §5.7 says this is fine for a few hundred sessions and defers incremental
 clustering (§8). At one workout a day that is fine for a year. The coverage
@@ -150,7 +177,7 @@ metric is the expensive part and is accelerated by a bucket index, but
 run. Measure it once you have two hundred sessions; if it hurts, cache the
 resampled tracks rather than reaching for incremental clustering.
 
-### 2.6 Bundle size on the watch
+### 2.7 Bundle size on the watch
 
 A route bundle is gzipped JSON containing every route's geometry at 10 m spacing
 plus its profile. Fifty 10 km routes is roughly 50 000 points — a few hundred

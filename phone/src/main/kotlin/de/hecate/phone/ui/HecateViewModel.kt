@@ -39,6 +39,7 @@ data class RouteDetail(
     val medianDurationMs: Long?,
     val bestDurationMs: Long?,
     val worstDurationMs: Long?,
+    val priority: Int,
     val sessions: List<SessionSummary>,
     /** Per-kilometre median/best/worst splits, in seconds. */
     val splits: List<Split>,
@@ -57,6 +58,8 @@ data class SessionDetail(
     val hcError: String?,
     val matchLogSize: Int,
     val matchEvents: List<MatchLogEntry>,
+    /** Whether the watch worked the route out or assumed it from the ranking. */
+    val committedByPriority: Boolean,
 )
 
 /**
@@ -127,6 +130,22 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = "Umbenannt"
     }
 
+    /**
+     * Set the user's ranking for a route, 1..10 (US-4 manual override).
+     *
+     * Takes effect on the watch with the next bundle push, so the bundle is
+     * rebuilt immediately rather than waiting for the next workout to be
+     * ingested — otherwise changing a priority would appear to do nothing until
+     * the next run, which is the run it was meant to affect.
+     */
+    fun setPriority(routeId: Long, priority: Int) = viewModelScope.launch {
+        val clamped = priority.coerceIn(Tuning.MIN_ROUTE_PRIORITY, Tuning.MAX_ROUTE_PRIORITY)
+        db.routes().setPriority(routeId, clamped)
+        loadRoute(routeId)
+        Jobs.enqueueClustering(getApplication())
+        _status.value = "Priorität $clamped"
+    }
+
     fun recluster() = viewModelScope.launch {
         Jobs.enqueueClustering(getApplication())
         _status.value = "Neu-Clustering gestartet"
@@ -160,6 +179,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             exerciseType = route.exerciseType,
             lengthM = route.lengthM,
             memberCount = route.memberCount,
+            priority = route.priority,
             geometry = points.map { LatLon(it.lat, it.lon) },
             medianDurationMs = durations.median(),
             bestDurationMs = durations.minOrNull(),
@@ -258,6 +278,10 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             hcState = entity.hcWriteState,
             hcError = entity.hcError,
             matchLogSize = log.size,
+            committedByPriority = log.lastOrNull {
+                it.event == de.hecate.core.model.MatchEvent.COMMIT ||
+                    it.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY
+            }?.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY,
             // Only the interesting lines: commits, demotions, deviations.
             matchEvents = log.filter { it.event != de.hecate.core.model.MatchEvent.SAMPLE }.take(50),
         )

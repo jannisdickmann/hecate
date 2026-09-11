@@ -178,9 +178,15 @@ private fun RoutePage(state: RecorderUiState) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // Green: worked out from today's track. Blue: assumed, because you
+        // ranked this route above the others it is currently indistinguishable
+        // from. Both are a name on the screen; only one of them is a finding.
         val (label, colour) = when {
             state.matcherDisabled -> "Matcher aus" to Color.Gray
-            state.matchPhase == MatchPhase.COMMITTED -> (state.routeName ?: "Route") to Color(0xFF81C784)
+            state.matchPhase == MatchPhase.COMMITTED && state.routeByPriority ->
+                (state.routeName ?: "Route") to Color(0xFF64B5F6)
+            state.matchPhase == MatchPhase.COMMITTED ->
+                (state.routeName ?: "Route") to Color(0xFF81C784)
             state.matchPhase == MatchPhase.UNKNOWN -> "Unbekannt" to Color.Gray
             else -> "Suche…" to Color(0xFFFFB74D)
         }

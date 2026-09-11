@@ -148,6 +148,18 @@ object Tuning {
      *  committing inside a shared start segment that every route leaves from. */
     const val COMMIT_MIN_M: Double = 400.0
 
+    /** Manual route priority: the range the user may assign, and the value every
+     *  route starts at.
+     *
+     *  Priority breaks the ties that evidence cannot (see [COMMIT_SEPARATION_M]).
+     *  The default is the middle of the range and is the same for every route, so
+     *  until the user actually differentiates two routes nothing changes: equal
+     *  priorities tie, and a tie decides nothing. The feature is opt-in by
+     *  construction rather than by a flag. */
+    const val MIN_ROUTE_PRIORITY: Int = 1
+    const val MAX_ROUTE_PRIORITY: Int = 10
+    const val DEFAULT_ROUTE_PRIORITY: Int = 5
+
     /** Commitment additionally requires every other live candidate to be at least
      *  this much further [m] from the current position than the leader is.
      *
@@ -155,7 +167,10 @@ object Tuning {
      *  two or more routes remain plausible" (US-4). Where two routes coincide they
      *  explain the samples equally well, and the difference in their weights is
      *  then a measurement of the GNSS bias of the last minute, not of which route
-     *  the user is on. Deciding on it would be committing to noise. */
+     *  the user is on. Deciding on it would be committing to noise.
+     *
+     *  Routes that coincide within this distance are "contenders", and the only
+     *  thing that can pick between contenders is the user's own priority. */
     const val COMMIT_SEPARATION_M: Double = 50.0
 
     /** Below this weight a committed route is demoted back to "searching". Well

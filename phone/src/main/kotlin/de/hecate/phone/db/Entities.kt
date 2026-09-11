@@ -77,6 +77,10 @@ data class RouteEntity(
     @ColumnInfo(name = "medoid_session_id") val medoidSessionId: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "active") val active: Boolean = true,
+    /** The user's manual ranking, 1..10. Breaks ties the evidence cannot break:
+     *  see RouteEntry.priority in :core. Survives re-clustering, like the name. */
+    @ColumnInfo(name = "priority", defaultValue = "5")
+    val priority: Int = de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY,
 )
 
 @Entity(

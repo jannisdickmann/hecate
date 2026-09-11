@@ -32,6 +32,7 @@ data class RouteSummary(
     val memberCount: Int,
     val medianDurationMs: Long?,
     val bestDurationMs: Long?,
+    val priority: Int,
 )
 
 @Dao
@@ -123,6 +124,9 @@ interface RouteDao {
     @Query("UPDATE route SET name = :name, name_is_custom = 1 WHERE id = :id")
     suspend fun rename(id: Long, name: String)
 
+    @Query("UPDATE route SET priority = :priority WHERE id = :id")
+    suspend fun setPriority(id: Long, priority: Int)
+
     @Query("DELETE FROM route WHERE id = :id")
     suspend fun delete(id: Long)
 
@@ -162,7 +166,7 @@ interface RouteDao {
     @Query(
         """
         SELECT r.id, r.name, r.exercise_type AS exerciseType, r.length_m AS lengthM,
-               r.member_count AS memberCount,
+               r.member_count AS memberCount, r.priority,
                (SELECT s.active_duration_ms
                   FROM route_member m JOIN session s ON s.id = m.session_id
                  WHERE m.route_id = r.id

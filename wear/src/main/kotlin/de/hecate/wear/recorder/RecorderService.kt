@@ -389,6 +389,7 @@ class RecorderService : Service() {
             it.copy(
                 matchPhase = state.phase,
                 routeName = if (state.phase == MatchPhase.COMMITTED) name else null,
+                routeByPriority = state.committedByPriority,
                 remainingM = state.remainingM,
                 etaSecondsFromNow = state.etaSecondsFromNow,
                 deltaVsMedianS = state.deltaVsMedianS,

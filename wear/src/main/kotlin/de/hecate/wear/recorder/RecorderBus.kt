@@ -36,6 +36,9 @@ data class RecorderUiState(
     // Route page
     val matchPhase: MatchPhase = MatchPhase.SEARCHING,
     val routeName: String? = null,
+    /** The route was assumed from the user's own ranking rather than worked out
+     *  from the track. Shown in a different colour so a glance tells you which. */
+    val routeByPriority: Boolean = false,
     val remainingM: Double? = null,
     val etaSecondsFromNow: Double? = null,
     val deltaVsMedianS: Double? = null,

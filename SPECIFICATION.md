@@ -588,6 +588,53 @@ route is committed. Demotion and even dropping the candidate do not disarm it.
 This is a deliberate reading of US-7's intent ("if I leave the route I am told")
 over its literal wording ("never fires ... while the null hypothesis dominates").
 
+### A.4b Manual route priority
+
+Not in the specification at all; added after §8.1's consequences were looked at
+in practice.
+
+§8.1 makes shortcuts independent routes that happen to share a prefix, and A.2
+above stops the matcher choosing between routes while they coincide. Together
+these are correct and unhelpful: on a route family sharing 3 km of a 5 km run,
+the watch shows `Suche…` — and no remaining distance and no ETA — for most of
+the workout. The matcher is right that it cannot know. The user usually does.
+
+Implemented: every route carries an integer priority, 1..10, settable on the
+route detail screen and stored alongside the name. Where two or more routes are
+*contenders* — live, being tracked, and within `COMMIT_SEPARATION_M` of the
+nearest one — and exactly one of them outranks the rest, the matcher commits to
+that one and reports remaining distance and ETA from it. A tie at the top
+decides nothing and leaves the display searching, so the default (every route at
+5) reproduces the previous behaviour exactly; the feature is opt-in by
+construction rather than by a flag.
+
+Priority does not touch the probabilistic weights, and cannot make the matcher
+believe the user is somewhere they demonstrably are not:
+
+- It only ever selects among routes that already explain the current position
+  equally well. On a novel path there are no contenders and nothing to select.
+- It is re-decided every sample for as long as the tie lasts. The moment the
+  paths part, the ordinary evidence rule takes over and will demote a
+  priority-held commitment that the ground contradicts — so preferring the long
+  route costs about twenty seconds of wrong label on the day you take the
+  shortcut, and nothing else.
+- `MatchState.committedByPriority` and the `COMMIT_BY_PRIORITY` log event record
+  which of the two happened. The watch shows an assumed route in blue and a
+  worked-out one in green, so a glance distinguishes a finding from a setting.
+
+### A.4c The deviation alert is about the route network, not one route
+
+A.4 armed the detector on the committed route and measured against that route
+alone. With A.4b making commitment possible inside a shared prefix, the
+consequence became visible: commit to the long route, take a learned shortcut,
+and the watch buzzes "Abweichung" for the twenty seconds it takes the shortcut
+to commit — an alarm for doing something entirely familiar.
+
+§5.6 already had this right — "min distance across live candidates" — and A.4
+had narrowed it. Restored: the detector measures the minimum across the armed
+route and every live, tracking candidate. Leaving one known route for another is
+not leaving the route.
+
 ### A.5 Route identity across re-clustering
 
 §5.7 recomputes clustering from scratch on each ingest, and US-3 makes routes
@@ -612,6 +659,7 @@ the `route_member` table, which is not in §5.5.
 - `session.ingested_at` — diagnostics.
 - `route.name_is_custom` — distinguishes an auto-generated name, which may be
   regenerated, from one the user chose, which may not.
+- `route.priority` — see A.4b. Like the name, preserved across re-clustering.
 - `sample.active_ms` — §5.5 stores only `t_offset_ms`. Splits, ahead/behind and
   the profile all need elapsed *active* time, which cannot be reconstructed from
   the wall-clock offset once a session contains pauses.

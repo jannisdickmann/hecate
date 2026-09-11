@@ -72,7 +72,11 @@ class RouteMatcher(
     private var lastActiveMs = 0L
 
     private var commitHold = 0
+    private var commitHoldRouteId: Long? = null
     private var committedRouteId: Long? = null
+    /** True when the commitment rests on the user's priority rather than on
+     *  evidence. Reported so the display and the match log can say which. */
+    private var committedByPriority = false
     private var phase = MatchPhase.SEARCHING
 
     /**
@@ -297,7 +301,9 @@ class RouteMatcher(
                 c.logW = Double.NEGATIVE_INFINITY
                 if (committedRouteId == id) {
                     committedRouteId = null
+                    committedByPriority = false
                     commitHold = 0
+                    commitHoldRouteId = null
                     phase = MatchPhase.SEARCHING
                 }
                 // Note: the deviation detector is deliberately not disarmed here.
@@ -355,7 +361,9 @@ class RouteMatcher(
             val was = phase
             if (committedRouteId != null) {
                 committedRouteId = null
+                committedByPriority = false
                 commitHold = 0
+                commitHoldRouteId = null
                 phase = MatchPhase.UNKNOWN
                 return MatchEvent.DEMOTE
             }
@@ -363,54 +371,137 @@ class RouteMatcher(
             return if (was != MatchPhase.UNKNOWN) MatchEvent.NULL_DOMINANT else null
         }
 
+        val contenders = contenders()
+        val winner = priorityWinner(contenders)
+
+        // What commitment should be aiming at right now, and on what grounds.
+        //  - one contender: the paths have separated, so the ordinary evidence
+        //    test applies and the weight has to earn it;
+        //  - several contenders: the evidence cannot choose, so only the user's
+        //    priority can, and a tie means nobody does.
+        val preferred: Cand?
+        val byPriority: Boolean
+        if (contenders.size <= 1) {
+            preferred = contenders.firstOrNull()
+                ?.takeIf { it === top && topW >= Tuning.COMMIT_WEIGHT }
+            byPriority = false
+        } else {
+            preferred = winner
+            byPriority = winner != null
+        }
+
         if (committedRouteId != null) {
-            if (topW < Tuning.DEMOTE_WEIGHT || top == null || top.routeId != committedRouteId) {
+            val current = cands[committedRouteId]
+            val stillCommitted = when {
+                current == null || current.dropped -> false
+                current.trackRatio < Tuning.MIN_TRACKING_RATIO -> false
+                // A priority commitment is only ever as good as the tie it broke,
+                // so it is re-decided for as long as the tie exists.
+                committedByPriority && contenders.size > 1 ->
+                    winner?.routeId == committedRouteId
+                // Everything else holds on the ordinary weight rule with its
+                // hysteresis — including when routes converge again at a shared
+                // finish. Three kilometres of accumulated evidence is exactly
+                // what a shared last hundred metres must not be allowed to erase.
+                else -> top?.routeId == committedRouteId && topW >= Tuning.DEMOTE_WEIGHT
+            }
+            if (!stillCommitted) {
                 committedRouteId = null
+                committedByPriority = false
                 commitHold = 0
+                commitHoldRouteId = null
                 phase = MatchPhase.SEARCHING
-                // The detector stays armed on purpose: a demotion is very often
-                // the first symptom of the departure it is watching for.
+                // The deviation detector stays armed on purpose: a demotion is
+                // very often the first symptom of the departure it watches for.
                 return MatchEvent.DEMOTE
             }
+            // A priority commitment whose tie has resolved in its favour is now
+            // backed by the evidence, and should stop claiming otherwise.
+            if (committedByPriority && contenders.size <= 1) committedByPriority = false
             phase = MatchPhase.COMMITTED
             return null
         }
 
         phase = MatchPhase.SEARCHING
-        if (top != null && topW >= Tuning.COMMIT_WEIGHT && isSeparated(top)) {
-            commitHold++
-            if (commitHold >= Tuning.COMMIT_HOLD_SAMPLES && travelledM >= Tuning.COMMIT_MIN_M) {
-                committedRouteId = top.routeId
-                phase = MatchPhase.COMMITTED
-                if (armedRouteId != top.routeId) armDeviation(top.routeId)
-                return MatchEvent.COMMIT
-            }
-        } else {
+        if (preferred == null) {
             commitHold = 0
+            commitHoldRouteId = null
+            return null
+        }
+        // The hold has to be about one route. A run of samples that kept changing
+        // its mind is not twenty samples of agreement.
+        if (commitHoldRouteId != preferred.routeId) {
+            commitHold = 0
+            commitHoldRouteId = preferred.routeId
+        }
+        commitHold++
+        if (commitHold >= Tuning.COMMIT_HOLD_SAMPLES && travelledM >= Tuning.COMMIT_MIN_M) {
+            committedRouteId = preferred.routeId
+            committedByPriority = byPriority
+            phase = MatchPhase.COMMITTED
+            if (armedRouteId != preferred.routeId) armDeviation(preferred.routeId)
+            return if (byPriority) MatchEvent.COMMIT_BY_PRIORITY else MatchEvent.COMMIT
         }
         return null
     }
 
     /**
-     * True when no other live candidate is close enough to the current position to
-     * be an equally good explanation of it (US-4).
+     * The routes that currently explain the user's position equally well (US-4).
      *
-     * Weights cannot answer this question. Two routes sharing a street fit every
-     * sample equally well, and whichever is a few metres nearer today wins on
-     * correlated noise alone. Geometry can: while a rival is still hugging the
-     * same ground, nothing is decided.
+     * Weights cannot identify these. Two routes sharing a street fit every sample
+     * alike, and whichever is a few metres nearer today is nearer because of
+     * correlated GNSS bias, not because the user is on it. Geometry can: anchored
+     * on whichever live route the user is closest to, everything within
+     * [Tuning.COMMIT_SEPARATION_M] of that is indistinguishable from it.
+     *
+     * A candidate that is not tracking is excluded — a route whose geometry
+     * happens to pass under the user, but which they are demonstrably not
+     * following, is not a rival explanation of the journey.
+     *
+     * Returned in ascending route id order, so every decision taken from this set
+     * is deterministic.
      */
-    private fun isSeparated(top: Cand): Boolean {
+    private fun contenders(): List<Cand> {
+        var best = Double.MAX_VALUE
         for (id in orderedIds) {
             val c = cands[id] ?: continue
-            if (c.dropped || c === top) continue
-            // Not tracking means not a rival: a route whose geometry happens to
-            // pass under the user, but which they are demonstrably not following,
-            // says nothing about whether the leader is ambiguous.
-            if (c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
-            if (c.offsetM <= top.offsetM + Tuning.COMMIT_SEPARATION_M) return false
+            if (c.dropped || c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
+            if (c.offsetM < best) best = c.offsetM
         }
-        return true
+        if (best == Double.MAX_VALUE) return emptyList()
+        val limit = best + Tuning.COMMIT_SEPARATION_M
+        val out = ArrayList<Cand>(4)
+        for (id in orderedIds) {
+            val c = cands[id] ?: continue
+            if (c.dropped || c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
+            if (c.offsetM <= limit) out.add(c)
+        }
+        return out
+    }
+
+    /**
+     * The contender the user has ranked above all the others, or null if the top
+     * priority is shared.
+     *
+     * This is the whole of the manual override: where the evidence is genuinely
+     * unable to choose, the user's own ranking chooses instead. A tie is not a
+     * decision, so a tie leaves the display searching — which is also why every
+     * route sharing the same default priority means nothing changes until the
+     * user says something.
+     */
+    private fun priorityWinner(contenders: List<Cand>): Cand? {
+        if (contenders.size < 2) return null
+        var best: Cand? = null
+        var bestPriority = Int.MIN_VALUE
+        var tied = false
+        for (c in contenders) {
+            val p = c.entry.priority
+            when {
+                p > bestPriority -> { bestPriority = p; best = c; tied = false }
+                p == bestPriority -> tied = true
+            }
+        }
+        return if (tied) null else best
     }
 
     /** Point the detector at a route and clear whatever it was doing before. */
@@ -425,10 +516,22 @@ class RouteMatcher(
     /** True on the sample at which the alert fires. */
     private fun updateDeviation(here: LatLon): Boolean {
         val poly = armedPoly ?: return false
-        // The distance to the route itself, not to wherever the matcher currently
-        // believes the user is on it. Once off route those two are different
-        // questions, and this is the one the user is asking.
-        val offset = poly.projectAll(here).distanceM
+        // The distance to the armed route itself, not to wherever the matcher
+        // currently believes the user is on it. Once off route those two are
+        // different questions, and this is the one the user is asking.
+        var offset = poly.projectAll(here).distanceM
+
+        // ...but the alert is about leaving the known route network, not about
+        // leaving one particular route, which is why §5.6 takes the minimum
+        // across live candidates. Without that, running a learned shortcut off a
+        // learned long route buzzes at you for the twenty seconds it takes the
+        // shortcut to commit — an alarm for doing something entirely familiar.
+        for (id in orderedIds) {
+            val c = cands[id] ?: continue
+            if (c.dropped || c.routeId == armedRouteId) continue
+            if (c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
+            if (c.offsetM < offset) offset = c.offsetM
+        }
 
         if (offset > Tuning.DEVIATION_M) {
             deviationCount++
@@ -483,6 +586,7 @@ class RouteMatcher(
             tOffsetMs = tOffsetMs,
             phase = phase,
             committedRouteId = committedRouteId,
+            committedByPriority = committedByPriority,
             nullWeight = nullWeight,
             candidates = live,
             travelledM = travelledM,

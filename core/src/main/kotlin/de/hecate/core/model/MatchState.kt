@@ -39,6 +39,10 @@ data class MatchState(
     val tOffsetMs: Long,
     val phase: MatchPhase,
     val committedRouteId: Long? = null,
+    /** True when the commitment rests on the user's manual route priority rather
+     *  than on evidence: the routes coincided, and the user had already said
+     *  which one to assume. */
+    val committedByPriority: Boolean = false,
     val nullWeight: Double = 1.0,
     val candidates: List<Candidate> = emptyList(),
     val travelledM: Double = 0.0,
@@ -70,6 +74,9 @@ enum class MatchEvent {
     ADMIT,
     DROP,
     COMMIT,
+    /** Committed because the user ranked this route above the others it was
+     *  indistinguishable from, not because the evidence chose it. */
+    COMMIT_BY_PRIORITY,
     DEMOTE,
     NULL_DOMINANT,
     DEVIATION,

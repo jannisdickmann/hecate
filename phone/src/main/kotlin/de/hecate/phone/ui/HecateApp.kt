@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -227,6 +228,7 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
         Text("Zuordnung", fontWeight = FontWeight.Bold)
         KeyValue("Route", d.routeName ?: "keine")
         KeyValue("Festlegung bei", d.committedAtM?.let { Format.distance(it) } ?: "–")
+        KeyValue("Festlegung durch", if (d.committedByPriority) "Priorität" else "Spurverlauf")
         KeyValue("Deckung", d.coverage?.let { String.format(java.util.Locale.GERMANY, "%.2f", it) } ?: "–")
         KeyValue("Match-Log", "${d.matchLogSize} Einträge")
 
@@ -298,6 +300,10 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
                 append(r.medianDurationMs?.let { Format.duration(it) } ?: "–")
                 append(" · Beste ")
                 append(r.bestDurationMs?.let { Format.duration(it) } ?: "–")
+                // Only worth the pixels when the user has actually said something.
+                if (r.priority != de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY) {
+                    append(" · Prio ${r.priority}")
+                }
             },
             fontSize = 13.sp,
             color = Color.Gray,
@@ -334,6 +340,9 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
 
         Spacer(Modifier.height(8.dp))
         PolylineView(d.geometry)
+        Spacer(Modifier.height(12.dp))
+
+        PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
         Spacer(Modifier.height(12.dp))
 
         KeyValue("Art", Format.exerciseType(d.exerciseType))
@@ -377,6 +386,54 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
 }
 
 // ---------------------------------------------------------------------- bits
+
+/**
+ * The manual route ranking, 1..10.
+ *
+ * Only matters where two routes share the same ground and the matcher therefore
+ * refuses to choose between them (US-4). Raise one above the other and the watch
+ * will assume that one — with its name, its remaining distance and its ETA —
+ * from the start, instead of showing "Suche…" until the paths part. Leaving
+ * everything at 5 keeps the cautious behaviour.
+ */
+@Composable
+private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Priorität", color = Color.Gray, fontSize = 14.sp)
+            Text("$current", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            for (v in 1..10) {
+                val selected = v == current
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 1.dp)
+                        .clickable { onChange(v) },
+                    color = if (selected) Color(0xFF00796B) else Color(0x14000000),
+                ) {
+                    Text(
+                        "$v",
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        textAlign = TextAlign.Center,
+                        fontSize = 13.sp,
+                        color = if (selected) Color.White else Color.DarkGray,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Entscheidet nur zwischen Routen, die sich denselben Weg teilen. " +
+                "Bei Gleichstand bleibt die Anzeige auf „Suche…“.",
+            fontSize = 11.sp,
+            color = Color.Gray,
+        )
+    }
+}
 
 @Composable
 private fun KeyValue(key: String, value: String) {
