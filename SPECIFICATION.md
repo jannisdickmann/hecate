@@ -680,6 +680,16 @@ matters most, has exactly one and no Android dependency at all.
 `kotlinx-coroutines-play-services` was deliberately *not* added; the handful of
 `Task` awaits use `Tasks.await` on an IO dispatcher instead.
 
+A third name appears in `:wear`'s dependency block since the module was first
+compiled: `com.google.guava:guava`, `compileOnly`. Health Services returns a
+`ListenableFuture` from every `*Async` method but declares Guava at runtime
+scope, so the type is missing from the compile classpath while the
+implementation is already in the APK. It is a declaration of something that was
+always shipping, not a new dependency, and it contributes nothing to the
+artifact — but the count above is now two declared plus one compile-time-only,
+and saying otherwise would be the kind of accounting this appendix exists to
+prevent. See OPEN-POINTS.md §1.1.
+
 ### A.8 Scope not reached
 
 - §6.5's on-wrist and emulator test layers cannot be exercised here. See

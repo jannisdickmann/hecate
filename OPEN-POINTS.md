@@ -4,57 +4,131 @@ Things that need a human, a device, or a decision before Hecate can be trusted
 with a workout. Ordered by how much damage they can do.
 
 The short version: `:core` is built, tested and believed correct. `:wear` and
-`:phone` are written but have never been compiled, because this development
-environment cannot reach Google's Maven repository. Until they have been built
-and worn, none of the device behaviour is verified.
+`:phone` now compile, lint clean and assemble to APKs — see §1.1 — but neither
+has been installed on anything. Until they have been worn, none of the device
+*behaviour* is verified; what is verified is that the code says what it meant to
+say to the libraries it calls.
 
 ---
 
-## 1. Blocking — nothing has been built for a device
+## 1. Blocking — nothing has been run on a device
 
-### 1.1 The Android modules have never been compiled
+### 1.1 ~~The Android modules have never been compiled~~ Both modules build
 
-**Why.** The build environment reaches Maven Central but **`dl.google.com`** is
-refused by the egress policy, so the Android Gradle Plugin, AndroidX, Compose,
-Room, Health Services, Health Connect and Play Services cannot be resolved.
-`maven.google.com` is only a redirector and lands on the same host. No Android
-SDK is installed either, and the SDK downloads come from that host too.
+**Resolved.** Access to `dl.google.com` was the whole of it. With SDK platform
+36 installed and `sdk.dir` set in `local.properties`:
 
-Allowing that single domain in the environment's network policy would let a
-future session install the SDK, resolve everything, and actually compile both
-modules — which is most of what this section is about. Running the app would
-still need a device.
+```bash
+./gradlew :phone:assembleDebug  :wear:assembleDebug    # both APKs
+./gradlew :phone:lintDebug      :wear:lintDebug        # "No issues found", both
+./gradlew :phone:assembleRelease :wear:assembleRelease # unsigned; see §1.2
+./gradlew :core:test                                   # still 77/77
+```
 
-**What was done instead.** `settings.gradle.kts` includes `:wear` and `:phone`
-only when an SDK is present (`sdk.dir` in `local.properties`, or `ANDROID_HOME`
-/ `ANDROID_SDK_ROOT`), so `./gradlew :core:test` works regardless. Every Android
-source file was run through the Kotlin compiler to rule out syntax errors; the
-remaining diagnostics were all unresolved AndroidX symbols.
+`settings.gradle.kts` needed no change: it picks the modules up as soon as an
+SDK is there, exactly as intended.
 
-**What you must do.** Open the project in Android Studio and build both modules.
-Expect to fix compile errors. The likeliest places, in order:
+The errors were real version drift, roughly where this section predicted, plus
+two places it did not look. Item by item, against the original list:
 
-- **Health Services** (`ExerciseSource`, `RecorderService`). Alpha-versioned and
-  it churns (§7). Specifically unverified: the exact shape of
-  `ExerciseUpdateCallback`, whether `DataType.DISTANCE_TOTAL` is retrieved via
-  `getData(...).total`, the fields of `LocationData`
-  (`horizontalPositionErrorMeters` in particular), and the `ExerciseState`
-  category predicates `isEnded` / `isEnding` / `isPaused`. The state handling
-  was written against those predicates rather than an exhaustive list of
-  constants precisely so that an enum addition lands in a sensible bucket.
-- **Health Connect** (`HealthConnectWriter`). `Metadata.activelyRecorded(device,
-  clientRecordId)` is the current factory; earlier and later alphas spell this
-  differently, and older ones took a bare `Metadata()` constructor. Also verify
-  that `ExerciseRoute.Location` still takes `horizontalAccuracy` as a `Length`.
-- **Room** (`Daos.kt`). The route-summary query computes a median with
-  `LIMIT 1 OFFSET (SELECT COUNT(*)/2 ...)`. Room validates queries at compile
-  time, so this will either work or tell you exactly what it dislikes.
-- **Wear Compose** (`HecateWearApp`). `Chip`, `ChipDefaults.primaryChipColors`
-  and `Button` come from `androidx.wear.compose.material` (Material 2 for Wear).
-  If you move to `wear.compose.material3`, all three change shape.
+- **Health Services** (`ExerciseSource`, `RecorderService`).
+  ~~the exact shape of `ExerciseUpdateCallback`~~ — five methods, as written.
+  ~~whether `DataType.DISTANCE_TOTAL` is retrieved via `getData(...).total`~~ —
+  it is. ~~the `ExerciseState` category predicates `isEnded` / `isEnding` /
+  `isPaused`~~ — all three exist; writing against the predicates rather than an
+  enum list was the right call and needed no change.
 
-Pin whatever versions actually work in `gradle/libs.versions.toml` and do not
-drift from them casually (§7).
+  **`LocationData` was wrong, and no version fixes it.** It carries four fields
+  — latitude, longitude, altitude, bearing — in the pinned 1.1.0-alpha05 and in
+  1.1.0-rc02 alike. `horizontalPositionErrorMeters` lives on `LocationAccuracy`,
+  reached through the data point's `accuracy`, which is null whenever Health
+  Services has no estimate to give. `altitude` is a non-null `Double` that
+  signals unavailability with NaN, so the safe call was never doing any work and
+  the `isFinite()` test was already the whole check.
+
+  **Not anticipated: `ListenableFuture` is not on the compile classpath.**
+  Every `ExerciseClient.*Async` method returns one, but health-services-client
+  declares Guava at *runtime* scope — in every version from 1.1.0-alpha05 to
+  1.1.0-rc02. Guava's presence at runtime then resolves
+  `com.google.guava:listenablefuture` to the empty
+  `9999.0-empty-to-avoid-conflict-with-guava` marker, and AGP's consistent
+  resolution propagates that to the compile classpath, so androidx.concurrent's
+  own copy is empty too. Fixed with a `compileOnly` dependency on
+  `com.google.guava:guava:31.1-android`, the version health-services-client
+  itself resolves to. It is already in the APK transitively, so the artifact is
+  unchanged, and NFR-8 / Appendix A.7's count of non-AndroidX *runtime*
+  dependencies is unchanged with it.
+
+  `health-services-client` stays pinned at **1.1.0-alpha05**. Nothing here
+  needed a newer one. 1.1.0-rc02 exists if you want it, and is a deliberate
+  decision (§7), not a compile fix.
+
+- **Health Connect** (`HealthConnectWriter`).
+  `Metadata.activelyRecorded(device, clientRecordId)` was spelled correctly; the
+  *pin* was too early. alpha11 exposes only the raw `Metadata(...)` constructor,
+  and the named factories arrive in **1.1.0-alpha12**, which is now what is
+  pinned. Not one line of the writer changed.
+
+  Worth knowing if you touch it: `activelyRecordedWithId`'s `id` is Health
+  Connect's own record UUID, for updating a record that already exists — not a
+  synonym for `clientRecordId`. The idempotent insert this app wants is the
+  two-argument `activelyRecorded`.
+
+  ~~verify that `ExerciseRoute.Location` still takes `horizontalAccuracy` as a
+  `Length`~~ — it does.
+
+  **1.1.0 has since gone stable** with an identical `Metadata` surface. Moving
+  to it is a one-line change and has deliberately been left as a decision rather
+  than folded into a compile fix.
+
+- **Room** (`Daos.kt`). ~~this will either work or tell you exactly what it
+  dislikes~~ — it told us exactly, and it was right: a LIMIT/OFFSET expression
+  in SQLite cannot reach the enclosing query, so the correlated
+  `OFFSET (SELECT COUNT(*)/2 … WHERE mm.route_id = r.id)` fails with "no such
+  column: r.id". Confirmed against sqlite3 directly, not just taken from the
+  error. Replaced with a window function over a CTE — one pass for the whole
+  list instead of a correlated subquery per row.
+
+  **Found while rewriting it: there were three different medians.** The comment
+  said "lower median", the SQL's `OFFSET n/2` gave the *upper* median for an even
+  member count, and `HecateViewModel.median()` — which feeds the route *detail*
+  screen — averages the two middle values. The list row and the detail screen
+  would have disagreed on the same route. The SQL now matches the Kotlin helper.
+  If you would rather both be the lower median, change them together.
+
+- **Wear Compose** (`HecateWearApp`). ~~`Chip`, `ChipDefaults.primaryChipColors`
+  and `Button`~~ — nothing to fix. All three are where they were expected, in
+  `androidx.wear.compose.material` at the pinned wear-compose 1.4.1. The warning
+  about `wear.compose.material3` still stands for anyone tempted.
+
+Two things this section did not think to look at:
+
+- **The build scripts themselves.** The first error out of a Gradle that could
+  finally resolve AGP was in `wear/build.gradle.kts` and `phone/build.gradle.kts`:
+  the receiver inside `signingConfigs { create("release") { … } }` shadows
+  `java`, so the literal `java.util.Properties()` does not resolve and the script
+  fails to compile before any module is configured. `keystore.properties` is now
+  read once at the top of each script.
+
+- **Lint had never run either.** One error, in both modules:
+  `InvalidFragmentVersionForActivityResult` on every `registerForActivityResult`.
+  Neither app uses fragments — androidx.fragment 1.1.0 arrives through
+  play-services-wearable → play-services-basement, and every basement release
+  from 18.4.0 to 18.9.0 names that same 1.1.0, so bumping Play Services would not
+  have helped. A `constraints` block raises it to 1.8.6. Both modules also had
+  twenty warnings between them; all are now fixed or suppressed with the reason
+  written at the suppression, and `lintDebug` reports "No issues found" for both.
+  The two suppressions are `StaticFieldLeak` on the `AppGraph` objects (what they
+  hold is the *application* context) and `UnnecessaryRequiredFeature` on the
+  watch's GPS feature (it is required, meant literally).
+
+Every version that changed is pinned in `gradle/libs.versions.toml` with the
+reason beside it: health-connect alpha11 → alpha12, plus two new pins that were
+not there before, guava 31.1-android and androidx.fragment 1.8.6. Nothing is
+left to "latest", and §7 still applies — upgrade deliberately.
+
+**What is still open here is device work, and only device work**: nothing below
+§1.2 has moved.
 
 ### 1.2 No release keystore exists
 
@@ -192,7 +266,7 @@ records a `PAUSE_AUTO` event, but this has never been exercised.
 
 ### 3.2 No instrumented tests
 
-`:core` has 62 JVM tests. Neither Android module has a single test. §6.5 does not
+`:core` has 77 JVM tests. Neither Android module has a single test. §6.5 does not
 ask for instrumented tests — it asks for emulator and on-wrist verification,
 both of which are manual. This is a reasonable position for a single-user
 sideloaded app, but it does mean every Android-side regression will be found by
