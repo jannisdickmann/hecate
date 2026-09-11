@@ -70,6 +70,17 @@ kotlin {
 dependencies {
     implementation(project(":core"))
 
+    constraints {
+        // Not a dependency of this module: play-services-wearable reaches
+        // androidx.fragment 1.1.0 through play-services-basement, and every
+        // basement release pins that same 1.1.0. Fragment that old predates
+        // FragmentActivity calling super.onRequestPermissionsResult(), so lint
+        // rejects registerForActivityResult outright — correctly in general,
+        // though the only activity here is a plain ComponentActivity. Constrain
+        // rather than depend: nothing in this app uses fragments.
+        implementation(libs.androidx.fragment)
+    }
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
