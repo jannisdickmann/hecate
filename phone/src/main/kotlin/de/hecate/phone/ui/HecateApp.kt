@@ -213,14 +213,10 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
         KeyValue("Distanz", Format.distance(d.summary.totalDistanceM))
         KeyValue("Ø Herzfrequenz", "${Format.hr(d.summary.avgHr)} bpm")
         KeyValue(
-            "Ø Pace",
-            Format.pace(
-                if (d.summary.totalDistanceM > 0) {
-                    (d.summary.activeDurationMs / 1000.0) / (d.summary.totalDistanceM / 1000.0)
-                } else {
-                    null
-                },
-            ) + " /km",
+            "Ø Geschwindigkeit",
+            Format.speed(
+                Format.speedFrom(d.summary.totalDistanceM, d.summary.activeDurationMs),
+            ) + " km/h",
         )
         KeyValue("Quelle", if (d.summary.source == "IMPORT_TCX") "TCX-Import" else "Uhr")
 
@@ -354,15 +350,18 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
 
         if (d.splits.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
-            Text("Kilometer-Splits", fontWeight = FontWeight.Bold)
+            // The splits are stored as the seconds each kilometre took, which is
+            // the natural measurement; km/h is what gets shown. "Beste" is still
+            // the fastest kilometre — the smallest time is the largest speed.
+            Text("Kilometer-Splits (km/h)", fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             MonoRow("km", "Median", "Beste", "Schlecht.", header = true)
             for (s in d.splits) {
                 MonoRow(
                     s.km.toString(),
-                    Format.pace(s.medianS),
-                    Format.pace(s.bestS),
-                    Format.pace(s.worstS),
+                    Format.speed(Format.speedOverKm(s.medianS)),
+                    Format.speed(Format.speedOverKm(s.bestS)),
+                    Format.speed(Format.speedOverKm(s.worstS)),
                 )
             }
         }

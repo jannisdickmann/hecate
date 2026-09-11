@@ -27,16 +27,20 @@ object Format {
         else String.format(DE, "%d:%02d", m, s)
     }
 
-    /** Pace as "5:32 /km"; null when there is nothing meaningful to show. */
-    fun pace(secondsPerKm: Double?): String {
-        if (secondsPerKm == null || !secondsPerKm.isFinite() || secondsPerKm <= 0 || secondsPerKm > 3600) return "–"
-        val total = secondsPerKm.roundToInt()
-        return String.format(DE, "%d:%02d /km", total / 60, total % 60)
+    /** Speed as "10,8 km/h". Never pace: this app speaks km/h everywhere.
+     *
+     *  The lower bound is the old one restated — a pace above 3600 s/km is a
+     *  speed below 1 km/h, which is standing still with a jittery fix, not a
+     *  number worth showing. */
+    fun speed(kmh: Double?): String {
+        if (kmh == null || !kmh.isFinite() || kmh < 1.0) return "–"
+        return String.format(DE, "%.1f km/h", kmh)
     }
 
-    fun paceFrom(distanceM: Double, activeMs: Long): Double? {
+    /** Average speed so far, in km/h. Null below 50 m, where it is all noise. */
+    fun speedFrom(distanceM: Double, activeMs: Long): Double? {
         if (distanceM < 50 || activeMs <= 0) return null
-        return (activeMs / 1000.0) / (distanceM / 1000.0)
+        return (distanceM / 1000.0) / (activeMs / 3_600_000.0)
     }
 
     /** Signed seconds against the median, e.g. "−12 s" (faster) or "+45 s". */

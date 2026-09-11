@@ -154,7 +154,7 @@ private fun LivePage(state: RecorderUiState) {
         Text(Format.distance(state.distanceM), fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.Center) {
-            Text(Format.pace(state.paceSecPerKm ?: Format.paceFrom(state.distanceM, shownDuration)), fontSize = 14.sp)
+            Text(Format.speed(state.speedKmh ?: Format.speedFrom(state.distanceM, shownDuration)), fontSize = 14.sp)
             Text("  ·  ", fontSize = 14.sp, color = Color.Gray)
             Text("${Format.heartRate(state.heartRateBpm)} bpm", fontSize = 14.sp)
         }

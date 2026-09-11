@@ -31,7 +31,7 @@ data class RecorderUiState(
     val activeDurationMs: Long = 0,
     val distanceM: Double = 0.0,
     val heartRateBpm: Int? = null,
-    val paceSecPerKm: Double? = null,
+    val speedKmh: Double? = null,
 
     // Route page
     val matchPhase: MatchPhase = MatchPhase.SEARCHING,

@@ -23,10 +23,24 @@ object Format {
         else String.format(DE, "%d:%02d", m, s)
     }
 
-    fun pace(secondsPerKm: Double?): String {
-        if (secondsPerKm == null || !secondsPerKm.isFinite() || secondsPerKm <= 0) return "–"
-        val t = secondsPerKm.roundToInt()
-        return String.format(DE, "%d:%02d", t / 60, t % 60)
+    /** Speed as "10,8". Never pace: this app speaks km/h everywhere. The unit is
+     *  left off so the number fits the splits table; callers with room for it
+     *  append " km/h". */
+    fun speed(kmh: Double?): String {
+        if (kmh == null || !kmh.isFinite() || kmh <= 0) return "–"
+        return String.format(DE, "%.1f", kmh)
+    }
+
+    /** km/h from a distance and the active time taken over it. */
+    fun speedFrom(meters: Double, activeMs: Long): Double? {
+        if (meters <= 0 || activeMs <= 0) return null
+        return (meters / 1000.0) / (activeMs / 3_600_000.0)
+    }
+
+    /** km/h from the seconds a single kilometre took — one split's worth. */
+    fun speedOverKm(seconds: Double?): Double? {
+        if (seconds == null || !seconds.isFinite() || seconds <= 0) return null
+        return 3600.0 / seconds
     }
 
     /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
