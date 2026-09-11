@@ -162,23 +162,13 @@ contemplates, this is the thing that will complain first.
 
 ## 3. Known gaps against the specification
 
-### 3.1 `match_coverage` is never populated
-
-§5.5 has a `match_coverage` column and US-8 lists a coverage score on the
-session detail screen. The matcher reports weights, not a coverage figure, and
-the clusterer computes coverage only between pairs of tracks. The column exists,
-the screen shows a dash, and the honest fix is to compute the coverage of the
-session against its matched route's geometry at the end of `ClusterWorker` —
-`CoverageMetric.fracWithin` already does the work. Left undone rather than
-faked.
-
-### 3.2 The auto-pause broadcast test has not been run
+### 3.1 The auto-pause broadcast test has not been run
 
 §6.5 gives an `adb shell am broadcast` incantation for injecting
 `whs.AUTO_PAUSE_DETECTED`. The code handles `ExerciseState.AUTO_PAUSED` and
 records a `PAUSE_AUTO` event, but this has never been exercised.
 
-### 3.3 No instrumented tests
+### 3.2 No instrumented tests
 
 `:core` has 62 JVM tests. Neither Android module has a single test. §6.5 does not
 ask for instrumented tests — it asks for emulator and on-wrist verification,
@@ -186,14 +176,14 @@ both of which are manual. This is a reasonable position for a single-user
 sideloaded app, but it does mean every Android-side regression will be found by
 wearing it.
 
-### 3.4 Battery has not been measured
+### 3.3 Battery has not been measured
 
 NFR-3 asks for battery cost comparable to Google's Exercise app. The matcher's
 CPU budget is tested (a unit test fails if it exceeds 5 ms per sample with a
 realistic route set); the GNSS and heart-rate cost is whatever Health Services
 does. Unmeasured.
 
-### 3.5 Ambient batching has not been observed
+### 3.4 Ambient batching has not been observed
 
 §1.3 says exercise data arrives at ~1 Hz with the screen on and batched while
 ambient. The matcher is proven to produce identical results either way — that is

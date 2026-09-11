@@ -7,6 +7,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import de.hecate.core.Tuning
 import de.hecate.core.cluster.BundleBuilder
+import de.hecate.core.cluster.CoverageMetric
 import de.hecate.core.cluster.RouteNamer
 import de.hecate.core.geo.Track
 import de.hecate.core.model.ExerciseType
@@ -100,6 +101,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
         if (tracks.isEmpty()) return
 
+        val trackById = tracks.associateBy { it.sessionId }
         val computed = BundleBuilder.computeRoutes(tracks, hrBySession)
         Log.i(TAG, "${tracks.size} Sitzungen -> ${computed.size} aktive Routen")
 
@@ -113,7 +115,13 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             // are worth more than the row is worth reclaiming.
             val keptIds = assignment.values.toSet()
             for (r in existing) {
-                if (r.id !in keptIds && r.active) routeDao.upsert(r.copy(active = false))
+                if (r.id !in keptIds && r.active) {
+                    routeDao.upsert(r.copy(active = false))
+                    // Sessions must not keep pointing at a route that no longer
+                    // describes them; they will be re-matched below if they
+                    // landed in some other cluster.
+                    sessionDao.clearMatchesFor(r.id)
+                }
             }
 
             computed.forEachIndexed { index, cluster ->
@@ -166,8 +174,14 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 routeDao.clearMembers(routeId)
                 routeDao.insertMembers(cluster.memberSessionIds.map { RouteMemberEntity(routeId, it) })
 
+                // US-8 wants a coverage score per session. It is the same metric
+                // the clusterer decided membership with, measured against the
+                // route's final geometry rather than against another member.
+                val geometryPoly = BundleBuilder.toPolyline(cluster.geometry)
                 for (sessionId in cluster.memberSessionIds) {
-                    sessionDao.setMatch(sessionId, routeId, null, null)
+                    val coverage = trackById[sessionId]
+                        ?.let { CoverageMetric.fracWithin(it.points, geometryPoly) }
+                    sessionDao.setMatch(sessionId, routeId, coverage)
                 }
             }
         }

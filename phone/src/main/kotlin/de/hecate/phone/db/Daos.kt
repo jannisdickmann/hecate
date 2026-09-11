@@ -89,13 +89,14 @@ interface SessionDao {
     @Query("UPDATE session SET hc_write_state = :state, hc_error = :error WHERE id = :id")
     suspend fun setHcState(id: String, state: Int, error: String?)
 
-    @Query(
-        """
-        UPDATE session SET matched_route_id = :routeId, match_coverage = :coverage,
-                           committed_at_m = :committedAtM WHERE id = :id
-        """,
-    )
-    suspend fun setMatch(id: String, routeId: Long?, coverage: Double?, committedAtM: Double?)
+    /** Deliberately does not touch `committed_at_m`: that is a fact about what the
+     *  watch decided during the workout and re-clustering has no business
+     *  rewriting it. */
+    @Query("UPDATE session SET matched_route_id = :routeId, match_coverage = :coverage WHERE id = :id")
+    suspend fun setMatch(id: String, routeId: Long?, coverage: Double?)
+
+    @Query("UPDATE session SET matched_route_id = NULL, match_coverage = NULL WHERE matched_route_id = :routeId")
+    suspend fun clearMatchesFor(routeId: Long)
 
     @Query("DELETE FROM session WHERE id = :id")
     suspend fun delete(id: String)

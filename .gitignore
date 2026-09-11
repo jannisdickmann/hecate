@@ -32,3 +32,9 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Release signing coordinates (§6.3) — never committed
+keystore.properties
+
+# Recorded session fixtures pulled off the watch
+/fixtures/*.jsonl
