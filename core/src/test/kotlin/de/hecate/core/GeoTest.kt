@@ -1,7 +1,6 @@
 package de.hecate.core
 
 import de.hecate.core.geo.Geo
-import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Polyline
 import de.hecate.core.geo.Resampler
 import kotlin.math.abs

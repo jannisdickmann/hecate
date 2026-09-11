@@ -1,0 +1,171 @@
+package de.hecate.phone.db
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * The phone's schema, §5.5 verbatim where the spec named columns.
+ *
+ * `sample` is the only large table: a year of daily hour-long workouts is about
+ * 1.3 M rows, which SQLite does not notice.
+ */
+
+/** How far a session has got towards Health Connect (US-2). */
+object HcWriteState {
+    const val PENDING = 0
+    const val WRITTEN = 1
+    const val FAILED = 2
+    /** Imported sessions came *from* Health Connect and are never written back. */
+    const val SKIPPED = 3
+}
+
+@Entity(tableName = "session")
+data class SessionEntity(
+    @PrimaryKey @ColumnInfo(name = "id") val id: String,
+    @ColumnInfo(name = "started_at_utc") val startedAtUtc: Long,
+    @ColumnInfo(name = "tz_offset") val tzOffsetMinutes: Int,
+    @ColumnInfo(name = "exercise_type") val exerciseType: String,
+    @ColumnInfo(name = "active_duration_ms") val activeDurationMs: Long,
+    @ColumnInfo(name = "total_distance_m") val totalDistanceM: Double,
+    @ColumnInfo(name = "source") val source: String,
+    @ColumnInfo(name = "hc_write_state") val hcWriteState: Int = HcWriteState.PENDING,
+    @ColumnInfo(name = "hc_error") val hcError: String? = null,
+    @ColumnInfo(name = "matched_route_id") val matchedRouteId: Long? = null,
+    @ColumnInfo(name = "match_coverage") val matchCoverage: Double? = null,
+    @ColumnInfo(name = "committed_at_m") val committedAtM: Double? = null,
+    @ColumnInfo(name = "avg_hr") val avgHr: Double? = null,
+    @ColumnInfo(name = "ingested_at") val ingestedAt: Long = 0,
+)
+
+@Entity(
+    tableName = "sample",
+    primaryKeys = ["session_id", "t_offset_ms"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["session_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("session_id")],
+)
+data class SampleEntity(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "t_offset_ms") val tOffsetMs: Long,
+    @ColumnInfo(name = "active_ms") val activeMs: Long,
+    @ColumnInfo(name = "lat") val lat: Double,
+    @ColumnInfo(name = "lon") val lon: Double,
+    @ColumnInfo(name = "alt_m") val altM: Double?,
+    @ColumnInfo(name = "hr_bpm") val hrBpm: Int?,
+    @ColumnInfo(name = "accuracy_m") val accuracyM: Double?,
+    @ColumnInfo(name = "paused") val paused: Boolean,
+)
+
+@Entity(tableName = "route")
+data class RouteEntity(
+    @PrimaryKey(autoGenerate = true) @ColumnInfo(name = "id") val id: Long = 0,
+    @ColumnInfo(name = "name") val name: String,
+    /** True once the user has renamed it: auto-naming must not overwrite that. */
+    @ColumnInfo(name = "name_is_custom") val nameIsCustom: Boolean = false,
+    @ColumnInfo(name = "exercise_type") val exerciseType: String,
+    @ColumnInfo(name = "length_m") val lengthM: Double,
+    @ColumnInfo(name = "member_count") val memberCount: Int,
+    @ColumnInfo(name = "medoid_session_id") val medoidSessionId: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "active") val active: Boolean = true,
+)
+
+@Entity(
+    tableName = "route_point",
+    primaryKeys = ["route_id", "seq"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RouteEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["route_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class RoutePointEntity(
+    @ColumnInfo(name = "route_id") val routeId: Long,
+    @ColumnInfo(name = "seq") val seq: Int,
+    @ColumnInfo(name = "lat") val lat: Double,
+    @ColumnInfo(name = "lon") val lon: Double,
+    @ColumnInfo(name = "cum_dist_m") val cumDistM: Double,
+)
+
+@Entity(
+    tableName = "route_profile",
+    primaryKeys = ["route_id", "bin"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RouteEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["route_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class RouteProfileEntity(
+    @ColumnInfo(name = "route_id") val routeId: Long,
+    @ColumnInfo(name = "bin") val bin: Int,
+    @ColumnInfo(name = "median_cum_time_s") val medianCumTimeS: Double,
+    @ColumnInfo(name = "p25_s") val p25S: Double?,
+    @ColumnInfo(name = "p75_s") val p75S: Double?,
+    @ColumnInfo(name = "median_hr") val medianHr: Double?,
+)
+
+/** Which sessions a route was built from. Needed to keep route identity — and
+ *  therefore the user's own names — stable across re-clustering. */
+@Entity(
+    tableName = "route_member",
+    primaryKeys = ["route_id", "session_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RouteEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["route_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("session_id")],
+)
+data class RouteMemberEntity(
+    @ColumnInfo(name = "route_id") val routeId: Long,
+    @ColumnInfo(name = "session_id") val sessionId: String,
+)
+
+/** US-10: the match log, one blob per session. */
+@Entity(
+    tableName = "match_log",
+    primaryKeys = ["session_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["session_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class MatchLogEntity(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "payload", typeAffinity = ColumnInfo.BLOB) val payload: ByteArray,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is MatchLogEntity && other.sessionId == sessionId && other.payload.contentEquals(payload)
+
+    override fun hashCode(): Int = 31 * sessionId.hashCode() + payload.contentHashCode()
+}
+
+/** Small key/value table for the bundle version counter and similar. */
+@Entity(tableName = "meta")
+data class MetaEntity(
+    @PrimaryKey @ColumnInfo(name = "key") val key: String,
+    @ColumnInfo(name = "value") val value: String,
+)

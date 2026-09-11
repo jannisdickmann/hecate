@@ -1,0 +1,215 @@
+package de.hecate.phone.db
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Transaction
+import androidx.room.Upsert
+import kotlinx.coroutines.flow.Flow
+
+/** A row of the sessions list, without dragging every sample along. */
+data class SessionSummary(
+    val id: String,
+    val startedAtUtc: Long,
+    val tzOffsetMinutes: Int,
+    val exerciseType: String,
+    val activeDurationMs: Long,
+    val totalDistanceM: Double,
+    val source: String,
+    val hcWriteState: Int,
+    val matchedRouteId: Long?,
+    val routeName: String?,
+    val avgHr: Double?,
+)
+
+/** A row of the routes list (US-8). */
+data class RouteSummary(
+    val id: Long,
+    val name: String,
+    val exerciseType: String,
+    val lengthM: Double,
+    val memberCount: Int,
+    val medianDurationMs: Long?,
+    val bestDurationMs: Long?,
+)
+
+@Dao
+interface SessionDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(session: SessionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSamples(samples: List<SampleEntity>)
+
+    @Upsert
+    suspend fun upsertMatchLog(log: MatchLogEntity)
+
+    @Query("SELECT COUNT(*) FROM session WHERE id = :id")
+    suspend fun countById(id: String): Int
+
+    /** §7: dedupe by time window, which catches both TCX re-imports and the
+     *  watch's own auto-detected duplicates. */
+    @Query(
+        """
+        SELECT * FROM session
+        WHERE ABS(started_at_utc - :startedAtUtc) <= :windowMs
+        """,
+    )
+    suspend fun near(startedAtUtc: Long, windowMs: Long): List<SessionEntity>
+
+    @Query("SELECT * FROM session WHERE id = :id")
+    suspend fun byId(id: String): SessionEntity?
+
+    @Query("SELECT * FROM session ORDER BY started_at_utc DESC")
+    suspend fun all(): List<SessionEntity>
+
+    @Query(
+        """
+        SELECT s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
+               s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
+               s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
+               s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+        FROM session s LEFT JOIN route r ON r.id = s.matched_route_id
+        ORDER BY s.started_at_utc DESC
+        """,
+    )
+    fun summaries(): Flow<List<SessionSummary>>
+
+    @Query("SELECT * FROM sample WHERE session_id = :id ORDER BY t_offset_ms")
+    suspend fun samples(id: String): List<SampleEntity>
+
+    @Query("SELECT * FROM match_log WHERE session_id = :id")
+    suspend fun matchLog(id: String): MatchLogEntity?
+
+    @Query("SELECT * FROM session WHERE hc_write_state = :state ORDER BY started_at_utc")
+    suspend fun byHcState(state: Int): List<SessionEntity>
+
+    @Query("UPDATE session SET hc_write_state = :state, hc_error = :error WHERE id = :id")
+    suspend fun setHcState(id: String, state: Int, error: String?)
+
+    @Query(
+        """
+        UPDATE session SET matched_route_id = :routeId, match_coverage = :coverage,
+                           committed_at_m = :committedAtM WHERE id = :id
+        """,
+    )
+    suspend fun setMatch(id: String, routeId: Long?, coverage: Double?, committedAtM: Double?)
+
+    @Query("DELETE FROM session WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT COUNT(*) FROM session")
+    suspend fun count(): Int
+}
+
+@Dao
+interface RouteDao {
+
+    @Insert
+    suspend fun insert(route: RouteEntity): Long
+
+    @Upsert
+    suspend fun upsert(route: RouteEntity)
+
+    @Query("SELECT * FROM route ORDER BY id")
+    suspend fun all(): List<RouteEntity>
+
+    @Query("SELECT * FROM route WHERE id = :id")
+    suspend fun byId(id: Long): RouteEntity?
+
+    @Query("UPDATE route SET name = :name, name_is_custom = 1 WHERE id = :id")
+    suspend fun rename(id: Long, name: String)
+
+    @Query("DELETE FROM route WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("SELECT * FROM route_member")
+    suspend fun allMembers(): List<RouteMemberEntity>
+
+    @Query("SELECT * FROM route_member WHERE route_id = :routeId")
+    suspend fun members(routeId: Long): List<RouteMemberEntity>
+
+    @Query("DELETE FROM route_member WHERE route_id = :routeId")
+    suspend fun clearMembers(routeId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMembers(members: List<RouteMemberEntity>)
+
+    @Query("DELETE FROM route_point WHERE route_id = :routeId")
+    suspend fun clearPoints(routeId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPoints(points: List<RoutePointEntity>)
+
+    @Query("SELECT * FROM route_point WHERE route_id = :routeId ORDER BY seq")
+    suspend fun points(routeId: Long): List<RoutePointEntity>
+
+    @Query("DELETE FROM route_profile WHERE route_id = :routeId")
+    suspend fun clearProfile(routeId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfile(bins: List<RouteProfileEntity>)
+
+    @Query("SELECT * FROM route_profile WHERE route_id = :routeId ORDER BY bin")
+    suspend fun profile(routeId: Long): List<RouteProfileEntity>
+
+    /** US-8: the route list shows name, length, count, median time and best time.
+     *  The median is the lower median of the members' active durations, taken in
+     *  SQL so the list is one query rather than one query per row. */
+    @Query(
+        """
+        SELECT r.id, r.name, r.exercise_type AS exerciseType, r.length_m AS lengthM,
+               r.member_count AS memberCount,
+               (SELECT s.active_duration_ms
+                  FROM route_member m JOIN session s ON s.id = m.session_id
+                 WHERE m.route_id = r.id
+                 ORDER BY s.active_duration_ms
+                 LIMIT 1
+                OFFSET (SELECT COUNT(*) / 2 FROM route_member mm WHERE mm.route_id = r.id)
+               ) AS medianDurationMs,
+               (SELECT MIN(s.active_duration_ms)
+                  FROM route_member m JOIN session s ON s.id = m.session_id
+                 WHERE m.route_id = r.id
+               ) AS bestDurationMs
+        FROM route r WHERE r.active = 1 ORDER BY r.member_count DESC, r.id
+        """,
+    )
+    fun summaries(): Flow<List<RouteSummary>>
+
+    /** Durations of a route's members, for the median/best columns of US-8. */
+    @Query(
+        """
+        SELECT s.active_duration_ms FROM route_member m
+        JOIN session s ON s.id = m.session_id
+        WHERE m.route_id = :routeId ORDER BY s.active_duration_ms
+        """,
+    )
+    suspend fun memberDurations(routeId: Long): List<Long>
+
+    @Transaction
+    @Query(
+        """
+        SELECT s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
+               s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
+               s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
+               s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+        FROM route_member m
+        JOIN session s ON s.id = m.session_id
+        LEFT JOIN route r ON r.id = m.route_id
+        WHERE m.route_id = :routeId
+        ORDER BY s.started_at_utc DESC
+        """,
+    )
+    suspend fun memberSessions(routeId: Long): List<SessionSummary>
+}
+
+@Dao
+interface MetaDao {
+    @Upsert
+    suspend fun put(meta: MetaEntity)
+
+    @Query("SELECT value FROM meta WHERE key = :key")
+    suspend fun get(key: String): String?
+}

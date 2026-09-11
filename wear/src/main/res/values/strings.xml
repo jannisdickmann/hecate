@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- §4: no localization. German strings, single user. -->
+<resources>
+    <string name="app_name">Hecate</string>
+    <string name="notif_channel_name">Aufzeichnung</string>
+    <string name="notif_channel_desc">Laufende Aufzeichnung einer Aktivität</string>
+</resources>
