@@ -1,9 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.compose)
 }
+
+// §6.3 release signing: coordinates live in keystore.properties at the repository
+// root and are never committed. Read once here — `java.util.Properties` cannot be
+// spelled out inside the `signingConfigs` lambda, whose receiver shadows `java`.
+val keystoreProperties: Properties? = rootProject.file("keystore.properties")
+    .takeIf { it.exists() }
+    ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
 
 android {
     namespace = "de.hecate.wear"
@@ -23,9 +32,7 @@ android {
         // uninstall, and an uninstall means losing any session not yet uploaded.
         // Point these at your own release keystore via keystore.properties.
         create("release") {
-            val props = rootProject.file("keystore.properties")
-            if (props.exists()) {
-                val p = java.util.Properties().apply { props.inputStream().use { load(it) } }
+            keystoreProperties?.let { p ->
                 storeFile = file(p.getProperty("storeFile"))
                 storePassword = p.getProperty("storePassword")
                 keyAlias = p.getProperty("keyAlias")
@@ -37,7 +44,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            if (rootProject.file("keystore.properties").exists()) {
+            if (keystoreProperties != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
