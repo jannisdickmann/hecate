@@ -2,9 +2,9 @@
 # Versions are pinned deliberately (see SPECIFICATION.md §7 "Risks"): Health Services
 # and Health Connect are alpha-versioned and churn, so upgrades must be explicit.
 [versions]
-agp = "8.9.1"
-kotlin = "2.1.20"
-ksp = "2.1.20-1.0.32"
+agp = "9.4.0"
+kotlin = "2.4.20"
+ksp = "2.3.12"
 kotlinxSerialization = "1.8.0"
 kotlinxCoroutines = "1.10.1"
 
