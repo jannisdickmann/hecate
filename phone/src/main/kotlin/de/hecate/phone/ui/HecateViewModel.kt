@@ -125,7 +125,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * §1.4 of the open points: write the whole database to a file the user picked.
+     * §1.3 of the open points: write the whole database to a file the user picked.
      * What happens to that file afterwards — Drive, a cable, nothing — is theirs
      * to decide; the app neither knows nor asks (NFR-7).
      */

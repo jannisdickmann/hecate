@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * §1.4 of the open points: backup to a file the user places themselves. The
+     * §1.3 of the open points: backup to a file the user places themselves. The
      * Storage Access Framework means no storage permission and no opinion from
      * this app about where the file belongs.
      */

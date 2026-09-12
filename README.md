@@ -11,9 +11,11 @@ Tuesday's run. Hecate does exactly that and not much else.
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.
 [OPEN-POINTS.md](OPEN-POINTS.md) lists what still needs a human, a device, or a
-decision — **read it before installing anything**, in particular §1.2 on the
-release keystore. All three modules build and lint clean, but nothing has ever
-run on a watch, so none of the device behaviour is verified.
+decision — **read it before installing anything**, in particular §1.1 on the
+release keystore. All three modules build and lint clean, and the system has
+completed one real round trip: a Pixel Watch 4 recorded, a Pixel 8 ingested and
+acknowledged, Health Connect accepted the write, and a route bundle came back.
+That is one workout's worth of device behaviour verified, and no more.
 
 ## Modules
 
@@ -152,6 +154,12 @@ dependency graph, so give it a few minutes:
 ./gradlew :wear:installRelease          # with the watch connected over adb
 ```
 
+The two `installRelease` tasks **do not exist until `keystore.properties` does**.
+AGP only creates an install task for a variant it can sign, so without that file
+Gradle answers `Task 'installRelease' not found in project ':phone'` — which
+reads like a typo rather than a missing keystore. `installDebug` is always there;
+§1.1 of the open points is why you should not reach for it.
+
 `:wear` and `:phone` are only configured when an Android SDK is found —
 `sdk.dir` in `local.properties`, or `ANDROID_HOME` / `ANDROID_SDK_ROOT`. Without
 one, Gradle says so and configures `:core` alone, so the test suite runs without
@@ -159,7 +167,7 @@ an SDK installed. It still needs the plugins: the root project declares AGP, so
 resolving the build script classpath reaches Google's Maven even for a
 `:core`-only run. Force the matter with `-Phecate.androidModules=true|false`.
 
-Do not ship with the debug keystore. See §6.3 of the specification and §1.2 of
+Do not ship with the debug keystore. See §6.3 of the specification and §1.1 of
 the open points: a signature mismatch means an uninstall, and an uninstall means
 losing any session the watch has not uploaded yet.
 
@@ -173,7 +181,7 @@ them.
 Everything that can be checked without a wrist:
 
 ```bash
-./gradlew :core:test                                 # 77 JVM tests, a few seconds
+./gradlew :core:test                                 # 78 JVM tests, a few seconds
 ./gradlew :phone:testDebugUnitTest                   # 11 JVM tests of the backup archive
 ./gradlew :phone:lintDebug :wear:lintDebug           # both should say "No issues found"
 ./gradlew :phone:assembleDebug :wear:assembleDebug   # both APKs
@@ -182,7 +190,8 @@ Everything that can be checked without a wrist:
 
 `:core:test` is the one that matters and the one to run constantly — the matcher,
 the clustering, the profile maths and the CPU budget all live there, and none of
-it needs an SDK, a device or a network. A readable report lands in
+it needs an SDK or a device. It does need the network once, to resolve the build
+script classpath: see the note under **Building**. A readable report lands in
 `core/build/reports/tests/test/index.html`.
 
 `:phone` has exactly one test class, over the backup archive's ZIP and JSON
@@ -233,7 +242,7 @@ adb -s <serial> shell getprop ro.build.characteristics    # "nosdcard,watch" is 
 
 **Install.** Release builds, both of them, and note that both modules share the
 `applicationId` `de.hecate` — that is not tidiness, it is what makes the Data
-Layer work at all (§1.3). Set up `keystore.properties` (§1.2) before the first
+Layer work at all (§1.2). Set up `keystore.properties` (§1.1) before the first
 install, not after.
 
 ```bash
@@ -245,7 +254,7 @@ adb -s <watch> install -r wear/build/outputs/apk/release/wear-release.apk
 then and `adb` is explicit about which device it is talking to.
 
 Confirm the two carry one signature, which is the other Data Layer requirement
-and the first thing §1.3 tells you to check:
+and the first thing §1.2 tells you to check:
 
 ```bash
 apksigner verify --print-certs phone/build/outputs/apk/release/phone-release.apk
@@ -305,14 +314,14 @@ storage, so **a plain `adb pull` will not reach them on a release build**. That
 needs either a rooted watch or a debuggable build:
 
 ```bash
-adb shell run-as de.hecate ls files/sessions/
-adb shell run-as de.hecate cat files/sessions/session-<id>.jsonl > fixtures/a.jsonl
+adb -s <watch> shell run-as de.hecate ls files/sessions/
+adb -s <watch> shell run-as de.hecate cat files/sessions/session-<id>.jsonl > fixtures/a.jsonl
 ```
 
 `run-as` only works against a debuggable APK, and swapping a release build for a
 debug one is a signature change, which means an uninstall, which means losing any
 session the watch has not uploaded yet (§6.3). Upload first, every time. On a
-rooted watch `adb root && adb pull /data/data/de.hecate/files/sessions/`
+rooted watch `adb -s <watch> root && adb -s <watch> pull /data/data/de.hecate/files/sessions/`
 avoids the whole problem.
 
 The phone is not a shortcut here: it ingests sessions into Room and does not keep
@@ -336,7 +345,7 @@ is a bug by definition:
 wrong (§3.1 of the open points — this has never actually been run):
 
 ```bash
-adb shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.android.wearable.healthservices
+adb -s <watch> shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.android.wearable.healthservices
 ```
 
 **Watch the logs live** while it is on the bench rather than on a wrist:

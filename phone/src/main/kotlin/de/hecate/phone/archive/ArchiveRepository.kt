@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Moves the database in and out of the backup archive (§1.4 of the open points).
+ * Moves the database in and out of the backup archive (§1.3 of the open points).
  *
  * The ZIP itself is [ArchiveCodec]'s job; everything here is the mapping between
  * Room rows and the archive's own DTOs, written out by hand so that renaming a
@@ -107,6 +107,11 @@ class ArchiveRepository(
      * `SessionEndReason` is not a column at all. The footer therefore says
      * [SessionEndReason.IMPORTED] — true of the file being read, rather than a
      * guess at how the original recording ended.
+     *
+     * The end time is a real column since schema v2, so it is used as stored.
+     * Rows written before v2 have NULL there and fall back to the last sample,
+     * which is what the session end used to be taken from — and which is wrong
+     * by however long the session spent paused.
      */
     private suspend fun recordedSession(session: SessionEntity): RecordedSession {
         val samples = db.sessions().samples(session.id).map {
@@ -138,7 +143,8 @@ class ArchiveRepository(
             ),
             samples = samples,
             footer = SessionFooter(
-                endedAtUtcMs = session.startedAtUtc + (samples.lastOrNull()?.tOffsetMs ?: 0L),
+                endedAtUtcMs = session.endedAtUtc
+                    ?: (session.startedAtUtc + (samples.lastOrNull()?.tOffsetMs ?: 0L)),
                 activeDurationMs = session.activeDurationMs,
                 totalDistanceM = session.totalDistanceM,
                 reason = SessionEndReason.IMPORTED,

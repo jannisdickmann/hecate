@@ -3,156 +3,25 @@
 Things that need a human, a device, or a decision before Hecate can be trusted
 with a workout. Ordered by how much damage they can do.
 
-The short version: `:core` is built, tested and believed correct. `:wear` and
-`:phone` now compile, lint clean and assemble to APKs — see §1.1 — but neither
-has been installed on anything. Until they have been worn, none of the device
-*behaviour* is verified; what is verified is that the code says what it meant to
-say to the libraries it calls.
+The short version: all three modules build and lint clean, and the system has
+completed one real round trip — a Pixel Watch 4 recorded, a Pixel 8 ingested and
+acknowledged, Health Connect accepted the write, and a route bundle came back.
+That first session found three defects the JVM suite could not see (§3.2), which
+is the honest measure of how much of the device behaviour is still unverified:
+one workout's worth.
 
 ---
 
-## 1. Blocking — nothing has been run on a device
+## 1. Blocking — what can still cost you data
 
-### 1.1 ~~The Android modules have never been compiled~~ Both modules build
+### 1.1 The release keystore is the one thing with no second copy
 
-**Resolved.** Access to `dl.google.com` was the whole of it. With SDK platform
-36 installed and `sdk.dir` set in `local.properties`:
+A keystore now exists and both modules install signed with it. It stays at the
+top of this list because it is the only artefact here that cannot be
+regenerated: lose it and every future build is a different app, which means an
+uninstall, which means losing whatever the watch has not yet uploaded (§6.3).
 
-```bash
-./gradlew :phone:assembleDebug  :wear:assembleDebug    # both APKs
-./gradlew :phone:lintDebug      :wear:lintDebug        # "No issues found", both
-./gradlew :phone:assembleRelease :wear:assembleRelease # unsigned; see §1.2
-./gradlew :core:test                                   # still 77/77
-```
-
-`settings.gradle.kts` needed no change: it picks the modules up as soon as an
-SDK is there, exactly as intended.
-
-The errors were real version drift, roughly where this section predicted, plus
-two places it did not look. Item by item, against the original list:
-
-- **Health Services** (`ExerciseSource`, `RecorderService`).
-  ~~the exact shape of `ExerciseUpdateCallback`~~ — five methods, as written.
-  ~~whether `DataType.DISTANCE_TOTAL` is retrieved via `getData(...).total`~~ —
-  it is. ~~the `ExerciseState` category predicates `isEnded` / `isEnding` /
-  `isPaused`~~ — all three exist; writing against the predicates rather than an
-  enum list was the right call and needed no change.
-
-  **`LocationData` was wrong, and no version fixes it.** It carries four fields
-  — latitude, longitude, altitude, bearing — in 1.1.0-alpha05 and in
-  1.1.0-rc02 alike. `horizontalPositionErrorMeters` lives on `LocationAccuracy`,
-  reached through the data point's `accuracy`, which is null whenever Health
-  Services has no estimate to give. `altitude` is a non-null `Double` that
-  signals unavailability with NaN, so the safe call was never doing any work and
-  the `isFinite()` test was already the whole check.
-
-  **Not anticipated: `ListenableFuture` is not on the compile classpath.**
-  Every `ExerciseClient.*Async` method returns one, but health-services-client
-  declares Guava at *runtime* scope — in every version from 1.1.0-alpha05 to
-  1.1.0-rc02. Guava's presence at runtime then resolves
-  `com.google.guava:listenablefuture` to the empty
-  `9999.0-empty-to-avoid-conflict-with-guava` marker, and AGP's consistent
-  resolution propagates that to the compile classpath, so androidx.concurrent's
-  own copy is empty too. Fixed with a `compileOnly` dependency on Guava — at
-  **32.0.1-android**, which is deliberately *not* the newest Guava (33.7.1 is):
-  it has to be exactly what health-services-client drags in at runtime, or the
-  module compiles against a Guava the APK does not ship. Re-check it after any
-  `healthServices` bump; the failure mode is silent. It is already in the APK
-  transitively, so the artifact is unchanged, and NFR-8 / Appendix A.7's count of
-  non-AndroidX *runtime* dependencies is unchanged with it.
-
-  `health-services-client` is pinned at **1.1.0-rc02**, the best available. This
-  artifact has no stable 1.1.0 and never has — the only stable release on it is
-  1.0.0, an older API generation — so a pre-release pin here is close to forced
-  rather than an oversight.
-
-- **Health Connect** (`HealthConnectWriter`).
-  `Metadata.activelyRecorded(device, clientRecordId)` was spelled correctly; the
-  *pin* was too early. alpha11 exposes only the raw `Metadata(...)` constructor,
-  and the named factories arrive in alpha12. Pinned to **1.1.0**, the stable
-  release, which carries the identical `Metadata` surface. Not one line of the
-  writer changed.
-
-  Worth knowing if you touch it: `activelyRecordedWithId`'s `id` is Health
-  Connect's own record UUID, for updating a record that already exists — not a
-  synonym for `clientRecordId`. The idempotent insert this app wants is the
-  two-argument `activelyRecorded`.
-
-  ~~verify that `ExerciseRoute.Location` still takes `horizontalAccuracy` as a
-  `Length`~~ — it does.
-
-- **Room** (`Daos.kt`). ~~this will either work or tell you exactly what it
-  dislikes~~ — it told us exactly, and it was right: a LIMIT/OFFSET expression
-  in SQLite cannot reach the enclosing query, so the correlated
-  `OFFSET (SELECT COUNT(*)/2 … WHERE mm.route_id = r.id)` fails with "no such
-  column: r.id". Confirmed against sqlite3 directly, not just taken from the
-  error. Replaced with a window function over a CTE — one pass for the whole
-  list instead of a correlated subquery per row.
-
-  **Found while rewriting it: there were three different medians.** The comment
-  said "lower median", the SQL's `OFFSET n/2` gave the *upper* median for an even
-  member count, and `HecateViewModel.median()` — which feeds the route *detail*
-  screen — averages the two middle values. The list row and the detail screen
-  would have disagreed on the same route. The SQL now matches the Kotlin helper.
-  If you would rather both be the lower median, change them together.
-
-- **Wear Compose** (`HecateWearApp`). ~~`Chip`, `ChipDefaults.primaryChipColors`
-  and `Button`~~ — nothing to fix. All three are where they were expected, in
-  `androidx.wear.compose.material`, at 1.4.1 when first compiled and still there
-  after the bump to 1.6.2. The warning about `wear.compose.material3` still
-  stands for anyone tempted.
-
-Two things this section did not think to look at:
-
-- **The build scripts themselves.** The first error out of a Gradle that could
-  finally resolve AGP was in `wear/build.gradle.kts` and `phone/build.gradle.kts`:
-  the receiver inside `signingConfigs { create("release") { … } }` shadows
-  `java`, so the literal `java.util.Properties()` does not resolve and the script
-  fails to compile before any module is configured. `keystore.properties` is now
-  read once at the top of each script.
-
-- **Lint had never run either.** One error, in both modules:
-  `InvalidFragmentVersionForActivityResult` on every `registerForActivityResult`.
-  Neither app uses fragments — androidx.fragment 1.1.0 arrives through
-  play-services-wearable → play-services-basement, and every basement release
-  from 18.4.0 to 18.9.0 names that same 1.1.0, so bumping Play Services would not
-  have helped. A `constraints` block raises it. Both modules also had
-  twenty warnings between them; all are now fixed or suppressed with the reason
-  written at the suppression, and `lintDebug` reports "No issues found" for both.
-  The two suppressions are `StaticFieldLeak` on the `AppGraph` objects (what they
-  hold is the *application* context) and `UnnecessaryRequiredFeature` on the
-  watch's GPS feature (it is required, meant literally).
-
-**Then everything else was swept too.** Compiling was the point, but it exposed
-how old the catalog had become: the pins dated from April 2025 and every one of
-the twenty was behind. All of them now sit at their current release, with the
-reasoning written beside anything that is deliberately *not* the newest:
-
-- Toolchain: Gradle 8.14.3 → 9.7.1, AGP 8.9.1 → 9.4.0, Kotlin 2.1.20 → 2.4.20,
-  KSP 2.1.20-1.0.32 → 2.3.12 (KSP versions independently of Kotlin since 2.3.0).
-  AGP 9 has built-in Kotlin support and refuses to start alongside the standalone
-  `org.jetbrains.kotlin.android` plugin, which is gone from both modules.
-- `compileSdk` 36 → **37**, forced by Compose BOM 2026.09. **`targetSdk` stays at
-  36 on purpose**: compileSdk only decides which APIs compile, while targetSdk
-  opts the app into new *runtime* behaviour, and that needs a device to verify.
-  Lint's `OldTargetApi` is disabled in `:phone` with exactly that reasoning at
-  the suppression. Raising it is a job for a session that can wear the result.
-- Libraries: Compose BOM 2025.04.00 → 2026.09.00, Room 2.7.1 → 2.8.5,
-  wear-compose 1.4.1 → 1.6.2, play-services-wearable 19.0.0 → 20.0.1, and the
-  rest of the AndroidX set with them.
-
-No application source changed for any of it. Nothing is left to "latest", and §7
-still applies — upgrade deliberately, which is what the catalog comments are for.
-
-**What is still open here is device work, and only device work**: nothing below
-§1.2 has moved.
-
-### 1.2 No release keystore exists
-
-§6.3 is emphatic and it is right: a debug-key reinstall means a signature
-mismatch, an uninstall, and the loss of any session the watch has not yet
-uploaded. Create one release keystore, back it up **off this machine**, and put
-its coordinates in `keystore.properties` at the repository root:
+Its coordinates go in `keystore.properties` at the repository root:
 
 ```properties
 storeFile=/absolute/path/to/hecate-release.jks
@@ -185,47 +54,28 @@ apksigner verify --print-certs <apk>                   # same value, from the AP
 Then restore it once, into a scratch path, and check the fingerprints match. The
 restore is the only part of a backup that can be wrong in a way you cannot see.
 
-### 1.3 ~~The watch↔phone contract has never seen a real message~~ It has now
+### 1.2 The watch↔phone link has no retry but the next workout
 
-**Resolved.** Sessions recorded on a Pixel Watch 4 reach a Pixel 8, are stored,
-acknowledged, deleted from the watch, and come back as a route bundle. The two
-`Wire` copies agree; none of the ten constants was wrong.
-
-What was wrong was never in the list above. Both modules had their own
-`applicationId` — `de.hecate.wear` and `de.hecate.phone` — and **the Wearable Data
-Layer is package-scoped**: a `DataItem` published by one applicationId is only
-ever delivered to the *same* applicationId on the other node. `IngestService` was
-never a candidate to receive anything, however correct its intent filter. Both
-modules now share `applicationId = "de.hecate"`; the build files say why.
-
-The diagnosis is worth keeping, because the symptom points elsewhere:
-
-```
-W WearableService: Failed to deliver message to AppKey[<hidden#ee576074>,2768f7f6…]
-```
-
-That hash is the target *package*, hidden precisely because it is not installed
-locally — a known-installed app appears by name in the same warning. The cert
-digest beside it matched ours exactly, so the signing check everyone reaches for
-first was passing the whole time. Signature identical, filter correct, app in the
-foreground, nothing delivered.
-
-Two gaps that first contact exposed, neither yet fixed:
+Delivery works — sessions cross, are acknowledged, and the bundle comes back
+(the diagnosis that got it there is in the build scripts, which explain why both
+modules share `applicationId = "de.hecate"`, and in README's "Testing on the
+wrist"). Two gaps that first contact exposed are still open:
 
 - **The phone never asks for a resend.** `PATH_RESEND` is defined in both `Wire`
-  objects and handled on the watch — `PhoneListenerService` calls `uploadPending()`
-  — but nothing in `phone/` ever sends it. The recovery path is dead code.
+  objects and handled on the watch — `PhoneListenerService` calls
+  `uploadPending()` — but nothing in `phone/` ever sends it. The recovery path is
+  dead code.
 - **Nothing reconciles missed items.** The phone acts only on the live
   `onDataChanged` callback and never scans for `DataItem`s that arrived while it
   was unbound. Combined with the above, a session whose delivery event is missed
   is re-offered only on a watch reboot or at the end of the *next* recording.
 
-Neither cost us data — the watch keeps its copy until acked, exactly as designed —
-but together they mean the system's only retry is another workout.
+Neither has cost data — the watch keeps its copy until acked, exactly as
+designed — but together they mean the system's only retry is another workout.
 
 ---
 
-### 1.4 The backup archive has never been written on a device
+### 1.3 The backup archive has never been restored
 
 **What exists.** Export to a file and restore from a file, both through the
 system file picker (Appendix A.10). The phone menu on the sessions screen has
@@ -233,10 +83,9 @@ system file picker (Appendix A.10). The phone menu on the sessions screen has
 storage permission: NFR-7 is untouched, and moving the file to Drive or anywhere
 else is something the user does outside the app.
 
-This closes the gap that used to be here — the database was the only complete
-copy of anything, the watch deletes its files on acknowledgement, Health Connect
-is write-only and lossy, and a TCX re-import could not bring back route names or
-priorities.
+Why it exists: the phone's database is the only complete copy of anything. The
+watch deletes each session on acknowledgement, Health Connect is write-only and
+lossy, and a TCX re-import cannot bring back route names or priorities.
 
 **What is verified.** `ArchiveCodec`, the ZIP and JSON layer, has eleven JVM
 tests covering a full session round trip, nullable sample fields, many sessions
@@ -301,8 +150,10 @@ session file, against a fresh replay. Any difference is a bug by definition.
 §6.5 says to build it first: work route, two shortcuts of it, the reverse
 direction, one novel path, one with a 90 s GPS dropout, one with a long pause.
 All seven exist as *synthetic* geometries in `core/src/test/.../Synthetic.kt`
-and the unit tests exercise them. None exists as a real recording. Until real
-ones do, the golden-file regression testing §6.5 calls for has nothing to guard.
+and the unit tests exercise them. Real recordings have now started — the first
+session crossed to the phone and reached Health Connect — but none of the seven
+shapes exists as a real track yet, so the golden-file regression testing §6.5
+calls for still has nothing to guard.
 
 Once you have ten or so real sessions, copy them off the watch into a
 `fixtures/` directory and commit the ones that are interesting. Note that
@@ -354,7 +205,17 @@ metric is the expensive part and is accelerated by a bucket index, but
 run. Measure it once you have two hundred sessions; if it hurts, cache the
 resampled tracks rather than reaching for incremental clustering.
 
-### 2.7 Bundle size on the watch
+### 2.7 targetSdk trails compileSdk deliberately
+
+`compileSdk` is 37, which Compose BOM 2026.09 requires; `targetSdk` stays at 36.
+compileSdk only decides which APIs compile, while targetSdk opts the app into
+new *runtime* behaviour — new permission semantics, new background limits — and
+that is a change to be made on a day someone can wear the result and watch for
+it. Lint's `OldTargetApi` is disabled in `phone/build.gradle.kts` with the same
+reasoning written at the suppression, so the warning does not simply accumulate
+unread.
+
+### 2.8 Bundle size on the watch
 
 A route bundle is gzipped JSON containing every route's geometry at 10 m spacing
 plus its profile. Fifty 10 km routes is roughly 50 000 points — a few hundred
@@ -374,11 +235,15 @@ records a `PAUSE_AUTO` event, but this has never been exercised.
 
 ### 3.2 No instrumented tests
 
-`:core` has 77 JVM tests. Neither Android module has a single test. §6.5 does not
-ask for instrumented tests — it asks for emulator and on-wrist verification,
-both of which are manual. This is a reasonable position for a single-user
-sideloaded app, but it does mean every Android-side regression will be found by
-wearing it.
+`:core` has 78 JVM tests. `:phone` has 11, all of them over `ArchiveCodec` — the
+backup archive's ZIP and JSON layer, which touches neither Android nor Room and
+is the one place in that module where a silent bug costs a history (§1.3).
+`:wear` has none, and nothing anywhere is instrumented.
+
+§6.5 does not ask for instrumented tests — it asks for emulator and on-wrist
+verification, both of which are manual. This is a reasonable position for a
+single-user sideloaded app, but it does mean every Android-side regression will
+be found by wearing it.
 
 The first session on real hardware produced three defects, and the suite was
 green through all of them. That is not a failure of the tests; it is the exact

@@ -7,7 +7,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * The on-disk backup format (§1.4 of the open points).
+ * The on-disk backup format (§1.3 of the open points).
  *
  * A plain ZIP the user owns and can put wherever they like — including Google
  * Drive by hand. Nothing here talks to a network; NFR-7 is untouched.

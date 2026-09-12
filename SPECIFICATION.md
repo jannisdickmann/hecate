@@ -657,6 +657,12 @@ the `route_member` table, which is not in §5.5.
 - `session.hc_error` — the Health Connect write status is specified; the reason
   a write failed is what makes it actionable.
 - `session.ingested_at` — diagnostics.
+- `session.ended_at_utc` — added in schema v2. §5.5 gives the session a start and
+  an active duration, which are not enough to place its end: a session with
+  pauses ends later than start plus active time. Health Connect rejects a write
+  whose route points are not *strictly* inside the session — an exclusive bound —
+  so the real stop time from the footer had to stop being discarded at ingest.
+  Rows written before v2 keep NULL, because the value cannot be reconstructed.
 - `route.name_is_custom` — distinguishes an auto-generated name, which may be
   regenerated, from one the user chose, which may not.
 - `route.priority` — see A.4b. Like the name, preserved across re-clustering.
@@ -692,8 +698,10 @@ prevent. See OPEN-POINTS.md §1.1.
 
 ### A.8 Scope not reached
 
-- §6.5's on-wrist and emulator test layers cannot be exercised here. See
-  OPEN-POINTS.md.
+- §6.5's emulator layer has not been exercised. Its on-wrist layer has, once:
+  a Pixel Watch 4 and a Pixel 8 completed a full round trip, which is what found
+  the three defects OPEN-POINTS §3.2 lists. One session is not the ten
+  consecutive recordings §6.6 asks for.
 - §6.6's exit criteria are stated in terms of real workouts (ten consecutive
   recordings, sessions appearing in Google Health, behaviour on the fixture set
   "walked in reality"). The code implementing each milestone is complete; the
