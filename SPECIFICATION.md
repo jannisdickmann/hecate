@@ -686,6 +686,13 @@ matters most, has exactly one and no Android dependency at all.
 `kotlinx-coroutines-play-services` was deliberately *not* added; the handful of
 `Task` awaits use `Tasks.await` on an IO dispatcher instead.
 
+`kotlinx-coroutines-android` is declared by both Android modules and is not
+counted, which is a judgement rather than an oversight: it is the coroutines
+runtime the language's own `suspend` functions need, and `androidx.compose.ui`
+pulls it in transitively regardless, so it is in the APK whether this project
+names it or not. Declaring it makes the version explicit in the catalog instead
+of inherited from whichever AndroidX artifact happens to win.
+
 A third name appears in `:wear`'s dependency block since the module was first
 compiled: `com.google.guava:guava`, `compileOnly`. Health Services returns a
 `ListenableFuture` from every `*Async` method but declares Guava at runtime

@@ -181,8 +181,8 @@ them.
 Everything that can be checked without a wrist:
 
 ```bash
-./gradlew :core:test                                 # 78 JVM tests, a few seconds
-./gradlew :phone:testDebugUnitTest                   # 11 JVM tests of the backup archive
+./gradlew :core:test                                 # the algorithms, a few seconds
+./gradlew :phone:testDebugUnitTest                   # the backup archive's format
 ./gradlew :phone:lintDebug :wear:lintDebug           # both should say "No issues found"
 ./gradlew :phone:assembleDebug :wear:assembleDebug   # both APKs
 ./gradlew :phone:assembleRelease :wear:assembleRelease
@@ -261,8 +261,8 @@ apksigner verify --print-certs phone/build/outputs/apk/release/phone-release.apk
 apksigner verify --print-certs wear/build/outputs/apk/release/wear-release.apk
 ```
 
-**Grant the permissions** (§6.4) from here rather than tapping through eleven
-dialogs on a 480×480 screen:
+**Grant the permissions** (§6.4) from here rather than tapping through them all
+on a 480×480 screen:
 
 ```bash
 for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACCESS_BACKGROUND_LOCATION \
@@ -287,7 +287,7 @@ automatic activity detection, which otherwise files a second session for the sam
 workout.
 
 **Watch a session cross.** Both apps log in German under their own tags, and a
-healthy round trip is four lines across two devices:
+healthy round trip reads like this across the two devices:
 
 ```bash
 adb -s <watch> logcat -s RecorderService:* Uploader:* BundleStore:* PhoneListener:*

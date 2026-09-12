@@ -87,11 +87,11 @@ Why it exists: the phone's database is the only complete copy of anything. The
 watch deletes each session on acknowledgement, Health Connect is write-only and
 lossy, and a TCX re-import cannot bring back route names or priorities.
 
-**What is verified.** `ArchiveCodec`, the ZIP and JSON layer, has eleven JVM
-tests covering a full session round trip, nullable sample fields, many sessions
-addressed by id, a 40-session archive whose last entry must still be complete, a
-future format version, a ZIP that is not a Hecate archive, unreadable JSON, and
-unknown fields from a future version. `./gradlew :phone:testDebugUnitTest`.
+**What is verified.** `ArchiveCodec`, the ZIP and JSON layer, is covered by JVM
+tests: a full session round trip, nullable sample fields, many sessions addressed
+by id, a large archive whose last entry must still be complete, a future format
+version, a ZIP that is not a Hecate archive, unreadable JSON, and unknown fields
+from a future version. `./gradlew :phone:testDebugUnitTest`.
 
 **What is not.** Everything that needs a device:
 
@@ -182,10 +182,11 @@ Two things to watch once you are using it:
 ### 2.4 Ahead/behind sign convention
 
 `deltaVsMedianS` is `elapsed − median`, so **positive means slower than usual**.
-The watch shows `+45 s` in red with "langsamer als sonst" beneath, `−12 s` in
-green with "schneller als sonst". Runners are used to the opposite sign from
-race splits. Change `Format.delta` and the colour test in `RoutePage` together
-if you want it the other way round.
+The watch shows `+45 s` in red and `−12 s` in green, under the label `Ø`, with
+nothing spelling out which way round it is — the captions that used to say so
+went when the live page was made dense. Runners are used to the opposite sign
+from race splits. Change `Format.delta` and the colour test in `LivePage`
+together if you want it the other way round.
 
 ### 2.5 A parallel street 80 m away will match a learned route
 
@@ -235,10 +236,10 @@ records a `PAUSE_AUTO` event, but this has never been exercised.
 
 ### 3.2 No instrumented tests
 
-`:core` has 78 JVM tests. `:phone` has 11, all of them over `ArchiveCodec` — the
-backup archive's ZIP and JSON layer, which touches neither Android nor Room and
-is the one place in that module where a silent bug costs a history (§1.3).
-`:wear` has none, and nothing anywhere is instrumented.
+`:core` carries the whole JVM suite. `:phone`'s only tests are over
+`ArchiveCodec` — the backup archive's ZIP and JSON layer, which touches neither
+Android nor Room and is the one place in that module where a silent bug costs a
+history (§1.3). `:wear` has none, and nothing anywhere is instrumented.
 
 §6.5 does not ask for instrumented tests — it asks for emulator and on-wrist
 verification, both of which are manual. This is a reasonable position for a
