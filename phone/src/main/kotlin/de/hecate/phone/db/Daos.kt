@@ -47,6 +47,9 @@ interface SessionDao {
     @Upsert
     suspend fun upsertMatchLog(log: MatchLogEntity)
 
+    @Upsert
+    suspend fun upsertEvents(events: SessionEventsEntity)
+
     @Query("SELECT COUNT(*) FROM session WHERE id = :id")
     suspend fun countById(id: String): Int
 
@@ -83,6 +86,9 @@ interface SessionDao {
 
     @Query("SELECT * FROM match_log WHERE session_id = :id")
     suspend fun matchLog(id: String): MatchLogEntity?
+
+    @Query("SELECT * FROM session_events WHERE session_id = :id")
+    suspend fun events(id: String): SessionEventsEntity?
 
     @Query("SELECT * FROM session WHERE hc_write_state = :state ORDER BY started_at_utc")
     suspend fun byHcState(state: Int): List<SessionEntity>

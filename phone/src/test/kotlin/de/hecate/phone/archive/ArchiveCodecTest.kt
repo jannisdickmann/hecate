@@ -8,6 +8,8 @@ import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionFooter
+import de.hecate.core.model.SessionEvent
+import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
 import kotlinx.serialization.encodeToString
@@ -50,6 +52,12 @@ class ArchiveCodecTest {
             source = SessionSource.WATCH,
         ),
         samples = (0 until samples).map { sampleAt(it.toLong()) },
+        events = listOf(
+            SessionEvent(tOffsetMs = 3000, type = SessionEventType.GPS_ACQUIRED),
+            SessionEvent(tOffsetMs = 20_000, type = SessionEventType.PAUSE_AUTO),
+            SessionEvent(tOffsetMs = 26_000, type = SessionEventType.RESUME_AUTO),
+            SessionEvent(tOffsetMs = 31_000, type = SessionEventType.MATCHER_DISABLED, note = "3 Fehler"),
+        ),
         footer = SessionFooter(
             endedAtUtcMs = 1_700_000_000_000 + samples * 1000L,
             activeDurationMs = samples * 1000L,
@@ -144,7 +152,44 @@ class ArchiveCodecTest {
             assertEquals(original.header, back.header)
             assertEquals(original.footer, back.footer)
             assertEquals(original.matchLog, back.matchLog)
+            assertEquals(original.events, back.events)
             assertContentEquals(original.samples, back.samples)
+        }
+    }
+
+    /**
+     * Lifecycle events survive, notes and all.
+     *
+     * Split out from the round trip above because these were the one part of a
+     * session the phone used to parse and then throw away: ingest read them,
+     * stored them nowhere, and the export wrote an events section that was
+     * always empty. The assertion above would not have caught that on its own —
+     * it never looked at `events` — so this one names them.
+     */
+    @Test
+    fun `lifecycle events survive the round trip, notes included`() {
+        val original = session("s-ev")
+        val file = tempFile()
+        write(file, manifest(), database(listOf("s-ev")), listOf(original))
+
+        ArchiveCodec.Reader(file).use { reader ->
+            val back = reader.session("s-ev")!!
+            assertEquals(original.events, back.events)
+            assertEquals("3 Fehler", back.events.last().note)
+            assertEquals(SessionEventType.GPS_ACQUIRED, back.events.first().type)
+        }
+    }
+
+    /** A session that recorded no events is not the same as one whose events
+     *  were lost; it must read back as an empty list, not fail. */
+    @Test
+    fun `a session with no events round trips as empty`() {
+        val original = session("s-noev").copy(events = emptyList())
+        val file = tempFile()
+        write(file, manifest(), database(listOf("s-noev")), listOf(original))
+
+        ArchiveCodec.Reader(file).use { reader ->
+            assertTrue(reader.session("s-noev")!!.events.isEmpty())
         }
     }
 
@@ -290,8 +335,8 @@ class ArchiveCodecTest {
             val entry = zip.getEntry("sessions/s-1.jsonl")
             assertTrue(entry != null, "expected sessions/s-1.jsonl in the archive")
             val lines = zip.getInputStream(entry).bufferedReader().readLines().filter { it.isNotBlank() }
-            // header + 50 samples + 1 match line + footer
-            assertEquals(53, lines.size)
+            // header + 50 samples + 4 event lines + 1 match line + footer
+            assertEquals(57, lines.size)
             assertTrue(lines.first().contains("\"k\":\"h\""), "first line should be the header: ${lines.first()}")
             assertTrue(lines.last().contains("\"k\":\"f\""), "last line should be the footer: ${lines.last()}")
         }

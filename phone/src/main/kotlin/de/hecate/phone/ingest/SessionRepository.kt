@@ -12,6 +12,7 @@ import de.hecate.core.model.SessionSource
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
+import de.hecate.phone.db.SessionEventsEntity
 import de.hecate.phone.db.SampleEntity
 import de.hecate.phone.db.SessionEntity
 import de.hecate.phone.work.Jobs
@@ -116,6 +117,18 @@ class SessionRepository(
                     MatchLogEntity(
                         sessionId = session.id,
                         payload = BundleCodec.encodeMatchLog(session.matchLog).toByteArray(Charsets.UTF_8),
+                    ),
+                )
+            }
+            // Inside the same transaction as the samples: these are part of the
+            // recording, not a commentary on it, and a session stored without
+            // them would be silently incomplete in exactly the way this table
+            // exists to prevent.
+            if (session.events.isNotEmpty()) {
+                dao.upsertEvents(
+                    SessionEventsEntity(
+                        sessionId = session.id,
+                        payload = BundleCodec.encodeEvents(session.events).toByteArray(Charsets.UTF_8),
                     ),
                 )
             }

@@ -234,6 +234,13 @@ contemplates, this is the thing that will complain first.
 `whs.AUTO_PAUSE_DETECTED`. The code handles `ExerciseState.AUTO_PAUSED` and
 records a `PAUSE_AUTO` event, but this has never been exercised.
 
+Since schema v3 (Appendix A.12) that `PAUSE_AUTO` is kept rather than dropped at
+ingest, so this no longer needs the broadcast or a cable to answer: ride, then
+read "Verlauf der Aufzeichnung" on the session detail screen. A `PAUSE_AUTO`
+with a matching `RESUME_AUTO` at a plausible offset settles it in the
+affirmative; a ride with a genuine standstill and no such pair is the real
+finding.
+
 ### 3.2 No instrumented tests
 
 `:core` carries the whole JVM suite. `:phone`'s only tests are over
@@ -303,6 +310,13 @@ real run will take. Reproduce it deliberately, then decide whether it is a
 missing branch or a state that is genuinely safe to ignore. Until then, treat
 auto-pause as unverified: §3.1 already says its broadcast test has not been run,
 and this is the same gap seen from the other side.
+
+The warning itself is still logcat-only, and logcat will not survive a long ride.
+What is now durable is the context around it: schema v3 keeps the session's
+`PAUSE_MANUAL`/`RESUME_MANUAL` pair (Appendix A.12), so after the fact you can
+tell whether the resume that produced this warning actually took effect — a
+`RESUME_MANUAL` at the expected offset, and samples that stop being `paused`
+after it — without having caught the line live.
 
 ### 3.6 The dense live page has been measured, not seen
 

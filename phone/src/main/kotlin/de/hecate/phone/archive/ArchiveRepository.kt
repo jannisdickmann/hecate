@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
+import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
@@ -15,6 +16,7 @@ import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
+import de.hecate.phone.db.SessionEventsEntity
 import de.hecate.phone.db.MetaEntity
 import de.hecate.phone.db.RouteEntity
 import de.hecate.phone.db.RouteMemberEntity
@@ -130,6 +132,13 @@ class ArchiveRepository(
             runCatching { BundleCodec.decodeMatchLog(row.payload.toString(Charsets.UTF_8)) }
                 .getOrDefault(emptyList())
         } ?: emptyList()
+        // Empty for anything ingested before schema v3, which had nowhere to keep
+        // these. ArchiveCodec has always written an events section; until now it
+        // was always writing nothing into it.
+        val events = db.sessions().events(session.id)?.let { row ->
+            runCatching { BundleCodec.decodeEvents(row.payload.toString(Charsets.UTF_8)) }
+                .getOrDefault(emptyList())
+        } ?: emptyList()
 
         return RecordedSession(
             header = SessionHeader(
@@ -142,6 +151,7 @@ class ArchiveRepository(
                     .getOrDefault(SessionSource.WATCH),
             ),
             samples = samples,
+            events = events,
             footer = SessionFooter(
                 endedAtUtcMs = session.endedAtUtc
                     ?: (session.startedAtUtc + (samples.lastOrNull()?.tOffsetMs ?: 0L)),
@@ -210,6 +220,9 @@ class ArchiveRepository(
                     db.sessions().insertSamples(session.samples.map { it.toEntity(row.id) })
                     if (session.matchLog.isNotEmpty()) {
                         db.sessions().upsertMatchLog(matchLogEntity(row.id, session.matchLog))
+                    }
+                    if (session.events.isNotEmpty()) {
+                        db.sessions().upsertEvents(eventsEntity(row.id, session.events))
                     }
                 }
                 restored++
@@ -290,6 +303,11 @@ class ArchiveRepository(
         fun matchLogEntity(sessionId: String, entries: List<MatchLogEntry>) = MatchLogEntity(
             sessionId = sessionId,
             payload = BundleCodec.encodeMatchLog(entries).toByteArray(Charsets.UTF_8),
+        )
+
+        fun eventsEntity(sessionId: String, events: List<SessionEvent>) = SessionEventsEntity(
+            sessionId = sessionId,
+            payload = BundleCodec.encodeEvents(events).toByteArray(Charsets.UTF_8),
         )
 
         fun SessionEntity.toArchive() = Archive.Session(

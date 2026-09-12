@@ -20,9 +20,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RouteProfileEntity::class,
         RouteMemberEntity::class,
         MatchLogEntity::class,
+        SessionEventsEntity::class,
         MetaEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class HecateDatabase : RoomDatabase() {
@@ -40,6 +41,27 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 keeps the session's lifecycle events. The watch has always written
+         *  them into the session file, and ingest has always parsed them; they
+         *  simply had nowhere to go and were dropped, which meant they died with
+         *  the watch's copy of the file. Sessions ingested before v3 have no row
+         *  and never will — the events are gone with the file. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_events (
+                        session_id TEXT NOT NULL,
+                        payload BLOB NOT NULL,
+                        PRIMARY KEY(session_id),
+                        FOREIGN KEY(session_id) REFERENCES session(id)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile
         private var instance: HecateDatabase? = null
 
@@ -51,7 +73,7 @@ abstract class HecateDatabase : RoomDatabase() {
             )
                 // Foreign keys do the cascading deletes; without this SQLite
                 // ignores them and orphan samples accumulate.
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { instance = it }

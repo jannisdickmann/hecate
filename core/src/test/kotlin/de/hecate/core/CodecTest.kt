@@ -4,6 +4,8 @@ import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.io.SessionCodec
+import de.hecate.core.model.SessionEvent
+import de.hecate.core.model.SessionEventType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -11,6 +13,38 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class CodecTest {
+
+    /**
+     * The blob encoding the phone stores lifecycle events in.
+     *
+     * Every event type, because the enum is the contract: a type that fails to
+     * round-trip is a type the phone would drop on read, and the whole point of
+     * keeping these is the one that turns up unexpectedly.
+     */
+    @Test
+    fun `every session event type round-trips through the blob encoding`() {
+        val events = SessionEventType.entries.mapIndexed { i, type ->
+            SessionEvent(tOffsetMs = i * 1000L, type = type, note = "n$i")
+        }
+        val back = BundleCodec.decodeEvents(BundleCodec.encodeEvents(events))
+        assertEquals(events, back)
+    }
+
+    /** A session with no events encodes to nothing and reads back as nothing,
+     *  rather than as one blank entry. */
+    @Test
+    fun `an empty event list round-trips as empty`() {
+        assertEquals(emptyList(), BundleCodec.decodeEvents(BundleCodec.encodeEvents(emptyList())))
+    }
+
+    /** `note` is nullable and omitted when absent; it must not come back as "null". */
+    @Test
+    fun `a session event without a note round-trips as null`() {
+        val e = SessionEvent(tOffsetMs = 42, type = SessionEventType.GPS_LOST)
+        val back = BundleCodec.decodeEvents(BundleCodec.encodeEvents(listOf(e)))
+        assertEquals(listOf(e), back)
+        assertNull(back.single().note)
+    }
 
     @Test
     fun `a session round-trips through jsonl`() {

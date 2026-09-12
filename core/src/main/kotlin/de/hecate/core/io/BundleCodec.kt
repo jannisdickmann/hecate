@@ -1,6 +1,7 @@
 package de.hecate.core.io
 
 import de.hecate.core.model.MatchLogEntry
+import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RouteBundle
 import kotlinx.serialization.json.Json
 import java.io.InputStream
@@ -40,4 +41,15 @@ object BundleCodec {
     fun decodeMatchLog(text: String): List<MatchLogEntry> =
         text.lineSequence().filter { it.isNotBlank() }
             .map { json.decodeFromString<MatchLogEntry>(it) }.toList()
+
+    /** The session's lifecycle events — pauses, GPS, service restarts — in the
+     *  same line-per-entry shape as the match log, and stored the same way. The
+     *  watch already writes these into the session file; this is what lets the
+     *  phone keep them once that file is gone. */
+    fun encodeEvents(events: List<SessionEvent>): String =
+        events.joinToString("\n") { json.encodeToString(it) }
+
+    fun decodeEvents(text: String): List<SessionEvent> =
+        text.lineSequence().filter { it.isNotBlank() }
+            .map { json.decodeFromString<SessionEvent>(it) }.toList()
 }

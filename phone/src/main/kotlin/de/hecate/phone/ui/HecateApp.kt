@@ -371,6 +371,27 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
             }
         }
 
+        if (d.sessionEvents.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            SectionHeader("Verlauf der Aufzeichnung")
+            Spacer(Modifier.height(4.dp))
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    for (e in d.sessionEvents) {
+                        Text(
+                            "%6.0fs  %-18s %s".format(
+                                e.tOffsetMs / 1000.0, e.type.name, e.note.orEmpty(),
+                            ),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         SectionHeader("Health Connect")
         KeyValue("Status", Format.hcState(d.hcState))

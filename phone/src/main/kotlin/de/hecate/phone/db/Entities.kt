@@ -170,6 +170,39 @@ data class MatchLogEntity(
     override fun hashCode(): Int = 31 * sessionId.hashCode() + payload.contentHashCode()
 }
 
+/**
+ * The session's lifecycle events, one blob per session.
+ *
+ * Separate from [MatchLogEntity] because they answer different questions and
+ * arrive at different sizes: the match log is one entry per sample and says what
+ * the matcher decided, while this is a handful of entries per session and says
+ * what happened to the recording — paused, GPS lost, service restarted. The
+ * watch writes both into the session file; without this table the second kind
+ * was parsed at ingest and then dropped, and went with the file when the watch
+ * deleted it.
+ */
+@Entity(
+    tableName = "session_events",
+    primaryKeys = ["session_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["session_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class SessionEventsEntity(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "payload", typeAffinity = ColumnInfo.BLOB) val payload: ByteArray,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is SessionEventsEntity && other.sessionId == sessionId && other.payload.contentEquals(payload)
+
+    override fun hashCode(): Int = 31 * sessionId.hashCode() + payload.contentHashCode()
+}
+
 /** Small key/value table for the bundle version counter and similar. */
 @Entity(tableName = "meta")
 data class MetaEntity(

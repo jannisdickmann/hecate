@@ -8,6 +8,7 @@ import de.hecate.core.Tuning
 import de.hecate.core.geo.LatLon
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.MatchLogEntry
+import de.hecate.core.model.SessionEvent
 import de.hecate.phone.AppGraph
 import de.hecate.phone.archive.Archive
 import de.hecate.phone.db.RouteSummary
@@ -59,6 +60,10 @@ data class SessionDetail(
     val hcError: String?,
     val matchLogSize: Int,
     val matchEvents: List<MatchLogEntry>,
+    /** What happened to the recording itself: pauses, GPS, service restarts.
+     *  Empty for sessions ingested before schema v3, and for TCX imports, which
+     *  never had any. */
+    val sessionEvents: List<SessionEvent>,
     /** Whether the watch worked the route out or assumed it from the ranking. */
     val committedByPriority: Boolean,
 )
@@ -295,6 +300,9 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val log = dao.matchLog(id)?.let {
             runCatching { BundleCodec.decodeMatchLog(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val events = dao.events(id)?.let {
+            runCatching { BundleCodec.decodeEvents(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
+        } ?: emptyList()
 
         _sessionDetail.value = SessionDetail(
             summary = SessionSummary(
@@ -323,6 +331,9 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             }?.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY,
             // Only the interesting lines: commits, demotions, deviations.
             matchEvents = log.filter { it.event != de.hecate.core.model.MatchEvent.SAMPLE }.take(50),
+            // Uncapped on purpose: a handful per session, and the one that
+            // matters is usually the one you did not expect to be there.
+            sessionEvents = events,
         )
     }
 
