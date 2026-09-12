@@ -47,6 +47,22 @@ class HealthConnectWriter(private val context: Context) {
         }.getOrDefault(false)
     }
 
+    /**
+     * Hand the grants back.
+     *
+     * The counterpart to the permission request, and the reason the setting is a
+     * switch rather than a button: a one-way "set up Health Connect" leaves the
+     * user to go and find Android's own settings to undo it, which is where the
+     * old menu item's opacity came from. Returns false if Health Connect is not
+     * there to revoke anything.
+     */
+    suspend fun revokeAll(): Boolean {
+        val c = client ?: return false
+        return runCatching { c.permissionController.revokeAllPermissions(); true }
+            .onFailure { Log.w(TAG, "Health-Connect-Berechtigungen konnten nicht entzogen werden", it) }
+            .getOrDefault(false)
+    }
+
     sealed interface WriteResult {
         data object Written : WriteResult
         data class Failed(val reason: String, val retryable: Boolean) : WriteResult

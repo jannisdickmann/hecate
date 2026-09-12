@@ -4,6 +4,9 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.health.connect.client.HealthConnectClient
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import de.hecate.core.Tuning
 import de.hecate.core.geo.LatLon
 import de.hecate.core.io.BundleCodec
@@ -19,15 +22,37 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** Which of the three screens is showing (§4: no Compose Navigation). */
+/**
+ * Which screen is showing (§4: no Compose Navigation).
+ *
+ * "Recording" is the user's word for what the database calls a session. The
+ * rename stops at this layer deliberately: `session` is the wire format, the
+ * table name, the archive's directory and the watch's filename, and renaming it
+ * downward would change the backup format to relabel a screen.
+ */
 sealed interface Screen {
-    data object Sessions : Screen
+    data object Recordings : Screen
     data object Routes : Screen
+    data object Settings : Screen
     data class SessionDetail(val id: String) : Screen
     data class RouteDetail(val id: Long) : Screen
+}
+
+/**
+ * What the Health Connect switch in settings is currently showing.
+ *
+ * Four states rather than a boolean because "off" has three different causes and
+ * they need different words: not installed, too old, or simply not granted yet.
+ */
+enum class HealthConnectState {
+    UNAVAILABLE,
+    UPDATE_REQUIRED,
+    DISCONNECTED,
+    CONNECTED,
 }
 
 /** Everything the route detail screen renders (US-8). */
@@ -75,8 +100,25 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db get() = AppGraph.db
 
-    private val _screen = MutableStateFlow<Screen>(Screen.Sessions)
+    private val _screen = MutableStateFlow<Screen>(Screen.Recordings)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
+
+    /**
+     * Where back goes, most recent last.
+     *
+     * Switching panels used to leave nothing behind, so the system back button
+     * fell through to the launcher and the app closed — from a panel the user had
+     * arrived at one tap earlier. Bounded because it is a convenience, not a
+     * history: a user who taps between two panels forty times wants the last few
+     * back presses to work, not all forty.
+     */
+    private val _backStack = MutableStateFlow<List<Screen>>(emptyList())
+    val canGoBack: StateFlow<Boolean> = _backStack
+        .map { it.isNotEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val _healthConnect = MutableStateFlow(HealthConnectState.UNAVAILABLE)
+    val healthConnect: StateFlow<HealthConnectState> = _healthConnect.asStateFlow()
 
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status.asStateFlow()
@@ -96,20 +138,54 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     val routes: StateFlow<List<RouteSummary>> = db.routes().summaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /**
+     * Whether a re-clustering is queued or running.
+     *
+     * Clustering is O(n²) over every recording (§2.6) and on a real history it
+     * takes long enough that a button which appears to do nothing is the natural
+     * reading. WorkManager already knows; this just asks it.
+     */
+    val clustering: StateFlow<Boolean> =
+        WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.CLUSTER)
+            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /**
+     * Which recordings stand out on their own route, keyed by recording id.
+     *
+     * Recomputed from the list itself rather than stored: it is a property of the
+     * comparison, not of the recording, so every ingest and every re-clustering
+     * changes it for rows that did not themselves change.
+     */
+    val standouts: StateFlow<Map<String, Standout>> = sessions
+        .map(Standouts::compute)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     fun show(screen: Screen) {
+        val current = _screen.value
+        if (screen == current) return
+        _backStack.value = (_backStack.value + current).takeLast(BACK_STACK_LIMIT)
+        enter(screen)
+    }
+
+    /** True when back was handled here; false leaves it to the system, which is
+     *  what closes the app from the first screen the user saw. */
+    fun back(): Boolean {
+        val stack = _backStack.value
+        val previous = stack.lastOrNull() ?: return false
+        _backStack.value = stack.dropLast(1)
+        enter(previous)
+        return true
+    }
+
+    /** Go to a screen without recording where we came from — for the cases where
+     *  the screen we are leaving has just ceased to exist. */
+    private fun enter(screen: Screen) {
         _screen.value = screen
         when (screen) {
             is Screen.RouteDetail -> loadRoute(screen.id)
             is Screen.SessionDetail -> loadSession(screen.id)
             else -> Unit
-        }
-    }
-
-    fun back() {
-        _screen.value = when (val s = _screen.value) {
-            is Screen.RouteDetail -> Screen.Routes
-            is Screen.SessionDetail -> Screen.Sessions
-            else -> s
         }
     }
 
@@ -140,7 +216,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         _busy.value = false
         _status.value = result.fold(
             onSuccess = { r ->
-                "Gesichert: ${r.sessions} Sitzungen, ${r.routes} Routen (${Format.fileSize(r.bytes)})"
+                "Gesichert: ${r.sessions} Aufzeichnungen, ${r.routes} Routen (${Format.fileSize(r.bytes)})"
             },
             onFailure = { "Sicherung fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
         )
@@ -157,7 +233,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = result.fold(
             onSuccess = { r: Archive.RestoreReport ->
                 buildString {
-                    append("${r.sessionsRestored} Sitzungen wiederhergestellt")
+                    append("${r.sessionsRestored} Aufzeichnungen wiederhergestellt")
                     if (r.routesRestored > 0) append(", ${r.routesRestored} Routen")
                     if (r.sessionsSkipped > 0) append(", ${r.sessionsSkipped} schon vorhanden")
                     if (r.failed > 0) append(", ${r.failed} fehlgeschlagen")
@@ -195,6 +271,33 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = "Neu-Clustering gestartet"
     }
 
+    /**
+     * Re-read whether Health Connect is installed and granted.
+     *
+     * Called whenever settings comes into view and after the permission sheet
+     * returns, because both the grant and its removal can happen outside this app
+     * — in Health Connect's own settings — and the switch must not claim
+     * otherwise.
+     */
+    fun refreshHealthConnect() = viewModelScope.launch {
+        val hc = AppGraph.healthConnect
+        _healthConnect.value = when {
+            hc.availability == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
+                HealthConnectState.UPDATE_REQUIRED
+            !hc.isAvailable -> HealthConnectState.UNAVAILABLE
+            hc.hasPermissions() -> HealthConnectState.CONNECTED
+            else -> HealthConnectState.DISCONNECTED
+        }
+    }
+
+    fun disconnectHealthConnect() = viewModelScope.launch {
+        val ok = AppGraph.healthConnect.revokeAll()
+        refreshHealthConnect()
+        _status.value =
+            if (ok) "Health Connect getrennt"
+            else "Health Connect konnte nicht getrennt werden"
+    }
+
     fun retryHealthConnect() = viewModelScope.launch {
         Jobs.enqueueHealthConnect(getApplication())
         _status.value = "Health-Connect-Schreiben angestoßen"
@@ -202,9 +305,12 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteSession(id: String) = viewModelScope.launch {
         db.sessions().delete(id)
-        _screen.value = Screen.Sessions
+        // Its detail screen is now a screen about nothing, so it must not be
+        // reachable by pressing back either.
+        _backStack.value = _backStack.value.filterNot { it == Screen.SessionDetail(id) }
+        enter(Screen.Recordings)
         Jobs.enqueueClustering(getApplication())
-        _status.value = "Sitzung gelöscht"
+        _status.value = "Aufzeichnung gelöscht"
     }
 
     private fun loadRoute(routeId: Long) = viewModelScope.launch {
@@ -341,5 +447,9 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         if (isEmpty()) return null
         val s = sorted()
         return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
+    }
+
+    companion object {
+        private const val BACK_STACK_LIMIT = 16
     }
 }

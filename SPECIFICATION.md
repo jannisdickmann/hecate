@@ -938,3 +938,96 @@ that uses it, and two further tests name them directly. The lesson is the one
 A.10 already states about this file: the part that can lose data silently is the
 part that has to be read back in a test, and "round trip" has to mean every
 field, not every field someone remembered.
+\n
+### A.13 A settings panel, a back stack, and what a fast run is
+
+Seven changes to the phone UI, all from using the thing. Grouped here because
+they share a cause: §5.4 specified which screens exist and said nothing about
+how to get between them or what they should be called.
+
+**Settings is now a panel, not two overflow menus.** TCX import, backup export
+and backup restore lived behind a `⋮` on the recordings screen; re-clustering
+lived behind a separate button on the routes screen. Neither was discoverable,
+and a menu item has room for a label but not for an explanation — which is how
+"Health Connect einrichten" came to be a button nobody could explain. The panel
+costs one slot in the bottom bar and gives every action a sentence.
+
+**Back walks the panels.** The old `BackHandler` was armed only on the detail
+screens, so pressing back from a panel the user had reached one tap earlier fell
+through to the launcher and closed the app. The view model now keeps a bounded
+history and `back()` reports whether it handled the press, leaving the system to
+close the app only at the end of it. Bounded at 16 because this is a
+convenience, not an undo log: someone who has tapped between two panels forty
+times wants the next few back presses to work, not all forty. Deleting a
+recording drops that recording's detail screen from the history as it goes —
+otherwise back leads to a screen about something that no longer exists.
+
+**Re-clustering shows that it is running.** Clustering is O(n²) over every
+recording (§2.6), so on a real history the button appeared to do nothing.
+WorkManager already knows the state of the unique job; the panel now watches it
+and swaps the button for a spinner, and the routes list grows a banner, since
+that list is where the effect actually lands. The button is replaced rather than
+disabled: the job is enqueued with `REPLACE`, so a second press would restart it
+from the beginning rather than queue anything.
+
+**"Sitzung" became "Aufzeichnung".** User-facing strings only. `session` stays
+the wire format, the table name, the archive's directory and the watch's
+filename — renaming it downward would change the backup format in order to
+relabel a screen. `Screen.Recordings` is the boundary.
+
+**Delete asks first, and says what goes.** The dialog names the recording's date,
+distance and duration, and then what is destroyed with it — samples, match log,
+recording history — and what is not: the Health Connect entry stays. Deleting
+the only complete copy of a workout on one tap was the last unguarded
+irreversible action in the app.
+
+**Activity types have icons.** Three vector drawables in `res/drawable`, the
+official Material Symbols paths from `google/material-design-icons`, shown on
+both lists and both detail screens. Not `material-icons-extended`, for the
+reason A.11 already gives: release builds run with `isMinifyEnabled = false`, so
+an unused icon is an icon that ships. Symbols are drawn in a 960×960 box whose
+origin is the baseline — the viewBox is `0 -960 960 960` — and Android's
+viewport has no negative origin, so each drawable wraps its path in a
+`<group android:translateY="960">` rather than having the path rewritten by
+hand, which would make the next update a transcription exercise. An exercise
+type this build does not recognise draws no icon at all, rather than defaulting
+to a plausible wrong one.
+
+**Fast and hard recordings are marked.** A recording is marked fast when its
+average speed is at or above the 75th percentile of the recordings on the same
+route, and marked for effort when its average heart rate is. Three decisions
+worth naming:
+
+- **Per route, or not at all.** A recording with no matched route has nothing to
+  be fast against and is never marked. Ranking is within the route, so the best
+  climb of a slow hilly route is marked even though every recording of the flat
+  route beat it.
+- **Four members minimum.** A route exists at three (§5.6), and the 75th
+  percentile of three values is "the best one" wearing a statistician's hat.
+  Four is the first count at which the top quartile is genuinely a quarter, and
+  even then it is one recording — this marks a personal best against the route
+  and claims no more.
+- **Speed and heart rate rank independently**, because a hard effort on a slow
+  day is worth seeing precisely when the two come apart. Heart rate ranks only
+  over the members that have one, and only if at least four do: a route whose
+  older recordings predate a heart rate strap must not let those absences drag
+  the threshold down to where everything qualifies.
+
+The arithmetic lives in `ui/Standouts.kt` rather than in the view model, with no
+Android in it, and has eleven tests. It is the only arithmetic in the phone UI
+and the kind whose bugs hide well — a wrong threshold still highlights
+*something*. The emphasis is colour **and** weight, never colour alone: the two
+marks sit in the same row and have to be tellable apart by someone who cannot
+separate the hues.
+
+**Health Connect is a switch.** It cannot be made automatic, and that is not a
+limitation of this app: Android health permissions are granted by the user
+through a system-owned sheet, and `PermissionController`'s only entry point is
+an `ActivityResultContract`. So the action stays, but it moves to settings, says
+what it does, and gains the half it never had — `revokeAllPermissions()` turns
+it off. A one-way "einrichten" button left the user to go and find Android's own
+settings to undo it, which is most of why it read as inexplicable. Four states
+rather than a boolean, because "off" has three different causes that need
+different words: not installed, too old, or simply not granted yet. The state is
+re-read on every `onResume` and whenever the panel appears, since both the grant
+and its removal can happen outside this app.

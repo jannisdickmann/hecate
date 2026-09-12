@@ -58,9 +58,14 @@ class MainActivity : ComponentActivity() {
     private val requestHealthConnect = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { granted: Set<String> ->
+        // Either way the switch has to be re-read: the user may have granted
+        // some but not all, or dismissed the sheet entirely, and the switch must
+        // reflect what Health Connect actually thinks rather than what was asked
+        // for.
+        vm.refreshHealthConnect()
         if (granted.containsAll(HealthConnectWriter.PERMISSIONS)) {
             Jobs.enqueueHealthConnect(this)
-            toast("Health Connect eingerichtet")
+            toast("Health Connect verbunden")
         } else {
             toast("Health-Connect-Berechtigungen fehlen weiterhin")
         }
@@ -92,6 +97,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // The grant can be withdrawn in Health Connect's own settings while this
+        // app is in the background, so the switch is never trusted across a
+        // trip away from the screen.
+        vm.refreshHealthConnect()
         // Anything the watch delivered while the app was closed is already in the
         // database; this only nudges the writes that are still outstanding.
         Jobs.enqueueHealthConnect(this)

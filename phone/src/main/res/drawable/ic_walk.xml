@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material Symbols "directions_walk", taken from google/material-design-icons.
+
+  Symbols are authored in a 960x960 box whose origin sits at the baseline, so the
+  viewBox is "0 -960 960 960" and every y is negative. Android's viewport has no
+  negative origin, hence the translate: it moves the glyph down into 0..960
+  rather than the path being rewritten by hand, which would make the next update
+  a transcription exercise.
+
+  Deliberately three files rather than material-icons-extended, which would ship
+  every unused icon given isMinifyEnabled = false (§6.3) — see Appendix A.11.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="m280-40 112-564-72 28v136h-80v-188l202-86q14-6 29.5-7t29.5 4q14 5 26.5 14t20.5 23l40 64q26 42 70.5 69T760-520v80q-70 0-125-29t-94-74l-25 123 84 80v300h-80v-260l-84-64-72 324h-84Zm260-700q-33 0-56.5-23.5T460-820q0-33 23.5-56.5T540-900q33 0 56.5 23.5T620-820q0 33-23.5 56.5T540-740Z" />
+    </group>
+</vector>

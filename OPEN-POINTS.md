@@ -351,6 +351,33 @@ Also unverified, and cheap to check at the same time: `TimeText` now draws a
 clock the app never had, and the `EdgeButton` on the control page is positioned
 by the scaffold rather than by this code.
 
+### 3.7 The quartile thresholds have never met a real history
+
+The recordings list marks a recording whose speed or average heart rate is in
+the upper quartile for its route (Appendix A.13). The arithmetic is tested —
+eleven cases in `StandoutsTest`, including that each route ranks against itself
+and that missing heart rates do not drag the threshold down — but tests use
+invented numbers, and the only question that matters here is whether the marks
+are *useful* against a real history.
+
+Two things to watch once there are enough recordings to tell.
+
+- **Whether a quarter is too many.** On a route done weekly for a year, a
+  quarter of the rows carry a mark, which may read as decoration rather than as
+  a signal. If so the fix is the threshold, not the mechanism: 0.9 marks roughly
+  the best in ten. The constant is `Standouts.QUARTILE`.
+- **Whether four members is too few.** At exactly four, the upper quartile is
+  one recording, and that recording changes every time a faster one arrives.
+  That is arguably correct — it is a personal best against the route — but it
+  means a brand-new route immediately marks one of its own recordings, which may
+  look like a claim rather than a fact.
+
+Also unverified, and only visible on a device: whether the two marks can be told
+apart at a glance. They are distinguished by colour — primary for speed,
+tertiary for heart rate — plus bold weight, and both colours come from the
+wallpaper under dynamic theming. A wallpaper whose primary and tertiary land
+close together would leave weight and the unit suffix doing all the work.
+
 ---
 
 ## 4. Things deliberately not done

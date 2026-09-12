@@ -25,18 +25,20 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumTopAppBar
 import androidx.compose.material3.NavigationBar
@@ -49,6 +51,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -62,21 +65,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 
 /**
- * §5.4: Sessions list → Session detail; Routes list → Route detail.
+ * §5.4: Recordings list → recording detail; Routes list → route detail; plus a
+ * Settings panel for everything that is not history.
  *
- * Four screens, one state enum, no navigation library (§4). The bottom bar
- * switches between the two lists; the system back button leaves a detail.
+ * Five screens, one state enum, no navigation library (§4). The bottom bar
+ * switches between the three panels; the system back button walks the history
+ * the view model keeps — see [HecateViewModel.back], and Appendix A.13 for why
+ * that stopped being "leave the detail screen".
  *
  * Every colour below is a Material 3 scheme role, never a literal — see
  * [HecateTheme]. The two exceptions are the start and end markers on the route
@@ -94,6 +103,7 @@ fun HecateApp(
     val screen by vm.screen.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val canGoBack by vm.canGoBack.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(status) {
@@ -103,13 +113,17 @@ fun HecateApp(
         }
     }
 
+    // Enabled for every screen the user navigated to, not only the detail ones:
+    // switching panels is navigation too, and back used to fall straight through
+    // it to the launcher.
+    BackHandler(enabled = canGoBack) { vm.back() }
+
     val inDetail = screen is Screen.RouteDetail || screen is Screen.SessionDetail
-    BackHandler(enabled = inDetail) { vm.back() }
 
     // exitUntilCollapsed is the behaviour a two-row bar is built for: the tall
     // title shrinks into the short one and stays, rather than the whole bar
-    // leaving the screen. Its state is shared by all four screens, so it is reset
-    // on every screen change — otherwise a list left scrolled down, followed by a
+    // leaving the screen. Its state is shared by all screens, so it is reset on
+    // every screen change — otherwise a list left scrolled down, followed by a
     // detour into a detail, comes back to a collapsed bar above a list that is
     // already at the top, and the title is simply missing.
     val topBarState = rememberTopAppBarState()
@@ -135,11 +149,11 @@ fun HecateApp(
                         },
                     )
                 } else {
-                    // The two-row bar: a large title that shrinks into a small
-                    // one as the list scrolls under it.
+                    // No actions up here any more: everything that used to hide
+                    // behind an overflow button now has a name and a home in
+                    // Settings.
                     MediumTopAppBar(
                         title = { Text(titleOf(screen)) },
-                        actions = { ListActions(screen, vm, onPickTcx, onExportArchive, onRestoreArchive, onRequestHealthConnect) },
                         scrollBehavior = scrollBehavior,
                     )
                 }
@@ -148,10 +162,10 @@ fun HecateApp(
                 if (!inDetail) {
                     NavigationBar {
                         NavigationBarItem(
-                            selected = screen is Screen.Sessions,
-                            onClick = { vm.show(Screen.Sessions) },
+                            selected = screen is Screen.Recordings,
+                            onClick = { vm.show(Screen.Recordings) },
                             icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                            label = { Text("Sitzungen") },
+                            label = { Text("Aufzeichnungen") },
                         )
                         NavigationBarItem(
                             selected = screen is Screen.Routes,
@@ -159,15 +173,24 @@ fun HecateApp(
                             icon = { Icon(Icons.Filled.Place, contentDescription = null) },
                             label = { Text("Routen") },
                         )
+                        NavigationBarItem(
+                            selected = screen is Screen.Settings,
+                            onClick = { vm.show(Screen.Settings) },
+                            icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                            label = { Text("Einstellungen") },
+                        )
                     }
                 }
             },
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (screen) {
-                    is Screen.Sessions -> SessionsScreen(vm)
+                    is Screen.Recordings -> RecordingsScreen(vm)
                     is Screen.Routes -> RoutesScreen(vm)
-                    is Screen.SessionDetail -> SessionDetailScreen(vm)
+                    is Screen.Settings -> SettingsScreen(
+                        vm, onPickTcx, onExportArchive, onRestoreArchive, onRequestHealthConnect,
+                    )
+                    is Screen.SessionDetail -> RecordingDetailScreen(vm)
                     is Screen.RouteDetail -> RouteDetailScreen(vm)
                 }
                 if (busy) {
@@ -183,66 +206,24 @@ fun HecateApp(
     }
 }
 
-/** The top-bar actions, which differ per list screen. */
-@Composable
-private fun ListActions(
-    screen: Screen,
-    vm: HecateViewModel,
-    onPickTcx: () -> Unit,
-    onExportArchive: () -> Unit,
-    onRestoreArchive: () -> Unit,
-    onRequestHealthConnect: () -> Unit,
-) {
-    when (screen) {
-        // Four actions is past what fits across a phone top bar, so they live
-        // behind one button.
-        is Screen.Sessions -> {
-            var open by remember { mutableStateOf(false) }
-            IconButton(onClick = { open = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "Weitere Aktionen")
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                DropdownMenuItem(
-                    text = { Text("TCX importieren") },
-                    onClick = { open = false; onPickTcx() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Sicherung exportieren") },
-                    onClick = { open = false; onExportArchive() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Sicherung einlesen") },
-                    onClick = { open = false; onRestoreArchive() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Health Connect einrichten") },
-                    onClick = { open = false; onRequestHealthConnect() },
-                )
-            }
-        }
-        is Screen.Routes -> IconButton(onClick = { vm.recluster() }) {
-            Icon(Icons.Filled.Refresh, contentDescription = "Neu gruppieren")
-        }
-        else -> Unit
-    }
-}
-
 private fun titleOf(screen: Screen): String = when (screen) {
-    is Screen.Sessions -> "Sitzungen"
+    is Screen.Recordings -> "Aufzeichnungen"
     is Screen.Routes -> "Routen"
-    is Screen.SessionDetail -> "Sitzung"
+    is Screen.Settings -> "Einstellungen"
+    is Screen.SessionDetail -> "Aufzeichnung"
     is Screen.RouteDetail -> "Route"
 }
 
-// ------------------------------------------------------------------- sessions
+// ----------------------------------------------------------------- recordings
 
 @Composable
-private fun SessionsScreen(vm: HecateViewModel) {
+private fun RecordingsScreen(vm: HecateViewModel) {
     val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val standouts by vm.standouts.collectAsStateWithLifecycle()
     if (sessions.isEmpty()) {
         Empty(
-            "Noch keine Sitzungen.\n\nAufzeichnungen der Uhr erscheinen hier automatisch. " +
-                "Über „Import“ lassen sich TCX-Dateien aus Google Health einlesen, " +
+            "Noch keine Aufzeichnungen.\n\nWas die Uhr aufnimmt, erscheint hier automatisch. " +
+                "Unter „Einstellungen“ lassen sich TCX-Dateien aus Google Health einlesen, " +
                 "damit Routen sofort gelernt werden.",
         )
         return
@@ -253,23 +234,26 @@ private fun SessionsScreen(vm: HecateViewModel) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(sessions, key = { it.id }) { s ->
-            SessionRow(s) { vm.show(Screen.SessionDetail(s.id)) }
+            RecordingRow(s, standouts[s.id] ?: Standout()) { vm.show(Screen.SessionDetail(s.id)) }
         }
     }
 }
 
 @Composable
-private fun SessionRow(s: SessionSummary, onClick: () -> Unit) {
+private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(16.dp, 12.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ActivityIcon(s.exerciseType, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
                 Text(
                     Format.dateTime(s.startedAtUtc, s.tzOffsetMinutes),
                     style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
                 )
                 Text(Format.distance(s.totalDistanceM), style = MaterialTheme.typography.titleSmall)
             }
@@ -279,30 +263,59 @@ private fun SessionRow(s: SessionSummary, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    buildString {
-                        append(Format.exerciseType(s.exerciseType))
-                        append(" · ")
-                        append(Format.duration(s.activeDurationMs))
-                        s.avgHr?.let { append(" · ${Format.hr(it)} bpm") }
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Speed and heart rate are separate Text elements rather than one
+                // built string, because either of them may need to be the one
+                // that is emphasised.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Quiet(Format.duration(s.activeDurationMs))
+                    Quiet(" · ")
+                    Standing(
+                        Format.speed(Format.speedFrom(s.totalDistanceM, s.activeDurationMs)) + " km/h",
+                        standout.fast,
+                        MaterialTheme.colorScheme.primary,
+                    )
+                    s.avgHr?.let {
+                        Quiet(" · ")
+                        Standing("${Format.hr(it)} bpm", standout.highHr, MaterialTheme.colorScheme.tertiary)
+                    }
+                }
                 // A matched route is the whole point of the app, so it gets a
                 // filled pill rather than another line of grey text.
                 s.routeName?.let { RoutePill(it) }
-                    ?: Text(
-                        if (s.source == "IMPORT_TCX") "importiert" else "keine Route",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    ?: Quiet(if (s.source == "IMPORT_TCX") "importiert" else "keine Route")
             }
         }
     }
 }
 
-/** The name of the route a session was matched to. */
+/**
+ * One figure in a recording row, emphasised when it is in the upper quartile for
+ * its route (US-8).
+ *
+ * Emphasis is colour *and* weight, never colour alone: the two marks sit side by
+ * side in the same row, and have to be tellable apart by someone who cannot
+ * separate the hues. Each figure keeps its unit for the same reason.
+ */
+@Composable
+private fun Standing(text: String, standout: Boolean, accent: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (standout) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = if (standout) FontWeight.Bold else FontWeight.Normal,
+    )
+}
+
+@Composable
+private fun Quiet(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** The name of the route a recording was matched to. */
 @Composable
 private fun RoutePill(name: String) {
     Surface(
@@ -320,14 +333,20 @@ private fun RoutePill(name: String) {
 }
 
 @Composable
-private fun SessionDetailScreen(vm: HecateViewModel) {
+private fun RecordingDetailScreen(vm: HecateViewModel) {
     val detail by vm.sessionDetail.collectAsStateWithLifecycle()
     val d = detail ?: return
+    var confirmDelete by remember { mutableStateOf(false) }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text(
-            Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes),
-            style = MaterialTheme.typography.titleMedium,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ActivityIcon(d.summary.exerciseType, Modifier.size(22.dp), MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
         Spacer(Modifier.height(12.dp))
         PolylineView(d.geometry)
         Spacer(Modifier.height(12.dp))
@@ -354,42 +373,22 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
 
         if (d.matchEvents.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-            ) {
-                Column(Modifier.padding(10.dp)) {
-                    for (e in d.matchEvents) {
-                        Text(
-                            "%6.0fs  %-16s %s".format(
-                                e.tOffsetMs / 1000.0, e.event.name, e.routeId?.toString() ?: "",
-                            ),
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        )
-                    }
-                }
-            }
+            MonoCard(
+                d.matchEvents.map { e ->
+                    "%6.0fs  %-16s %s".format(e.tOffsetMs / 1000.0, e.event.name, e.routeId?.toString() ?: "")
+                },
+            )
         }
 
         if (d.sessionEvents.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
             SectionHeader("Verlauf der Aufzeichnung")
             Spacer(Modifier.height(4.dp))
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-            ) {
-                Column(Modifier.padding(10.dp)) {
-                    for (e in d.sessionEvents) {
-                        Text(
-                            "%6.0fs  %-18s %s".format(
-                                e.tOffsetMs / 1000.0, e.type.name, e.note.orEmpty(),
-                            ),
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        )
-                    }
-                }
-            }
+            MonoCard(
+                d.sessionEvents.map { e ->
+                    "%6.0fs  %-18s %s".format(e.tOffsetMs / 1000.0, e.type.name, e.note.orEmpty())
+                },
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -402,14 +401,28 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
 
         Spacer(Modifier.height(20.dp))
         TextButton(
-            onClick = { vm.deleteSession(d.summary.id) },
+            onClick = { confirmDelete = true },
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
         ) {
             Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Sitzung löschen")
+            Text("Aufzeichnung löschen")
         }
         Spacer(Modifier.height(24.dp))
+    }
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Aufzeichnung löschen?",
+            // Names what actually goes. "Are you sure" is not information.
+            body = Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes) + " — " +
+                "${Format.distance(d.summary.totalDistanceM)}, ${Format.duration(d.summary.activeDurationMs)}.\n\n" +
+                "Messpunkte, Match-Log und Verlauf werden mitgelöscht. Zurückholen lässt sich das " +
+                "nur aus einer Sicherung. Der Eintrag in Health Connect bleibt bestehen.",
+            confirm = "Löschen",
+            onConfirm = { confirmDelete = false; vm.deleteSession(d.summary.id) },
+            onDismiss = { confirmDelete = false },
+        )
     }
 }
 
@@ -418,20 +431,27 @@ private fun SessionDetailScreen(vm: HecateViewModel) {
 @Composable
 private fun RoutesScreen(vm: HecateViewModel) {
     val routes by vm.routes.collectAsStateWithLifecycle()
-    if (routes.isEmpty()) {
+    val clustering by vm.clustering.collectAsStateWithLifecycle()
+    if (routes.isEmpty() && !clustering) {
         Empty(
             "Noch keine Routen.\n\nEine Route entsteht, sobald drei ähnliche Aufzeichnungen " +
-                "vorliegen. Bis dahin hilft der TCX-Import auf der Sitzungsseite.",
+                "vorliegen. Bis dahin hilft der TCX-Import unter „Einstellungen“.",
         )
         return
     }
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(routes, key = { it.id }) { r ->
-            RouteRow(r) { vm.show(Screen.RouteDetail(r.id)) }
+    Column(Modifier.fillMaxSize()) {
+        // Shown here as well as in Settings, because a re-clustering is most
+        // visible by its effect on this list: it is about to rearrange itself,
+        // and possibly to rename things.
+        if (clustering) ClusteringBanner()
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(routes, key = { it.id }) { r ->
+                RouteRow(r) { vm.show(Screen.RouteDetail(r.id)) }
+            }
         }
     }
 }
@@ -444,14 +464,14 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(16.dp, 12.dp)) {
-            Text(r.name, style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ActivityIcon(r.exerciseType, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text(r.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            }
             Spacer(Modifier.height(4.dp))
-            Text(
-                "${Format.exerciseType(r.exerciseType)} · ${Format.distance(r.lengthM)} · ${r.memberCount} Aufzeichnungen",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
+            Quiet("${Format.distance(r.lengthM)} · ${r.memberCount} Aufzeichnungen")
+            Quiet(
                 buildString {
                     append("Median ")
                     append(r.medianDurationMs?.let { Format.duration(it) } ?: "–")
@@ -462,8 +482,6 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
                         append(" · Prio ${r.priority}")
                     }
                 },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -492,11 +510,9 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
                 }
             }
         } else {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ActivityIcon(d.exerciseType, Modifier.size(22.dp), MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
                 Text(d.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 IconButton(onClick = { editing = true }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Umbenennen")
@@ -558,7 +574,220 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
     }
 }
 
-// ---------------------------------------------------------------------- bits
+// ------------------------------------------------------------------- settings
+
+/**
+ * Everything that is not history.
+ *
+ * These used to live behind a `⋮` on the recordings screen — where they were
+ * neither discoverable nor obviously related to one another — with re-clustering
+ * behind a second one on the routes screen. A panel costs one slot in the bottom
+ * bar and lets each action carry a sentence saying what it does, which is what
+ * "Health Connect einrichten" most needed and never had.
+ */
+@Composable
+private fun SettingsScreen(
+    vm: HecateViewModel,
+    onPickTcx: () -> Unit,
+    onExportArchive: () -> Unit,
+    onRestoreArchive: () -> Unit,
+    onRequestHealthConnect: () -> Unit,
+) {
+    val clustering by vm.clustering.collectAsStateWithLifecycle()
+    val hc by vm.healthConnect.collectAsStateWithLifecycle()
+
+    // Both the grant and its removal can happen in Health Connect's own settings,
+    // so the switch is re-read every time this panel appears rather than trusted
+    // from the last time it was looked at.
+    LaunchedEffect(Unit) { vm.refreshHealthConnect() }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        SectionHeader("Routen")
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
+            Text("Routen neu berechnen", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Quiet(
+                "Gruppiert alle Aufzeichnungen neu zu Routen. Nötig nach dem Einlesen einer " +
+                    "Sicherung oder nach vielen Importen; sonst läuft es nach jeder neuen " +
+                    "Aufzeichnung von selbst.",
+            )
+            Spacer(Modifier.height(12.dp))
+            if (clustering) {
+                // The button is gone while the work runs rather than merely
+                // disabled: there is nothing useful to press, and the job is
+                // enqueued with REPLACE, so a second tap would restart it from
+                // the beginning rather than queue anything.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text("Berechnung läuft…", style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                Button(onClick = { vm.recluster() }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Neu berechnen")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SectionHeader("Health Connect")
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Nach Health Connect schreiben", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Quiet(
+                        when (hc) {
+                            HealthConnectState.CONNECTED ->
+                                "Abgeschlossene Aufzeichnungen erscheinen in Google Health. " +
+                                    "Ausschalten entzieht die Berechtigung; bereits geschriebene " +
+                                    "Einträge bleiben dort bestehen."
+                            HealthConnectState.DISCONNECTED ->
+                                "Aus. Einschalten fragt die Berechtigung ab — das muss Android " +
+                                    "selbst tun, die App kann sie sich nicht geben."
+                            HealthConnectState.UPDATE_REQUIRED ->
+                                "Health Connect ist zu alt und muss erst aktualisiert werden."
+                            HealthConnectState.UNAVAILABLE ->
+                                "Health Connect ist auf diesem Gerät nicht verfügbar."
+                        },
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = hc == HealthConnectState.CONNECTED,
+                    enabled = hc == HealthConnectState.CONNECTED || hc == HealthConnectState.DISCONNECTED,
+                    onCheckedChange = { on ->
+                        if (on) onRequestHealthConnect() else vm.disconnectHealthConnect()
+                    },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SectionHeader("Daten")
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
+            SettingsAction(
+                "TCX importieren",
+                "Liest Trainings aus einem Google-Health-Export ein, damit Routen sofort gelernt " +
+                    "werden statt erst nach drei neuen Läufen.",
+                onPickTcx,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            SettingsAction(
+                "Sicherung exportieren",
+                "Schreibt die gesamte Datenbank in eine Datei. Namen und Prioritäten sind das " +
+                    "Einzige darin, was sonst nirgends steht.",
+                onExportArchive,
+            )
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            SettingsAction(
+                "Sicherung einlesen",
+                "Führt eine Sicherung mit dem zusammen, was schon da ist. Vorhandenes bleibt " +
+                    "unangetastet. Danach lohnt sich „Routen neu berechnen“.",
+                onRestoreArchive,
+            )
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SettingsCard(content: @Composable () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(Modifier.padding(16.dp)) { content() }
+    }
+}
+
+/** A named action with a sentence saying what it does, the whole row tappable. */
+@Composable
+private fun SettingsAction(title: String, body: String, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(4.dp))
+        Quiet(body)
+    }
+}
+
+@Composable
+private fun ClusteringBanner() {
+    Surface(
+        Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(12.dp))
+            Text("Routen werden neu berechnet…", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+// ----------------------------------------------------------------------- bits
+
+/**
+ * The icon for an exercise type (US-8), or nothing at all for a type this build
+ * does not know — a blank is better than confidently drawing the wrong activity.
+ */
+@Composable
+private fun ActivityIcon(
+    type: String,
+    modifier: Modifier = Modifier,
+    tint: Color = LocalContentColor.current,
+) {
+    val res = when (type) {
+        "RUNNING" -> R.drawable.ic_run
+        "WALKING" -> R.drawable.ic_walk
+        "BIKING" -> R.drawable.ic_bike
+        else -> return
+    }
+    Icon(
+        painter = painterResource(res),
+        contentDescription = Format.exerciseType(type),
+        modifier = modifier,
+        tint = tint,
+    )
+}
+
+/**
+ * The one shape every confirmation takes.
+ *
+ * [body] names what is about to happen to what, rather than asking whether the
+ * user is sure: by the time this is on screen they have already said so, and the
+ * only useful thing left to tell them is what they will not be able to undo.
+ */
+@Composable
+private fun ConfirmDialog(
+    title: String,
+    body: String,
+    confirm: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body, style = MaterialTheme.typography.bodyMedium) },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) { Text(confirm) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
+}
 
 /**
  * The manual route ranking, 1..10.
@@ -600,11 +829,9 @@ private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
             if (row == 0) Spacer(Modifier.height(4.dp))
         }
         Spacer(Modifier.height(6.dp))
-        Text(
+        Quiet(
             "Entscheidet nur zwischen Routen, die sich denselben Weg teilen. " +
                 "Bei Gleichstand bleibt die Anzeige auf „Suche…“.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -630,6 +857,24 @@ private fun KeyValue(key: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** A block of fixed-width diagnostic lines — the match log, the recording history. */
+@Composable
+private fun MonoCard(lines: List<String>) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            for (line in lines) {
+                Text(
+                    line,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+            }
+        }
     }
 }
 

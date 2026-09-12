@@ -14,7 +14,9 @@ import java.util.concurrent.TimeUnit
  */
 object Jobs {
 
-    private const val CLUSTER = "hecate.cluster"
+    /** Public because the UI observes this job to show that a re-clustering is
+     *  under way; the name is the handle WorkManager knows it by. */
+    const val CLUSTER = "hecate.cluster"
     private const val HEALTH_CONNECT = "hecate.healthconnect"
 
     fun enqueueClustering(context: Context) {
