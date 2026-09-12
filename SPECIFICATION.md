@@ -157,6 +157,8 @@ routes are learned immediately rather than in three months.*
 - Multi-select import; duplicates rejected by start-time proximity.
 - Imported sessions participate in clustering identically to recorded ones and
   are flagged as imported (not re-written to Health Connect).
+- A whole Google Health takeout is converted to a backup archive off the phone
+  and restored in one go — Appendix A.15.
 
 ### US-10 — Replay and diagnosis (must, developer-facing)
 
@@ -301,6 +303,7 @@ state and preserves the file.
 - `ClusterWorker` — after ingest, re-runs `RouteClusterer` over all sessions,
   rebuilds `RouteProfile`s, rebuilds and pushes the route bundle.
 - `TcxImporter` — US-9.
+- `de.hecate.core.takeout` — US-9 at the scale of a whole export (A.15).
 - UI: **Sessions** list → **Session detail**; **Routes** list → **Route detail**.
 
 ### 5.5 Data model (phone, Room)
@@ -805,8 +808,7 @@ Three fields cannot survive the round trip because the phone never stored them:
 `SessionEndReason` is not a column, so the exported footer says `IMPORTED` —
 true of the file being read rather than a guess at how the recording ended.
 
-`:phone` gains its first tests for this (§3.2 otherwise stands: still no
-instrumented tests, no Robolectric). They are plain JVM tests of `ArchiveCodec`,
+`:phone` gains its first tests for this. They are plain JVM tests of `ArchiveCodec`,
 which is the ZIP and JSON layer with no Android and no Room in it — deliberately
 split out from `ArchiveRepository` so that the part which can silently lose data
 is the part that gets read back in a test.
@@ -1104,3 +1106,149 @@ that never became routes, one holiday far outside the extent and one glitched
 fix — and looked at. The wanderings are the case worth checking: they are heat
 with no line on them, and they are the only place in the app where they appear
 at all.
+
+### A.15 A takeout is a better backfill than a pile of TCX files
+
+§7 and US-9 assume the cold start is solved by TCX: export each workout from
+Google Health, pick the files in the app, let the clusterer have them. That
+works and it does not scale. Google hands out one TCX per workout behind a
+per-activity URL, which for a year of commuting is several hundred downloads
+that need an authenticated session; the export that requires no clicking is
+Takeout, and Takeout contains no TCX at all. What it contains is a `tcxLink`
+column pointing back at those same URLs.
+
+So the backfill reads the takeout directly. `:core:run --args="takeout …"` turns
+the ZIP — or the several ZIPs a large export is split into, which are separate
+complete archives rather than one spanned one — into a backup archive in the
+format of A.10, and the phone restores it through the path that already exists.
+Three consequences worth recording.
+
+**The archive format moved to `:core`.** `Archive` and `ArchiveCodec` were in
+`:phone` and neither had ever imported anything from `android.*`; only
+`ArchiveRepository`, which maps Room rows to and from them, actually needs the
+platform. A command-line tool cannot depend on an Android module, and defining
+the backup format a second time inside the importer is how the two definitions
+start to disagree. Moving the pair down also moved their tests to where nothing
+about the Android toolchain can get between them and a laptop.
+
+**The importer builds sessions, never routes.** The archive it writes has an
+empty route table. Clustering happens on the phone at the end of the restore,
+by the same `RouteClusterer` and the same thresholds as a route learned live, so
+there is exactly one implementation of what counts as a route. A converter that
+shipped its own clustering would be a second one to keep in step.
+
+**What the export actually holds**, which took reading it to find out. The
+authoritative list of workouts is `UserExercises_<date>.csv`: one row each, UTC
+start and end, and — the thing worth the whole appendix — an explicit
+`utc_offset` per exercise. The positions are elsewhere, in
+`gps_location_<date>.csv`, at 1 Hz, in UTC, and not segmented by workout: the
+import slices them by the exercise's window. The friendlier-looking
+`exercise-0.json` beside them is a trap. It is paginated and capped — 237 rows
+against the exercise table's 429 in the export this was built against — its
+`hasGps` flag was false for fifteen days that do have position files, and its
+`startTime` is `01/28/26 17:56:08` with no zone anywhere near it.
+
+Three duplicate mechanisms rather than one, because there are three ways to get
+the same workout twice:
+
+| | caught by |
+|---|---|
+| the same takeout imported twice, or a later takeout that still contains it | session ids derived from Google's exercise id |
+| a workout imported by hand as TCX and also present in the takeout | start-time proximity, `Track.likelyDuplicate` |
+| a workout Hecate recorded, which the watch logged to Google Health on its own | the same |
+
+The second and third cannot be caught by id — the two ends of the comparison
+have unrelated ids and only the clock relates them — so the restore path now
+applies `Track.likelyDuplicate` to any session whose source is an import. This
+is a deliberate narrowing of A.10's "merge by id and nothing else": a backup of
+the app's own recordings is still restored exactly, and only an imported session
+can be refused for looking like something already present. Being wrong in the
+cautious direction costs one workout out of a backfill of hundreds. Being wrong
+the other way gives the clusterer two members for one journey and quietly
+inflates every route's member count, which is the number the UI reports and the
+number `MIN_MEMBERS` tests.
+
+Not everything in the export can come in. Workouts with no position file are
+dropped — Google keeps the exercise summary long after it has dropped the day's
+positions, so the oldest history is rows without tracks. Skiing and tennis have
+no `ExerciseType` here; they are refused rather than filed under the nearest
+thing, because a ski descent clustered as a run is a route nobody can ever run,
+and `--map` exists for when the user wants the track anyway. Auto-detected
+activities are taken only when they carry positions and overlap nothing already
+taken. Every one of these is reported by name and reason, which is the argument
+for this running on a laptop rather than behind a button on the phone.
+
+**Time zones, which were wrong before this and are now the one thing the export
+is unambiguous about.** `TcxParser` stamped every session it read with
+`tzOffsetMinutes = 0`. A TCX from Google Health is written in UTC and names no
+zone, so the instants were right and the offset was a placeholder — and the
+offset is what turns an instant back into the time of day it happened at. The
+visible symptom was an imported summer workout displaying two hours early. The
+invisible one was `RouteMatcher.contextKeyOf` bucketing it by the wrong hour, so
+the context prior learned from a history shifted into the small hours.
+
+The parser now believes an offset the file spells out, and otherwise resolves
+one from a `ZoneId` — the platform default on a phone — *at the instant of the
+workout*, so a January import and a July import differ by an hour as they
+should. The takeout importer never needs the fallback: it uses the exercise's
+own `utc_offset`, then the profile's zone, then Europe/Berlin. Rows written by
+the old parser are repaired by migration v5, which is data-only and touches
+only sessions that are both imported and sitting at exactly 0.
+
+### A.16 Robolectric, bought by a migration that named the wrong column
+
+§6.5 asks for JVM tests of the algorithms, an emulator for plumbing and a wrist
+for the rest, and says nothing about the middle. The middle is where `:phone`
+lives: Room, WorkManager, a `ContentResolver`. None of it is algorithmic, all of
+it is ordinary, and until now none of it had a test — the position being that
+Android-side code needs a device, so it gets lint and the compiler and a careful
+reading.
+
+That held until `MIGRATION_4_5` was written against `tz_offset_minutes`. The
+column is `tz_offset`; `tzOffsetMinutes` is the Kotlin property. Room runs
+pending migrations the first time the database is opened, so the consequence was
+not a wrong number somewhere — it was an app that would not start, on a database
+that already held the user's history. Nothing in the build had any opinion,
+because raw SQL in a `Migration` is a string until something runs it, and the
+only thing that runs it is a database at the old version.
+
+A migration is the worst possible place for "it gets a careful reading" to be
+the whole safety net, and it is also entirely reachable from a laptop: the old
+version is fully described by the JSON Room already exports into
+`phone/schemas/`. So `:phone` now has Robolectric, and four test classes:
+
+| | |
+|---|---|
+| `MigrationTest` | each exported version built from its schema, migrated through the real list, rows read back |
+| `SessionRepositoryTest` | ingest's two silent promises — idempotent on the id (§5.4), start-time duplicates refused (§7) |
+| `ArchiveRepositoryTest` | A.10's round trip: export, restore into an empty database, names and priorities intact |
+| `TcxImporterTest` | US-9 end to end, including the time zones A.15 fixed |
+
+Three notes on how they are built, each a choice that could have gone otherwise.
+
+**The migration tests do not use `MigrationTestHelper`.** Room's own helper reads
+the exported schemas through the `AssetManager`, and Android unit tests do not
+merge the test source set's assets — so the only way to satisfy it is to put
+`phone/schemas/` on the *main* source set, which ships 60 KB of schema JSON
+inside the APK to serve a test. `SchemaFixture` reads the same files off disk
+instead. What is given up is per-migration schema validation; what is kept is
+better, because the tests go through `Room.databaseBuilder` with the app's own
+migration list, so Room validates the final schema itself *and* a migration that
+was written but never registered fails.
+
+**The archive tests use a `file://` Uri.** Everything on the app's side of that
+Uri is exercised — the codec, the Room mapping both ways, the restore's
+transactions and foreign-key ordering. Nothing about the Storage Access Framework
+is, and §1.3 still says so.
+
+**The workers are stubbed, not run.** Both repositories enqueue clustering as
+their last act. `ClusterWorker` is a thin wrapper over `:core`'s clusterer, which
+has its own tests, and `HealthConnectWorker` needs a Health Connect the JVM does
+not have; a WorkManager that accepts an enqueue and runs nothing keeps the tests
+about the thing they are about.
+
+What this does not change: `:wear` has no tests, nothing is instrumented, and the
+three defects OPEN-POINTS §3.2 lists — cross-device delivery, a vendor library's
+validation, a JDK-versus-Android API difference — would all still have reached
+the device. Robolectric moved the line between "found on a laptop" and "found on
+a wrist". It did not remove it.

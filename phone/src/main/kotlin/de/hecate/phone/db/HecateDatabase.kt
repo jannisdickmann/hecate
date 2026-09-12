@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * §4: Room + SQLite on the phone, because history and per-route queries need a
@@ -24,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class HecateDatabase : RoomDatabase() {
@@ -81,6 +83,49 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v5 repairs the time zone of everything imported before the TCX reader
+         * knew about time zones.
+         *
+         * The reader used to stamp every imported session with offset 0, because
+         * a TCX from Google Health is written in UTC and names no zone. The
+         * instants were always right; what was wrong was the offset used to turn
+         * them back into a local time, so an import made in summer displayed two
+         * hours early — and, less visibly, landed in the wrong time-of-day bucket
+         * for the matcher's context prior.
+         *
+         * Only rows that are both imported and sitting at exactly 0 are touched,
+         * and the offset is resolved at the instant of each session so that a
+         * January walk and a July ride come out an hour apart. A genuine offset
+         * of 0 — an import of a workout recorded in Britain in winter — is
+         * rewritten too, which is the price of not being able to tell the two
+         * apart after the fact. On a phone in Berlin that case does not arise.
+         *
+         * Data only; the schema is untouched.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val zone = ZoneId.systemDefault()
+                val rows = ArrayList<Pair<String, Long>>()
+                db.query(
+                    """
+                    SELECT id, started_at_utc FROM session
+                    WHERE tz_offset = 0 AND source LIKE 'IMPORT%'
+                    """.trimIndent(),
+                ).use { cursor ->
+                    while (cursor.moveToNext()) rows.add(cursor.getString(0) to cursor.getLong(1))
+                }
+                for ((id, startedAt) in rows) {
+                    val offset = zone.rules.getOffset(Instant.ofEpochMilli(startedAt)).totalSeconds / 60
+                    if (offset == 0) continue
+                    db.execSQL(
+                        "UPDATE session SET tz_offset = ? WHERE id = ?",
+                        arrayOf<Any>(offset, id),
+                    )
+                }
+            }
+        }
+
         @Volatile
         private var instance: HecateDatabase? = null
 
@@ -92,7 +137,7 @@ abstract class HecateDatabase : RoomDatabase() {
             )
                 // Foreign keys do the cascading deletes; without this SQLite
                 // ignores them and orphan samples accumulate.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { instance = it }

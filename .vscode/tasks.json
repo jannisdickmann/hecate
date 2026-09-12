@@ -1,0 +1,144 @@
+{
+    "version": "2.0.0",
+    "options": {
+        "cwd": "${workspaceFolder}"
+    },
+    "inputs": [
+        {
+            "id": "phoneSerial",
+            "type": "promptString",
+            "description": "adb serial of the phone (see: adb devices -l)"
+        },
+        {
+            "id": "wearSerial",
+            "type": "promptString",
+            "description": "adb serial of the watch (see: adb devices -l)"
+        }
+    ],
+    "tasks": [
+        {
+            "label": "core: test",
+            "detail": "The algorithms — matcher, clustering, profile maths, CPU budget. No SDK needed. Run this constantly.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":core:test"],
+            "group": { "kind": "test", "isDefault": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "core: test (rerun, no cache)",
+            "detail": "Force a full re-run when you suspect a stale cache is hiding a failure.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":core:test", "--rerun-tasks", "--no-build-cache"],
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "phone: unit test",
+            "detail": "The backup archive's ZIP/JSON layer. Plain JVM, no Robolectric.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":phone:testDebugUnitTest"],
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "phone: lint",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":phone:lintDebug"],
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "wear: lint",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":wear:lintDebug"],
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "phone: assemble debug",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":phone:assembleDebug"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "wear: assemble debug",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":wear:assembleDebug"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "build: core + phone + wear (debug)",
+            "detail": "The full first-run / sanity build from the README.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":core:test", ":phone:assembleDebug", ":wear:assembleDebug"],
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": []
+        },
+        {
+            "label": "phone: install release",
+            "detail": "Requires keystore.properties. Targets only phoneSerial — both apps share the applicationId de.hecate, so an untargeted install lands on every connected device, phone and watch alike.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":phone:installRelease"],
+            "options": {
+                "env": { "ANDROID_SERIAL": "${input:phoneSerial}" }
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "wear: install release",
+            "detail": "Requires keystore.properties. Targets only wearSerial — both apps share the applicationId de.hecate, so an untargeted install lands on every connected device, phone and watch alike.",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": [":wear:installRelease"],
+            "options": {
+                "env": { "ANDROID_SERIAL": "${input:wearSerial}" }
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "gradle: clean",
+            "type": "shell",
+            "command": "./gradlew",
+            "windows": { "command": "gradlew.bat" },
+            "args": ["clean"],
+            "problemMatcher": []
+        },
+        {
+            "label": "adb: forward jdwp (phone)",
+            "detail": "Forwards the phone app's JDWP port to localhost:5005 for the attach debug config.",
+            "type": "shell",
+            "command": "adb -s ${input:phoneSerial} forward tcp:5005 jdwp:$(adb -s ${input:phoneSerial} shell pidof de.hecate)",
+            "problemMatcher": []
+        },
+        {
+            "label": "adb: forward jdwp (wear)",
+            "detail": "Forwards the watch app's JDWP port to localhost:5006 for the attach debug config.",
+            "type": "shell",
+            "command": "adb -s ${input:wearSerial} forward tcp:5006 jdwp:$(adb -s ${input:wearSerial} shell pidof de.hecate)",
+            "problemMatcher": []
+        }
+    ]
+}

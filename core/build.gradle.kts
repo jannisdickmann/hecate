@@ -33,6 +33,15 @@ application {
     mainClass.set("de.hecate.core.replay.ReplayMain")
 }
 
+tasks.named<JavaExec>("run") {
+    // Gradle would otherwise run this from `core/`, which is not where any of the
+    // paths in the README point: `fixtures/`, `takeout/` and the bundle files all
+    // live at the root of the repository, and so does the .gitignore entry that
+    // keeps recorded sessions out of git. Relative arguments now mean what they
+    // look like they mean.
+    workingDir = rootProject.projectDir
+}
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     testLogging {

@@ -1,4 +1,4 @@
-package de.hecate.phone.archive
+package de.hecate.core.archive
 
 import de.hecate.core.io.SessionCodec
 import de.hecate.core.io.SessionRecord
@@ -17,9 +17,10 @@ import java.util.zip.ZipOutputStream
  * Split out from [ArchiveRepository] for one reason: this is the part that can
  * silently lose data — an unflushed writer, an entry name that does not match
  * what the reader looks for, a version check that passes when it should not —
- * and splitting it out is what lets it be tested on the JVM. `:phone` has no
- * other tests (§3.2 of the open points); a backup nobody has ever read back is
- * not worth having, so this one part earns them.
+ * and splitting it out is what lets it be tested without Android in the way. A
+ * backup nobody has ever read back is not worth having, so this part carries the
+ * tests that read one back; [ArchiveRepository]'s own are next door in `:phone`,
+ * under Robolectric.
  *
  * Neither class holds more than one session in memory at a time.
  */

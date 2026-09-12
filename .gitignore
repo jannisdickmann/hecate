@@ -38,3 +38,6 @@ keystore.properties
 
 # Recorded session fixtures pulled off the watch
 /fixtures/*.jsonl
+
+# Google Takeout archives — personal data, never committed
+/takeout/

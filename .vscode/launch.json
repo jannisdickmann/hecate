@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "kotlin",
+            "request": "launch",
+            "name": "Debug :core replay harness",
+            "mainClass": "de.hecate.core.replay.ReplayMain",
+            "projectRoot": "${workspaceFolder}",
+            "args": ["help"]
+        },
+        {
+            "type": "kotlin",
+            "request": "attach",
+            "name": "Attach to phone (adb jdwp)",
+            "hostName": "localhost",
+            "port": 5005,
+            "preLaunchTask": "adb: forward jdwp (phone)"
+        },
+        {
+            "type": "kotlin",
+            "request": "attach",
+            "name": "Attach to wear (adb jdwp)",
+            "hostName": "localhost",
+            "port": 5006,
+            "preLaunchTask": "adb: forward jdwp (wear)"
+        }
+    ]
+}

@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.room.withTransaction
+import de.hecate.core.Tuning
+import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
@@ -14,6 +16,8 @@ import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
+import de.hecate.core.archive.Archive
+import de.hecate.core.archive.ArchiveCodec
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
 import de.hecate.phone.db.SessionEventsEntity
@@ -177,7 +181,10 @@ class ArchiveRepository(
      * [de.hecate.phone.ingest.SessionRepository.ingest]. Ingest would reset
      * `hcWriteState` to PENDING and re-derive `committedAtM`, and it applies the
      * watch's start-time duplicate heuristic — which has no business second
-     * guessing a backup.
+     * guessing a backup of the app's own recordings.
+     *
+     * It has every business second guessing an *import*, though, which is what
+     * [isDuplicateImport] is for.
      */
     suspend fun restore(uri: Uri): Archive.RestoreReport = withContext(Dispatchers.IO) {
         val temp = copyToCache(uri)
@@ -205,7 +212,7 @@ class ArchiveRepository(
         // hold for an operation the user is watching.
         for (row in dump.sessions) {
             try {
-                if (db.sessions().countById(row.id) > 0) {
+                if (db.sessions().countById(row.id) > 0 || isDuplicateImport(row)) {
                     skipped++
                     continue
                 }
@@ -274,6 +281,36 @@ class ArchiveRepository(
 
         Log.i(TAG, "Sicherung eingelesen: $restored Sitzungen, $routesRestored Routen, $failed Fehler")
         return Archive.RestoreReport(restored, skipped, routesRestored, routesSkipped, failed, messages)
+    }
+
+    /**
+     * Whether an imported session in the archive is a workout the database
+     * already holds under some other id.
+     *
+     * Only asked of imports, and this is the whole reason [SessionSource.isImport]
+     * exists. A backup of the app's own recordings is merged by id and nothing
+     * else, so restoring one is exact. But an archive built from a Google Health
+     * takeout contains the watch's own log of every workout — including the ones
+     * Hecate recorded itself and wrote back to Health Connect, and the ones the
+     * user had already imported by hand as TCX. Those arrive with an id derived
+     * from Google's exercise id, which matches nothing, and only the clock can
+     * tell that the 07:12 run in the archive is the 07:12 run in the database.
+     *
+     * [Track.likelyDuplicate] is the same test the ingest path applies to the
+     * watch's own double recordings (§7). Being wrong in the cautious direction
+     * costs one workout out of a backfill of hundreds; being wrong the other way
+     * gives the clusterer two members for one journey and quietly inflates every
+     * route's member count.
+     */
+    private suspend fun isDuplicateImport(row: Archive.Session): Boolean {
+        val source = runCatching { SessionSource.valueOf(row.source) }.getOrNull()
+        if (source?.isImport != true) return false
+        return db.sessions().near(row.startedAtUtc, Tuning.DUPLICATE_START_WINDOW_MS).any {
+            Track.likelyDuplicate(
+                it.startedAtUtc, it.activeDurationMs,
+                row.startedAtUtc, row.activeDurationMs,
+            )
+        }
     }
 
     // ---------------------------------------------------------------- plumbing

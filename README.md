@@ -21,7 +21,7 @@ That is one workout's worth of device behaviour verified, and no more.
 
 | Module | What it is | Builds without an Android SDK |
 |---|---|---|
-| `:core` | Pure Kotlin: the matcher, clustering, profiles, TCX import, replay harness | yes |
+| `:core` | Pure Kotlin: the matcher, clustering, profiles, TCX and takeout import, the backup format, replay harness | yes |
 | `:wear` | The recorder. Health Services, append-only storage, two watch screens | no |
 | `:phone` | The companion. Room, ingest, Health Connect write-back, history UI | no |
 
@@ -182,23 +182,42 @@ Everything that can be checked without a wrist:
 
 ```bash
 ./gradlew :core:test                                 # the algorithms, a few seconds
-./gradlew :phone:testDebugUnitTest                   # the backup archive's format
+./gradlew :phone:testDebugUnitTest                   # Room, migrations, ingest, backup
 ./gradlew :phone:lintDebug :wear:lintDebug           # both should say "No issues found"
 ./gradlew :phone:assembleDebug :wear:assembleDebug   # both APKs
 ./gradlew :phone:assembleRelease :wear:assembleRelease
 ```
 
 `:core:test` is the one that matters and the one to run constantly — the matcher,
-the clustering, the profile maths and the CPU budget all live there, and none of
-it needs an SDK or a device. It does need the network once, to resolve the build
-script classpath: see the note under **Building**. A readable report lands in
-`core/build/reports/tests/test/index.html`.
+the clustering, the profile maths, the archive format, the takeout import and the
+CPU budget all live there, and none of it needs an SDK or a device. It does need
+the network once, to resolve the build script classpath: see the note under
+**Building**. A readable report lands in `core/build/reports/tests/test/index.html`.
 
-`:phone` has exactly one test class, over the backup archive's ZIP and JSON
-layer — the one place in that module where a silent bug costs you your history.
-Everything else in `:wear` and `:phone` has no test of its own (§3.2 of the open
-points): lint and the compiler are the whole of the automated safety net there,
-which is why both are expected to stay clean.
+`:phone:testDebugUnitTest` runs on the JVM too, under Robolectric, in about
+twenty seconds. Robolectric is what makes Room, WorkManager and the
+`ContentResolver` reachable from a laptop, which is the difference between "the
+backup has never been restored" and four tests that restore one. What it covers:
+
+| | |
+|---|---|
+| `MigrationTest` | every exported schema version, migrated to the current one through the real migration list |
+| `SessionRepositoryTest` | ingest — idempotency on the session id, the start-time duplicate rule, cascades |
+| `ArchiveRepositoryTest` | export → restore, including that route names and priorities come back |
+| `TcxImporterTest` | US-9 end to end, time zones included |
+| `StandoutsTest` | the one piece of arithmetic in the phone UI |
+
+What it does not cover, and what §3.2 of the open points is still about: Compose
+UI, the Wearable Data Layer, real permissions, a real `content://` Uri from the
+system file picker, and `:wear` entirely. Lint and the compiler are the whole of
+the safety net there, which is why both are expected to stay clean.
+
+A migration is the sharpest case for having these at all. Its SQL is a string
+until something runs it, and Room runs pending migrations the first time the
+database is opened — so a mistyped column name is not a bug that shows up
+somewhere, it is an app that will not start, on a database that already has the
+user's history in it. `MigrationTest` builds the database at each old version
+from `phone/schemas/`, runs the real migrations, and reads the rows back.
 
 To re-run something Gradle thinks is already done — after changing a version, say:
 
@@ -402,6 +421,92 @@ unzip hecate-sicherung-*.zip 'sessions/*' -d .
 Roughly 15 MB for 300 sessions of 45 minutes. Copying the SQLite file instead
 would be 145 MB, which is why the samples live in the per-session files and not
 in `database.json`.
+
+## Importing a Google Health takeout
+
+A single TCX file at a time through the phone's file picker is fine for a
+handful of workouts and hopeless for a history. Google Takeout hands you the
+whole thing in one ZIP, and `:core` turns that into a backup archive the app
+restores like any other:
+
+```bash
+./gradlew :core:run --args="takeout"
+```
+
+With no arguments that reads every `*.zip` in `takeout/` and writes
+`takeout/parsed/hecate-takeout-<stamp>.zip`. Move that file to the phone and use
+**Sicherung einlesen**. The restore pulls the sessions in and then runs the
+normal clustering pass, so the routes that come out are the ones the app would
+have learned had it been installed all along — same code, same thresholds.
+
+```bash
+# one part of a split export, or all of them
+./gradlew :core:run --args="takeout --input takeout/takeout-20260912T095433Z-1-001.zip"
+./gradlew :core:run --args="takeout --input 'takeout/takeout-*.zip'"
+
+# somewhere else, and against what the app already has
+./gradlew :core:run --args="takeout --input ~/exports --out ~/hecate.zip --existing sicherung.zip"
+```
+
+| Flag | |
+|---|---|
+| `--input` | a ZIP, a directory, or a quoted glob. Default: every `*.zip` in `takeout/` |
+| `--out` | a file, or a directory to name one in. Default: `takeout/parsed/` |
+| `--existing` | a backup exported from the phone; anything already in it is left out |
+| `--map` | `"Skiing=WALKING,Tennis=RUNNING"`, for sports this app has no type for |
+| `--zone` | overrides the zone from the takeout's own profile |
+| `--no-auto` | ignore auto-detected activities, even ones carrying a track |
+| `--verbose` | list every workout that was not imported, not just the first twenty |
+
+Takeout splits a large export into `-001.zip`, `-002.zip` and so on. Those are
+not one spanned archive — each is a complete ZIP holding a different slice — so
+point the glob at all of them; reading only the first silently loses whatever
+landed in the others.
+
+**What it reads.** `UserExercises_<date>.csv` is the authoritative list of
+workouts, with UTC start and end and an explicit `utc_offset` per exercise.
+`gps_location_<date>.csv` and `heart_rate_<date>.csv` hold the day's positions
+and heart rate, which the import segments by exercise window. The prettier
+`exercise-0.json` next to them is deliberately ignored: it is capped at a few
+hundred entries, its `hasGps` flag disagreed with the position files on fifteen
+days of the export this was written against, and its `startTime` is a bare local
+timestamp in no stated zone.
+
+**What it leaves out**, all of it reported by name and reason at the end of the
+run:
+
+- Workouts with no positions in the export. Google keeps the exercise long
+  after it has dropped the day's position file, so the early history is summary
+  rows and nothing else.
+- Sports with no type here — skiing, tennis. `--map` forces one through if you
+  want the track anyway.
+- Auto-detected activities that overlap a workout you started yourself. The
+  watch routinely "notices" a walk that is the first ten minutes of a ride it
+  was already recording.
+
+**Duplicates, in three flavours.** Session ids are derived from Google's own
+exercise id, so importing the same takeout twice — or next year's takeout, which
+still contains this year's workouts — produces the same ids, and the restore
+skips what it already has. That covers two of the three. The third is a workout
+Hecate recorded itself: the watch logged the same journey to Google Health
+independently, so it comes back in the takeout under an id that matches nothing,
+and only the clock relates the two. Both `--existing` and the restore inside the
+app test for that with the same start-time-and-duration rule the ingest path
+uses for the watch's own double recordings. `--existing` is optional; the check
+in the app is not.
+
+**Time zones.** Every exercise in the takeout names its own UTC offset, which is
+what gets stored — so a January walk keeps +01:00 and a July ride +02:00,
+regardless of when or where the import runs. Only a row that leaves the column
+empty falls back to the zone in the export's own `Profile.csv`, and only a
+takeout with no profile falls back to Europe/Berlin.
+
+The same question was a bug in the TCX import, which stamped every file it read
+with offset 0 — a TCX from Google Health is written in UTC and names no zone —
+so imported workouts displayed two hours early in summer. It now resolves the
+offset from the phone's zone at the instant of the workout, and believes the
+file instead whenever the file spells an offset out. Sessions imported before
+that fix are repaired in place by database migration v5.
 
 ## The replay harness
 

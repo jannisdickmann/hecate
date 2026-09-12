@@ -12,7 +12,7 @@ import androidx.activity.viewModels
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import de.hecate.phone.AppGraph
-import de.hecate.phone.archive.Archive
+import de.hecate.core.archive.Archive
 import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.work.Jobs
 

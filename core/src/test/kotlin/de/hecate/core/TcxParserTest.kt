@@ -2,6 +2,7 @@ package de.hecate.core
 
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.tcx.TcxParser
+import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -60,6 +61,60 @@ class TcxParserTest {
         assertEquals(124, session.samples[1].hrBpm)
         assertNotNull(session.footer)
         assertEquals(12.0, session.footer!!.totalDistanceM)
+    }
+
+    @Test
+    fun `a UTC export takes its offset from the zone it happened in`() {
+        // The bug this exists for: an import that hardcoded offset 0 displayed
+        // every workout two hours early all summer, and one hour early all
+        // winter, because a TCX from Google Health is stamped in UTC and says
+        // nothing about where the user was.
+        val summer = parse("2026-07-04T05:30:00Z", ZoneId.of("Europe/Berlin"))
+        assertEquals(120, summer.header.tzOffsetMinutes)
+
+        val winter = parse("2026-01-04T05:30:00Z", ZoneId.of("Europe/Berlin"))
+        assertEquals(60, winter.header.tzOffsetMinutes)
+    }
+
+    @Test
+    fun `an export that names its own offset is believed over the zone`() {
+        // A file that spells out +05:45 was recorded in Nepal, whatever zone the
+        // phone doing the import is in.
+        val session = parse("2026-07-04T11:15:00+05:45", ZoneId.of("Europe/Berlin"))
+        assertEquals(345, session.header.tzOffsetMinutes)
+        // and the instant is still the instant
+        assertEquals(TcxParser.parseIso8601Millis("2026-07-04T05:30:00Z"), session.header.startedAtUtcMs)
+    }
+
+    @Test
+    fun `the offset is resolved at the workout, not at the import`() {
+        // Same zone, same import, two sides of a daylight-saving change.
+        val before = parse("2026-03-28T06:00:00Z", ZoneId.of("Europe/Berlin"))
+        val after = parse("2026-03-30T06:00:00Z", ZoneId.of("Europe/Berlin"))
+        assertEquals(60, before.header.tzOffsetMinutes)
+        assertEquals(120, after.header.tzOffsetMinutes)
+    }
+
+    /** One activity whose `<Id>` and trackpoints sit at [start]. */
+    private fun parse(start: String, zone: ZoneId): de.hecate.core.model.RecordedSession {
+        val startMs = TcxParser.parseIso8601Millis(start)!!
+        val times = (0..2).map { i ->
+            java.time.format.DateTimeFormatter.ISO_INSTANT
+                .format(java.time.Instant.ofEpochMilli(startMs + i * 1000L))
+        }
+        val points = times.joinToString("") { t ->
+            """
+            <Trackpoint><Time>$t</Time>
+              <Position><LatitudeDegrees>50.1</LatitudeDegrees><LongitudeDegrees>8.6</LongitudeDegrees></Position>
+            </Trackpoint>
+            """
+        }
+        val xml = """
+            <TrainingCenterDatabase><Activities><Activity Sport="Running">
+              <Id>$start</Id><Lap><Track>$points</Track></Lap>
+            </Activity></Activities></TrainingCenterDatabase>
+        """.trimIndent()
+        return TcxParser.parse(xml.byteInputStream(), zone) { _, i -> "tz-$i" }.single()
     }
 
     @Test

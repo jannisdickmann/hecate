@@ -40,6 +40,11 @@ work = "2.11.2"
 playServicesWearable = "20.0.1"
 
 junit = "4.13.2"
+# :phone's test stack. Robolectric runs the Android framework on the JVM, which is
+# what makes Room, WorkManager and ContentResolver testable on a laptop instead of
+# only on the phone — see OPEN-POINTS.md §3.2.
+robolectric = "4.17"
+androidxTest = "1.7.0"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
@@ -87,6 +92,10 @@ work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "w
 play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "playServicesWearable" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTest" }
+work-testing = { module = "androidx.work:work-testing", version.ref = "work" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

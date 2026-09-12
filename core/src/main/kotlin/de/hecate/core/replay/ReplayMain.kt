@@ -1,5 +1,7 @@
 package de.hecate.core.replay
 
+import de.hecate.core.archive.Archive
+import de.hecate.core.archive.ArchiveCodec
 import de.hecate.core.geo.Track
 import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.io.BundleCodec
@@ -9,7 +11,13 @@ import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteBundle
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.takeout.TakeoutImport
+import de.hecate.core.takeout.TakeoutSource
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.system.exitProcess
 
 /**
@@ -27,6 +35,7 @@ import kotlin.system.exitProcess
  * ./gradlew :core:run --args="verify --bundle b.json --session s.jsonl --golden g.jsonl"
  * ./gradlew :core:run --args="selfcheck --bundle b.json --session s.jsonl"
  * ./gradlew :core:run --args="onwrist --session s.jsonl --bundle b.json"
+ * ./gradlew :core:run --args="takeout --input takeout/takeout-*.zip"
  * ```
  */
 object ReplayMain {
@@ -44,6 +53,7 @@ object ReplayMain {
             "verify" -> cmdVerify(opts)
             "selfcheck" -> cmdSelfCheck(opts)
             "onwrist" -> cmdOnWrist(opts)
+            "takeout" -> cmdTakeout(opts)
             "help", "--help", "-h" -> { usage(); 0 }
             else -> { usage(); 2 }
         }
@@ -66,6 +76,11 @@ object ReplayMain {
               onwrist   --bundle <f> --session <f>
                         Compare the replayed log against the log the watch stored
                         inside the session file itself.
+              takeout   [--input <zip|dir|glob>] [--out <dir|file>] [--existing <backup.zip>]
+                        [--map Name=TYPE,...] [--zone <id>] [--no-auto] [--verbose]
+                        Turn a Google Health takeout into a backup archive the
+                        phone app can restore. Defaults to every *.zip under
+                        ./takeout and writes to ./takeout/parsed.
             """.trimIndent(),
         )
     }
@@ -214,6 +229,167 @@ object ReplayMain {
             session.header.tzOffsetMinutes,
             log::add,
         ).let { m -> session.samples.map { m.update(it) } }
+
+    /**
+     * US-9 at the scale of a whole history: a Google Health takeout in, a backup
+     * archive the phone can restore out.
+     *
+     * The work is [TakeoutImport]'s; this is argument handling and a report. The
+     * report is the point of running it on a laptop rather than on the phone —
+     * every workout the import declined to take is listed with the reason, which
+     * on a phone screen would be a toast saying "63 imported" and nothing else.
+     */
+    private fun cmdTakeout(o: Map<String, String>): Int {
+        val defaultDir = File("takeout")
+        val zips = try {
+            TakeoutSource.resolve(o["input"], defaultDir)
+        } catch (e: TakeoutSource.TakeoutException) {
+            System.err.println(e.message); return 2
+        }
+        if (zips.isEmpty()) {
+            System.err.println("no takeout ZIPs found in ${o["input"] ?: defaultDir.path}")
+            return 2
+        }
+
+        val overrides = try {
+            parseTypeMap(o["map"])
+        } catch (e: IllegalArgumentException) {
+            System.err.println(e.message); return 2
+        }
+        val zone = o["zone"]?.let {
+            runCatching { ZoneId.of(it) }.getOrElse { _ -> System.err.println("unknown zone: $it"); return 2 }
+        }
+        val existing = o["existing"]?.let { path ->
+            val f = File(path)
+            if (!f.isFile) { System.err.println("no such file: $path"); return 2 }
+            try {
+                ArchiveCodec.Reader(f).use { it.database.sessions }
+            } catch (e: Exception) {
+                System.err.println("not a Hecate backup: $path (${e.message})"); return 2
+            }
+        } ?: emptyList()
+
+        println("takeout: ${zips.joinToString(", ") { it.name }}")
+        val result = TakeoutSource(zips).use { source ->
+            TakeoutImport.read(
+                source,
+                TakeoutImport.Options(
+                    includeAutoDetected = !o.containsKey("no-auto"),
+                    typeOverrides = overrides,
+                    existing = existing,
+                    zone = zone,
+                ),
+            )
+        }
+
+        val out = outputFile(o["out"], defaultDir)
+        out.parentFile?.mkdirs()
+        var bytes = 0L
+        out.outputStream().use { stream ->
+            val writer = ArchiveCodec.Writer(stream)
+            writer.use { w ->
+                w.writeManifest(
+                    Archive.Manifest(
+                        formatVersion = Archive.FORMAT_VERSION,
+                        exportedAtUtcMs = System.currentTimeMillis(),
+                        appVersion = "core-takeout",
+                        sessionCount = result.sessions.size,
+                        routeCount = 0,
+                    ),
+                )
+                w.writeDatabase(result.database)
+                for (session in result.sessions) w.writeSession(session)
+            }
+            bytes = writer.bytesWritten
+        }
+
+        report(result, existing.size, out, bytes, o.containsKey("verbose"))
+        // An empty archive is a legitimate answer — it is what a second run
+        // against the same history produces — so it is not an error exit.
+        return 0
+    }
+
+    private fun report(
+        result: TakeoutImport.Result,
+        existing: Int,
+        out: File,
+        bytes: Long,
+        verbose: Boolean,
+    ) {
+        val stamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
+        for (name in result.duplicateEntries.take(5)) println("note: $name appears in more than one part; the first was used")
+        if (result.duplicateEntries.size > 5) println("note: ... and ${result.duplicateEntries.size - 5} more")
+
+        println("fallback time zone: ${result.fallbackZone} (used only where an exercise named no offset)")
+        if (existing > 0) println("compared against $existing sessions already in the app")
+        println("---")
+        for (session in result.sessions.sortedBy { it.header.startedAtUtcMs }) {
+            val track = Track.of(session)
+            println(
+                "%s  %-7s %6.2f km  %5.0f min  %5d pts  %s".format(
+                    stamp.withZone(java.time.ZoneOffset.ofTotalSeconds(session.header.tzOffsetMinutes * 60))
+                        .format(Instant.ofEpochMilli(session.header.startedAtUtcMs)),
+                    session.header.exerciseType,
+                    (track?.totalDistanceM ?: 0.0) / 1000.0,
+                    session.activeDurationMs / 60_000.0,
+                    session.samples.size,
+                    session.id,
+                ),
+            )
+        }
+        if (result.skipped.isNotEmpty()) {
+            println("--- not imported (${result.skipped.size})")
+            // The routine ones as one line per reason: a takeout has hundreds of
+            // auto-detected rows that were never going to hold a track, and
+            // printing them individually hides the few that matter.
+            val (notable, routine) = result.skipped.partition { it.notable }
+            for ((reason, group) in routine.groupBy { it.reason }.entries.sortedByDescending { it.value.size }) {
+                println("%5d  %s".format(group.size, reason))
+            }
+            val shown = if (verbose) notable else notable.take(20)
+            for (s in shown) {
+                println(
+                    "%s  %-24s %s".format(
+                        stamp.format(Instant.ofEpochMilli(s.startUtcMs)),
+                        s.activityName.ifEmpty { "?" },
+                        s.reason,
+                    ),
+                )
+            }
+            if (shown.size < notable.size) {
+                println("... and ${notable.size - shown.size} more; --verbose to see them all")
+            }
+        }
+        println("---")
+        println("${result.sessions.size} sessions -> $out (${bytes / 1024} KiB)")
+        if (result.sessions.isEmpty()) println("nothing new to import; the archive is empty")
+    }
+
+    /** `--out` may be the archive itself or the directory to put it in. */
+    private fun outputFile(arg: String?, defaultDir: File): File {
+        val stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm")
+            .withZone(ZoneId.systemDefault())
+            .format(Instant.now())
+        val name = "hecate-takeout-$stamp.zip"
+        if (arg == null) return File(defaultDir, "parsed/$name")
+        val f = File(arg)
+        return if (f.isDirectory || !arg.endsWith(".zip")) File(f, name) else f
+    }
+
+    /** `--map "Skiing=WALKING,Tennis=RUNNING"`. */
+    private fun parseTypeMap(arg: String?): Map<String, ExerciseType> {
+        if (arg == null) return emptyMap()
+        return arg.split(',').filter { it.isNotBlank() }.associate { pair ->
+            val (name, type) = pair.split('=', limit = 2).let {
+                require(it.size == 2) { "--map wants Name=TYPE, got: $pair" }
+                it[0].trim() to it[1].trim().uppercase()
+            }
+            val parsed = runCatching { ExerciseType.valueOf(type) }.getOrElse {
+                throw IllegalArgumentException("--map: no such type: $type (RUNNING, WALKING, BIKING)")
+            }
+            name.lowercase() to parsed
+        }
+    }
 
     private fun loadBundle(path: String?): RouteBundle? {
         if (path == null) { usage(); return null }

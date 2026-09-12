@@ -282,7 +282,7 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
                 // A matched route is the whole point of the app, so it gets a
                 // filled pill rather than another line of grey text.
                 s.routeName?.let { RoutePill(it) }
-                    ?: Quiet(if (s.source == "IMPORT_TCX") "importiert" else "keine Route")
+                    ?: Quiet(if (Format.isImport(s.source)) "importiert" else "keine Route")
             }
         }
     }
@@ -361,7 +361,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
                 Format.speedFrom(d.summary.totalDistanceM, d.summary.activeDurationMs),
             ) + " km/h",
         )
-        KeyValue("Quelle", if (d.summary.source == "IMPORT_TCX") "TCX-Import" else "Uhr")
+        KeyValue("Quelle", Format.source(d.summary.source))
 
         Spacer(Modifier.height(16.dp))
         SectionHeader("Zuordnung")

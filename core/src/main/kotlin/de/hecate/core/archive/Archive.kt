@@ -1,4 +1,4 @@
-package de.hecate.phone.archive
+package de.hecate.core.archive
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

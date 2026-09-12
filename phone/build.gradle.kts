@@ -71,6 +71,42 @@ android {
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged manifest and the resource table; without
+            // this it starts and then fails on the first thing that reads either.
+            isIncludeAndroidResources = true
+            // JUnit 4, deliberately: Robolectric's runner is a JUnit 4 runner, and
+            // running it under the platform means adding the vintage engine to get
+            // back exactly what is already here. :core is on the platform; the two
+            // modules differ because their test frameworks do.
+            all {
+                it.testLogging {
+                    events("passed", "failed", "skipped")
+                }
+                // Robolectric reaches into the JDK's internals to fake Android's —
+                // `FileDescriptorInterceptor` calls `jdk.internal.access.SharedSecrets`
+                // to set a raw fd, which every JDK since 9 refuses by default and
+                // JDK 25 refuses loudly. The failure is a bare IllegalAccessException
+                // from inside the sandbox with no hint that it is a module problem,
+                // so: opened here rather than rediscovered later.
+                it.jvmArgs(
+                    "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
+                    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                    "--add-opens=java.base/java.io=ALL-UNNAMED",
+                    "--add-opens=java.base/java.util=ALL-UNNAMED",
+                )
+            }
+        }
+    }
+
+    // Room's exported schemas are what MigrationTestHelper replays. They are a
+    // build output, not a test resource, so the test source set is pointed at
+    // them rather than the JSON being copied into two places that then drift.
+    sourceSets.getByName("test") {
+        assets.srcDir("$projectDir/schemas")
+    }
 }
 
 kotlin {
@@ -123,10 +159,17 @@ dependencies {
     implementation(libs.health.connect.client)
     implementation(libs.play.services.wearable)
 
-    // §3.2 stands — no instrumented tests, and no Robolectric. These are plain
-    // JVM tests of the backup archive's ZIP/JSON layer, which touches neither
-    // Android nor Room and is the one part of this module where a silent bug
-    // costs the user their history.
+    // The archive format's own tests moved to :core with the format (A.15). What
+    // is left here needs Android: Room and its migrations, WorkManager, the
+    // ContentResolver the backup goes through. Robolectric runs all three on the
+    // JVM, so `./gradlew :phone:testDebugUnitTest` needs no phone plugged in.
+    //
+    // §3.2 of the open points still stands for everything Robolectric cannot
+    // reach — Compose UI, the Wearable Data Layer, real permissions.
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.work.testing)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

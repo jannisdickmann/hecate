@@ -91,25 +91,40 @@ lossy, and a TCX re-import cannot bring back route names or priorities.
 tests: a full session round trip, nullable sample fields, many sessions addressed
 by id, a large archive whose last entry must still be complete, a future format
 version, a ZIP that is not a Hecate archive, unreadable JSON, and unknown fields
-from a future version. `./gradlew :phone:testDebugUnitTest`.
+from a future version. It and its tests now live in `:core` (A.15), so
+`./gradlew :core:test` runs them.
+
+`ArchiveRepository` is verified too, under Robolectric (§3.2): a database with
+three sessions and two named routes is exported and restored into an empty one,
+and the assertions are the ones this feature exists for — the names and the
+priorities come back, the samples come back, and `committedAtM` is carried rather
+than recomputed. Restoring over a populated database is checked to change nothing
+already there.
 
 **What is not.** Everything that needs a device:
 
 - The Storage Access Framework halves — that a picked `content://` Uri really
   opens for writing, that the suggested filename survives, and that a large
   archive does not hit a timeout on a real phone.
-- `ArchiveRepository` itself: the Room-to-DTO mapping, and the restore path's
-  transactions and foreign-key ordering. Only the format layer is tested;
-  testing the rest needs Robolectric or an instrumented test, which §3.2 has
-  deliberately not taken on.
+- The Storage Access Framework, which the tests substitute a `file://` Uri for.
+  Everything on this side of that Uri is now covered.
 - The one thing worth doing first: **export, wipe the app's data, restore, and
-  check the route names and priorities came back.** Until that has been done
-  once, this is a backup nobody has restored.
+  check the route names and priorities came back.** A test does that against an
+  in-memory database; nobody has done it to a real one on a phone.
 
 **Decided while building it,** both recorded in A.10: restore merges rather than
 replaces, so it can never destroy what is already there; and it writes rows back
 directly rather than through `SessionRepository.ingest`, so `hcWriteState` and
-`committedAtM` survive.
+`committedAtM` survive. A.15 narrows the first of those: a session whose source
+is an import can also be skipped for looking like a workout already in the
+database, because a takeout contains the watch's own log of workouts Hecate
+recorded and no id relates the two copies.
+
+**The first real restore will be a takeout import**, which makes it a better
+test than the wipe-and-restore above and a worse one: 60 sessions and no routes,
+names or priorities in the archive at all, so it exercises the session path and
+the clustering that follows it while saying nothing about the part of the format
+that exists for names and priorities. Do both.
 
 ---
 
@@ -243,15 +258,22 @@ finding.
 
 ### 3.2 No instrumented tests
 
-`:core` carries the whole JVM suite. `:phone`'s only tests are over
-`ArchiveCodec` — the backup archive's ZIP and JSON layer, which touches neither
-Android nor Room and is the one place in that module where a silent bug costs a
-history (§1.3). `:wear` has none, and nothing anywhere is instrumented.
+`:core` carries the algorithms, the archive format and the takeout import.
+`:phone` now runs its Android-side code under Robolectric —
+`./gradlew :phone:testDebugUnitTest`, about twenty seconds, no device — covering
+Room and every migration, ingest, the backup round trip, and the TCX import.
+`:wear` has no tests, and nothing anywhere is instrumented.
+
+Robolectric moved the line but did not remove it. Still unreachable from a
+laptop: Compose UI, the Wearable Data Layer, real permissions, Health Connect,
+and a genuine `content://` Uri from the system file picker — the archive tests
+substitute a `file://` one, which exercises every line of the app's code and
+says nothing about whether the picker's Uri opens for writing on a phone.
 
 §6.5 does not ask for instrumented tests — it asks for emulator and on-wrist
 verification, both of which are manual. This is a reasonable position for a
-single-user sideloaded app, but it does mean every Android-side regression will
-be found by wearing it.
+single-user sideloaded app, but it does mean every regression in the list above
+will still be found by wearing it.
 
 The first session on real hardware produced three defects, and the suite was
 green through all of them. That is not a failure of the tests; it is the exact
@@ -276,6 +298,48 @@ validation, a JDK-versus-Android API difference. The replay harness is excellent
 at the algorithms and structurally blind to every one of them. Anything that
 talks to `com.google.android.gms`, `androidx.health`, or `javax.xml` should be
 assumed unverified until it has run on the device.
+
+A fourth defect, later and of a different kind: **`MIGRATION_4_5` named a column
+that does not exist.** The property is `tzOffsetMinutes`, the column is
+`tz_offset`, and the migration's SQL said `tz_offset_minutes`. Room runs pending
+migrations the first time the database is opened, so every start of the new build
+crashed. Nothing in the build could have caught it — raw SQL in a migration is a
+string until something executes it — and this is what finally bought Robolectric:
+`MigrationTest` builds each exported schema version, runs the real migration list
+against it, and fails in a second on exactly that typo. Unlike the three above,
+this one was reachable from a laptop all along and simply had nothing looking.
+
+**Trap found while writing those tests, not yet acted on.** `SessionDao.insert`
+is `OnConflictStrategy.REPLACE`, SQLite implements REPLACE as DELETE then INSERT,
+and `sample` has `ON DELETE CASCADE` — so re-inserting a session row to change
+one column silently deletes every sample it had. Both callers guard with
+`countById` first, so nothing does this today, and a test now pins the behaviour
+so the next person meets it in a test rather than in a history. The question left
+open is whether `insert` should be `ABORT` instead, which would turn a future
+mistake into a crash rather than into quiet data loss.
+
+### 3.2b The takeout import has been run, but its output has never been restored
+
+`./gradlew :core:run --args="takeout"` has been run against one real 273 MB
+export: 429 exercises in, 60 sessions out, which cluster into 4 routes on a
+laptop through the same `bundle` command the replay harness uses. The unit tests
+cover the CSV reader, the offset handling, heart-rate matching, all three
+duplicate mechanisms and a split export, against fixtures shaped like the real
+files.
+
+What has not happened: **the archive it produces has never been read by the
+phone.** The format is the same one `ArchiveCodec` round-trips in tests, and it
+is written by that same class, so the risk is not in the bytes — it is in the
+restore path on a device, which is the whole of §1.3. Also unverified, and only
+visible after a real restore:
+
+- Whether 60 sessions of ~3000 samples each clusters in a tolerable time on the
+  phone rather than on a laptop. `ClusterWorker` is O(n²) over sessions (§2.6)
+  and has never had more than a handful.
+- Whether the routes the phone derives are the four the laptop derived. They
+  should be — same code — but "should be" is what §1.3 exists to distrust.
+- Whether the auto-detected activities that were let in (three rides here) are
+  real rides or artefacts worth excluding with `--no-auto`.
 
 ### 3.3 Battery has not been measured
 

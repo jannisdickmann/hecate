@@ -1,5 +1,7 @@
-package de.hecate.phone.archive
+package de.hecate.core
 
+import de.hecate.core.archive.Archive
+import de.hecate.core.archive.ArchiveCodec
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
@@ -13,7 +15,7 @@ import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
 import kotlinx.serialization.encodeToString
-import org.junit.Test
+import kotlin.test.Test
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile

@@ -12,6 +12,8 @@ import org.w3c.dom.Node
 import org.xml.sax.InputSource
 import java.io.InputStream
 import java.io.StringReader
+import java.time.Instant
+import java.time.ZoneId
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
@@ -33,10 +35,18 @@ object TcxParser {
      * Parse one TCX document. Returns one session per `<Activity>`; most exports
      * contain exactly one.
      *
+     * @param zone the time zone the workout happened in, used only when the file
+     *        does not say — see [offsetMinutesFor]. The default is the zone of
+     *        whatever is running the import, which on a phone is the right answer
+     *        for a history the owner of that phone recorded.
      * @param idFor produces the session id; callers pass a UUID or a hash so that
      *        re-importing the same file yields the same id.
      */
-    fun parse(input: InputStream, idFor: (startedAtUtcMs: Long, index: Int) -> String): List<RecordedSession> {
+    fun parse(
+        input: InputStream,
+        zone: ZoneId = ZoneId.systemDefault(),
+        idFor: (startedAtUtcMs: Long, index: Int) -> String,
+    ): List<RecordedSession> {
         val doc = try {
             val f = DocumentBuilderFactory.newInstance()
             f.isNamespaceAware = false
@@ -70,7 +80,7 @@ object TcxParser {
         val out = ArrayList<RecordedSession>()
         for (i in 0 until activities.length) {
             val a = activities.item(i) as? Element ?: continue
-            parseActivity(a, i, idFor)?.let { out.add(it) }
+            parseActivity(a, i, zone, idFor)?.let { out.add(it) }
         }
         if (out.isEmpty()) throw TcxException("Keine Aktivität in der Datei gefunden")
         return out
@@ -79,6 +89,7 @@ object TcxParser {
     private fun parseActivity(
         activity: Element,
         index: Int,
+        zone: ZoneId,
         idFor: (Long, Int) -> String,
     ): RecordedSession? {
         val type = exerciseTypeOf(activity.getAttribute("Sport"))
@@ -102,8 +113,8 @@ object TcxParser {
         if (raws.isEmpty()) return null
         raws.sortBy { it.tMs }
 
-        val startUtc = child(activity, "Id")?.textContent?.let { parseIso8601Millis(it) }
-            ?: raws.first().tMs
+        val id = child(activity, "Id")?.textContent?.let { parseIso8601(it) }
+        val startUtc = id?.utcMs ?: raws.first().tMs
 
         // A TCX export records no pauses, so wall-clock offset is also active time.
         // A gap longer than the dropout threshold is treated as a pause for the
@@ -134,7 +145,7 @@ object TcxParser {
         val header = SessionHeader(
             sessionId = idFor(startUtc, index),
             startedAtUtcMs = startUtc,
-            tzOffsetMinutes = 0,
+            tzOffsetMinutes = id?.offsetMinutes ?: offsetMinutesFor(startUtc, zone),
             exerciseType = type,
             source = SessionSource.IMPORT_TCX,
         )
@@ -163,12 +174,29 @@ object TcxParser {
     }
 
     /**
-     * Parse the ISO-8601 timestamps TCX uses, without java.time — the parser has
-     * to run on Android too, and the accepted shapes are few:
-     * `2024-03-17T06:12:33Z`, with optional fractional seconds, or with a
-     * `+hh:mm` offset.
+     * The zone offset, in minutes, in force at [utcMs] in [zone].
+     *
+     * Resolved at the instant of the workout rather than at the moment of import,
+     * which is the whole point: a run from January and a run from July in the same
+     * zone get +60 and +120, and both then display at the time they happened.
      */
-    internal fun parseIso8601Millis(raw: String): Long? {
+    internal fun offsetMinutesFor(utcMs: Long, zone: ZoneId): Int =
+        zone.rules.getOffset(Instant.ofEpochMilli(utcMs)).totalSeconds / 60
+
+    /** An ISO-8601 timestamp: the instant, and the offset the text spelled out —
+     *  null for `Z` and for a bare local time, neither of which says anything
+     *  about where the workout was. */
+    internal data class Iso8601(val utcMs: Long, val offsetMinutes: Int?)
+
+    internal fun parseIso8601Millis(raw: String): Long? = parseIso8601(raw)?.utcMs
+
+    /**
+     * Parse the ISO-8601 timestamps TCX uses, by hand: the accepted shapes are
+     * few — `2024-03-17T06:12:33Z`, with optional fractional seconds, or with a
+     * `+hh:mm` offset — and a `DateTimeFormatter` per trackpoint is a poor trade
+     * for a file with thirty thousand of them.
+     */
+    internal fun parseIso8601(raw: String): Iso8601? {
         val s = raw.trim()
         if (s.length < 19) return null
         return try {
@@ -191,7 +219,7 @@ object TcxParser {
                 while (digits < 3) { frac *= 10; digits++ }
                 ms = frac.toLong()
             }
-            var offsetMin = 0
+            var offsetMin: Int? = null
             if (i < s.length) {
                 when (s[i]) {
                     'Z', 'z' -> Unit
@@ -204,9 +232,10 @@ object TcxParser {
                     else -> Unit
                 }
             }
-            (daysFromCivil(year, month, day) * 86_400_000L) +
+            val utcMs = (daysFromCivil(year, month, day) * 86_400_000L) +
                 hour * 3_600_000L + min * 60_000L + sec * 1_000L + ms -
-                offsetMin * 60_000L
+                (offsetMin ?: 0) * 60_000L
+            Iso8601(utcMs, offsetMin)
         } catch (_: Exception) {
             null
         }

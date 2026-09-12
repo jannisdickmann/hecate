@@ -15,7 +15,7 @@ import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.phone.AppGraph
-import de.hecate.phone.archive.Archive
+import de.hecate.core.archive.Archive
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.tcx.TcxImporter

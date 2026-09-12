@@ -1,5 +1,6 @@
 package de.hecate.phone.ui
 
+import de.hecate.core.model.SessionSource
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
@@ -51,6 +52,17 @@ object Format {
     }
 
     /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
+    /** True for a session read out of an export rather than recorded on the watch. */
+    fun isImport(source: String): Boolean =
+        runCatching { SessionSource.valueOf(source).isImport }.getOrDefault(false)
+
+    /** The provenance line in the session detail view. */
+    fun source(source: String): String = when (runCatching { SessionSource.valueOf(source) }.getOrNull()) {
+        SessionSource.IMPORT_TCX -> "TCX-Import"
+        SessionSource.IMPORT_TAKEOUT -> "Google-Health-Takeout"
+        else -> "Uhr"
+    }
+
     fun dateTime(utcMs: Long, tzOffsetMinutes: Int): String {
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
             timeInMillis = utcMs + tzOffsetMinutes * 60_000L

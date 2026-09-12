@@ -16,7 +16,22 @@ enum class ExerciseType {
 @Serializable
 enum class SessionSource {
     WATCH,
+
+    /** One TCX file, picked by hand in the app. */
     IMPORT_TCX,
+
+    /** A Google Health takeout, decoded by `:core:run --args="takeout …"`. The
+     *  distinction from [IMPORT_TCX] buys nothing algorithmically — both behave
+     *  identically everywhere [isImport] is asked — and exists so that a session
+     *  can say where it came from years later. */
+    IMPORT_TAKEOUT,
+    ;
+
+    /** True for anything that was read out of an export rather than recorded.
+     *  Such a session is never written back to Health Connect, and is the only
+     *  kind a restore is allowed to reject as a duplicate of something already
+     *  in the database. */
+    val isImport: Boolean get() = this != WATCH
 }
 
 /**

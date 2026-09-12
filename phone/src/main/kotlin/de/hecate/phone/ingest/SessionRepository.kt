@@ -84,7 +84,7 @@ class SessionRepository(
             totalDistanceM = session.footer?.totalDistanceM ?: trackDistance(session),
             source = session.header.source.name,
             // US-9: imported sessions are not re-written to Health Connect.
-            hcWriteState = if (session.header.source == SessionSource.IMPORT_TCX) {
+            hcWriteState = if (session.header.source.isImport) {
                 HcWriteState.SKIPPED
             } else {
                 HcWriteState.PENDING
