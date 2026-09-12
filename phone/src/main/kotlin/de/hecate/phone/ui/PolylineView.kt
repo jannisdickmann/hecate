@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -26,15 +27,19 @@ import kotlin.math.min
  * Latitude and longitude are projected locally to metres before scaling so the
  * drawing has the right aspect ratio rather than being stretched by the cosine
  * of the latitude.
+ *
+ * The line follows the theme; the two markers do not. Which end of a track is
+ * the start is a fact about the track, and a wallpaper must not be able to
+ * recolour it into the other one — see [HecateMapColors].
  */
 @Composable
 fun PolylineView(
     points: List<LatLon>,
     modifier: Modifier = Modifier,
     height: Dp = 220.dp,
-    color: Color = Color(0xFF4DB6AC),
-    startColor: Color = Color(0xFF81C784),
-    endColor: Color = Color(0xFFE57373),
+    color: Color = routeLineColor,
+    startColor: Color = HecateMapColors.Start,
+    endColor: Color = HecateMapColors.End,
 ) {
     Box(modifier.fillMaxWidth().height(height)) {
         if (points.size < 2) return@Box

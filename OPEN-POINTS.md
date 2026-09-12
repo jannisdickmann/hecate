@@ -303,6 +303,39 @@ missing branch or a state that is genuinely safe to ignore. Until then, treat
 auto-pause as unverified: §3.1 already says its broadcast test has not been run,
 and this is the same gap seen from the other side.
 
+### 3.6 The dense live page has been measured, not seen
+
+The Material 3 rework replaced the Live and Route pages with one page carrying
+eight values (Appendix A.11). Whether all eight are actually *readable* at speed
+is the only question that matters about it, and it cannot be answered here.
+
+What has been checked: both modules compile and lint clean, and the layout was
+sized against the type scale rather than guessed. Wear Material 3 sets
+`numeralSmall` at 30 sp, `labelMedium` at 18 sp and `bodyExtraSmall` at 12 sp;
+the six rows plus spacers come to roughly 175 dp, against 204 dp on a 41 mm face
+less about 26 dp for `TimeText`. It fits, with more room on a 45 mm face.
+
+What has not: how it looks on glass, in daylight, on a moving bike. Three things
+to look for specifically.
+
+- **Whether the secondary pair is too small.** Heart rate and delta are set at
+  18 sp against 30 sp for distance and speed. The delta is the app's whole
+  point, and it was given colour instead of size on the theory that red-versus-
+  green reads faster than another large numeral. If that is wrong, the fix is to
+  raise both to `numeralSmall` and drop the ETA line, which is the least urgent
+  row on the page.
+- **Whether the round face crops the first and last rows.** The route name and
+  the status line sit in the narrow bands at top and bottom. Both are single
+  lines with horizontal padding, but padding chosen by arithmetic is not padding
+  chosen by looking.
+- **Whether it ever scrolls.** It should not. If it does on the watch in hand,
+  the budget above is wrong and a row has to go, rather than the page being left
+  to scroll — the point of the change was to stop hands leaving the bars.
+
+Also unverified, and cheap to check at the same time: `TimeText` now draws a
+clock the app never had, and the `EdgeButton` on the control page is positioned
+by the scaffold rather than by this code.
+
 ---
 
 ## 4. Things deliberately not done

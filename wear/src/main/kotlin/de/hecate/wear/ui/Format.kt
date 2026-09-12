@@ -27,6 +27,23 @@ object Format {
         else String.format(DE, "%d:%02d", m, s)
     }
 
+    /** Just the number of [distance], for the metric grid, which puts the unit
+     *  on its own line. Kept beside [distanceUnit] so the two cannot disagree
+     *  about where the kilometre boundary is. */
+    fun distanceValue(meters: Double): String =
+        if (meters >= 1000) String.format(DE, "%.2f", meters / 1000.0)
+        else String.format(DE, "%d", meters.roundToInt())
+
+    /** The unit [distanceValue] left off. */
+    fun distanceUnit(meters: Double): String = if (meters >= 1000) "km" else "m"
+
+    /** Just the number of [speed], for the metric grid. Same floor: below
+     *  1 km/h there is nothing to report but a jittery fix. */
+    fun speedValue(kmh: Double?): String {
+        if (kmh == null || !kmh.isFinite() || kmh < 1.0) return "–"
+        return String.format(DE, "%.1f", kmh)
+    }
+
     /** Speed as "10,8 km/h". Never pace: this app speaks km/h everywhere.
      *
      *  The lower bound is the old one restated — a pace above 3600 s/km is a

@@ -61,8 +61,15 @@ compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
+# The ~40 icons of the core set, which is every icon this app needs. Deliberately
+# NOT material-icons-extended: release builds run with isMinifyEnabled = false
+# (§6.3), so an unused icon is an icon that ships.
+compose-material-icons-core = { module = "androidx.compose.material:material-icons-core" }
 
-wear-compose-material = { module = "androidx.wear.compose:compose-material", version.ref = "wearCompose" }
+# Wear Material 3. Same version as the rest of the Wear Compose group, so the
+# catalog needs no new version line — see Appendix A on the move off Material
+# 2.5, whose Chip was the last of the old visual language in this app.
+wear-compose-material3 = { module = "androidx.wear.compose:compose-material3", version.ref = "wearCompose" }
 wear-compose-foundation = { module = "androidx.wear.compose:compose-foundation", version.ref = "wearCompose" }
 wear-ongoing = { module = "androidx.wear:wear-ongoing", version.ref = "wearOngoing" }
 wear-tooling-preview = { module = "androidx.wear:wear-tooling-preview", version.ref = "wearToolingPreview" }

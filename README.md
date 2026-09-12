@@ -22,7 +22,7 @@ That is one workout's worth of device behaviour verified, and no more.
 | Module | What it is | Builds without an Android SDK |
 |---|---|---|
 | `:core` | Pure Kotlin: the matcher, clustering, profiles, TCX import, replay harness | yes |
-| `:wear` | The recorder. Health Services, append-only storage, three watch screens | no |
+| `:wear` | The recorder. Health Services, append-only storage, two watch screens | no |
 | `:phone` | The companion. Room, ingest, Health Connect write-back, history UI | no |
 
 `:core` has no Android dependency at all, which is enforced by its dependency

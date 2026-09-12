@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.health.connect.client.HealthConnectClient
@@ -66,6 +67,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Draw behind the status and navigation bars. targetSdk 36 enforces this
+        // anyway; opting in explicitly means the Scaffold's window insets are
+        // what position the bars, rather than the system letterboxing the app.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AppGraph.init(this)
         setContent {
