@@ -266,4 +266,34 @@ object Tuning {
     /** Consecutive matcher exceptions after which the matcher is disabled for the
      *  remainder of the session. Recording must never be endangered by it (US-1). */
     const val MATCHER_FAILURE_LIMIT: Int = 5
+
+    // ------------------------------------------------------------------ heatmap
+
+    /**
+     * How far from home the app is willing to believe a coordinate [m].
+     *
+     * The reference point is the *median* start of all routes, which is robust:
+     * half your routes would have to start abroad to move it. Anything beyond
+     * this radius — a GPS fix that landed in the Gulf of Guinea, a holiday in
+     * another country — is left out of the heatmap, because a single such point
+     * would otherwise set the extent and squash every real route into one pixel.
+     *
+     * It excludes from the *drawing* only. Nothing is deleted and no route stops
+     * existing; see Appendix A.14.
+     */
+    const val HEATMAP_MAX_RADIUS_M: Double = 100_000.0
+
+    /** Heatmap raster size. 16:9, and deliberately coarser than the phone screen
+     *  it is drawn on — this counts GPS samples, and a cell finer than the noise
+     *  in those samples resolves nothing but the noise. */
+    const val HEATMAP_WIDTH: Int = 192
+    const val HEATMAP_HEIGHT: Int = 108
+
+    /** Breathing room around the routes' own bounding box, as a fraction of its
+     *  larger side. */
+    const val HEATMAP_PADDING_FRACTION: Double = 0.08
+
+    /** Smallest extent the heatmap will draw [m]. Stops a single route, or one
+     *  that doubles back on itself, from being magnified to absurdity. */
+    const val HEATMAP_MIN_SPAN_M: Double = 500.0
 }

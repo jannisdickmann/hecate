@@ -56,6 +56,18 @@ object HecateMapColors {
 
     /** Where it ended. */
     val End = Color(0xFFE53935)
+
+    /**
+     * The route lines drawn over the heatmap, light and dark.
+     *
+     * Warm on purpose. The heat underneath is a one-hue blue ramp — magnitude,
+     * light to dark — so an annotation drawn in any blue would be read as part
+     * of the scale. The opposite hue separates the two layers at every step of
+     * the ramp, which is also why the lines need no casing: a casing would erase
+     * the very density it sits on.
+     */
+    val RouteOnHeatLight = Color(0xFFB4560F)
+    val RouteOnHeatDark = Color(0xFFF0A868)
 }
 
 /**

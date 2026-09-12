@@ -9,7 +9,12 @@ import de.hecate.core.Tuning
 import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.cluster.CoverageMetric
 import de.hecate.core.cluster.RouteNamer
+import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Track
+import de.hecate.core.heat.Heatmap
+import de.hecate.core.heat.HeatmapCodec
+import de.hecate.core.heat.RouteTrack
+import de.hecate.core.heat.SessionTrack
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteEntry
@@ -22,10 +27,12 @@ import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
 import de.hecate.core.model.SessionSource
 import de.hecate.phone.AppGraph
+import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.RouteEntity
 import de.hecate.phone.db.RouteMemberEntity
 import de.hecate.phone.db.RoutePointEntity
 import de.hecate.phone.db.RouteProfileEntity
+import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
 /**
@@ -190,6 +197,9 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
 
         publishBundle()
+        // Last, and deliberately so: a failure while drawing must not cost the
+        // watch its routes.
+        rebuildHeatmap(tracks)
     }
 
     /** Rebuild the bundle from the database and hand it to the pusher. */
@@ -240,6 +250,49 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val bundle = BundleBuilder.bundle(version, System.currentTimeMillis(), entries)
         db.meta().put(de.hecate.phone.db.MetaEntity(META_BUNDLE_VERSION, version.toString()))
         BundlePusher(applicationContext).push(bundle)
+    }
+
+    /**
+     * Rasterise every recording over the routes' own extent (US-8, Appendix A.14).
+     *
+     * Here rather than in the UI because it is O(samples) over the whole history
+     * — the same work the clustering just did, on the same data — and the routes
+     * screen must not do it on every visit. It runs after the bundle is pushed
+     * so that a failure here can never cost the watch its routes: the picture is
+     * the least important thing this worker produces.
+     *
+     * [tracks] is reused rather than re-read: the sessions were already loaded
+     * and resampled above, and reading them again would double the worker's
+     * cost for a second copy of the same coordinates.
+     */
+    private suspend fun rebuildHeatmap(tracks: List<Track>) {
+        val db = AppGraph.db
+        val routeDao = db.routes()
+
+        val routes = routeDao.all().filter { it.active }.map { r ->
+            RouteTrack(r.id, routeDao.points(r.id).map { LatLon(it.lat, it.lon) })
+        }
+        val sessions = tracks.map { SessionTrack(it.sessionId, it.points) }
+
+        val grid = Heatmap.build(routes, sessions)
+        if (grid == null) {
+            Log.i(TAG, "Keine Heatmap: keine Route innerhalb des Radius")
+            return
+        }
+        val payload = ByteArrayOutputStream().also { HeatmapCodec.writeGzip(grid, it) }.toByteArray()
+        db.heatmap().put(
+            HeatmapEntity(payload = payload, computedAtUtc = System.currentTimeMillis()),
+        )
+        Log.i(
+            TAG,
+            "Heatmap: ${grid.routeIds.size} Routen, ${grid.sessionsUsed} Aufzeichnungen, " +
+                "max ${grid.maxCount}, ${payload.size} B" +
+                if (grid.routesDiscarded > 0 || grid.sessionsDiscarded > 0) {
+                    " (${grid.routesDiscarded} Routen / ${grid.sessionsDiscarded} Aufzeichnungen außerhalb des Radius)"
+                } else {
+                    ""
+                },
+        )
     }
 
     companion object {

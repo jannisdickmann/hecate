@@ -378,6 +378,35 @@ tertiary for heart rate — plus bold weight, and both colours come from the
 wallpaper under dynamic theming. A wallpaper whose primary and tertiary land
 close together would leave weight and the unit suffix doing all the work.
 
+### 3.8 The heatmap has been rendered, but not on a phone
+
+The picture above the routes list (Appendix A.14) was checked by rasterising it
+off-device — `Heatmap.build` is pure JVM — against synthetic data with a commute
+ridden sixty times, a loop ridden twelve, a ride done twice, wanderings that
+never became routes, a holiday outside the extent and a glitched fix. Seventeen
+tests pin the extent, the radius filter, the aspect ratio and which way up the
+raster is. None of that is the same as looking at it on a phone with a real
+history behind it.
+
+Three things to judge there.
+
+- **Whether the log scale separates the right things.** It is tuned so that a
+  route ridden twice is visible at all next to one ridden two hundred times. If
+  everything looks equally hot, the scale is too compressive; if the rare stuff
+  vanishes, not compressive enough. Both are one line in `rasterOf`.
+- **Whether 192×108 is the right raster.** At a 10 km extent each cell is about
+  50 m, which is roughly GPS noise. On a much larger extent — routes in two
+  towns — cells get coarse and everything merges into blobs; on a small one the
+  grid may start to show as squares despite the filtering.
+- **Whether the warm route lines are right.** They were chosen against a blue
+  ramp on a neutral surface. The surface here is wallpaper-derived, so a strongly
+  orange wallpaper would put the lines close to their own background.
+
+Not yet decided, and only answerable with a real history: whether the extent
+should follow the routes of the *selected activity type* rather than all of
+them. A cycling route of 60 km and a running loop of 5 km in one picture means
+the running loop is a smudge.
+
 ---
 
 ## 4. Things deliberately not done

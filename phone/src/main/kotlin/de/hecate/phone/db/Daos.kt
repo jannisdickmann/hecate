@@ -229,6 +229,20 @@ interface RouteDao {
 }
 
 @Dao
+interface HeatmapDao {
+    @Upsert
+    suspend fun put(heatmap: HeatmapEntity)
+
+    @Query("SELECT * FROM heatmap WHERE id = :id")
+    suspend fun get(id: Int = HeatmapEntity.SINGLETON): HeatmapEntity?
+
+    /** Observed by the routes screen so the picture refreshes itself when a
+     *  re-clustering finishes, rather than on the next visit to the panel. */
+    @Query("SELECT * FROM heatmap WHERE id = :id")
+    fun watch(id: Int = HeatmapEntity.SINGLETON): Flow<HeatmapEntity?>
+}
+
+@Dao
 interface MetaDao {
     @Upsert
     suspend fun put(meta: MetaEntity)

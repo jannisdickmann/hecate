@@ -432,6 +432,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
 private fun RoutesScreen(vm: HecateViewModel) {
     val routes by vm.routes.collectAsStateWithLifecycle()
     val clustering by vm.clustering.collectAsStateWithLifecycle()
+    val heatmap by vm.heatmap.collectAsStateWithLifecycle()
     if (routes.isEmpty() && !clustering) {
         Empty(
             "Noch keine Routen.\n\nEine Route entsteht, sobald drei ähnliche Aufzeichnungen " +
@@ -449,8 +450,50 @@ private fun RoutesScreen(vm: HecateViewModel) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Inside the LazyColumn rather than pinned above it: it is the
+            // widest thing on the screen and scrolls away like any other row,
+            // which is what you want once you are reading the list itself.
+            heatmap?.let { h ->
+                item(key = "heatmap") {
+                    HeatmapCard(h)
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
             items(routes, key = { it.id }) { r ->
                 RouteRow(r) { vm.show(Screen.RouteDetail(r.id)) }
+            }
+        }
+    }
+}
+
+/**
+ * The heatmap, with a line underneath saying what it is made of.
+ *
+ * The caption exists because the radius filter is otherwise invisible: a route
+ * that was left out is a route missing from a picture, with nothing to say it
+ * was ever considered.
+ */
+@Composable
+private fun HeatmapCard(state: HeatmapState) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        HeatmapView(state.grid, state.routes)
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Quiet(
+                buildString {
+                    append("${state.grid.sessionsUsed} Aufzeichnungen")
+                    append(" · ${state.routes.size} Routen")
+                    if (state.grid.isEmpty) append(" · keine Messpunkte im Ausschnitt")
+                },
+            )
+            val discarded = state.grid.routesDiscarded + state.grid.sessionsDiscarded
+            if (discarded > 0) {
+                Quiet(
+                    "$discarded außerhalb von " +
+                        "${(de.hecate.core.Tuning.HEATMAP_MAX_RADIUS_M / 1000).toInt()} km — nicht gezeichnet",
+                )
             }
         }
     }

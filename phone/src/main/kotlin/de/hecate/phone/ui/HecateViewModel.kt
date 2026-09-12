@@ -9,6 +9,8 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import de.hecate.core.Tuning
 import de.hecate.core.geo.LatLon
+import de.hecate.core.heat.HeatmapCodec
+import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import java.io.ByteArrayInputStream
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -41,6 +44,12 @@ sealed interface Screen {
     data class SessionDetail(val id: String) : Screen
     data class RouteDetail(val id: Long) : Screen
 }
+
+/** The heatmap raster together with the geometry drawn on top of it.
+ *
+ *  Named for the state rather than the view, because [HeatmapView] is the
+ *  composable that draws it. */
+data class HeatmapState(val grid: HeatmapGrid, val routes: List<List<LatLon>>)
 
 /**
  * What the Health Connect switch in settings is currently showing.
@@ -137,6 +146,32 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     val routes: StateFlow<List<RouteSummary>> = db.routes().summaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * The heatmap, and the geometry of the routes it accepted (US-8).
+     *
+     * Read from the row `ClusterWorker` writes rather than computed here: it is
+     * O(samples) over the entire history, which is not work a screen does when
+     * you visit it. Watched rather than fetched so the picture refreshes itself
+     * when a re-clustering finishes.
+     *
+     * Only the routes the heatmap kept are drawn. Taking the route list instead
+     * would put a line on the picture for a route the raster deliberately
+     * excluded, in an extent that was computed without it.
+     */
+    val heatmap: StateFlow<HeatmapState?> = db.heatmap().watch()
+        .map { row ->
+            val grid = row?.let {
+                runCatching { HeatmapCodec.readGzip(ByteArrayInputStream(it.payload)) }.getOrNull()
+            } ?: return@map null
+            HeatmapState(
+                grid = grid,
+                routes = grid.routeIds.mapNotNull { id ->
+                    db.routes().points(id).takeIf { it.size >= 2 }?.map { LatLon(it.lat, it.lon) }
+                },
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /**
      * Whether a re-clustering is queued or running.

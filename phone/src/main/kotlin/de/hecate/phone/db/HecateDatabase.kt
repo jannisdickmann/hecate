@@ -21,14 +21,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RouteMemberEntity::class,
         MatchLogEntity::class,
         SessionEventsEntity::class,
+        HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class HecateDatabase : RoomDatabase() {
     abstract fun sessions(): SessionDao
     abstract fun routes(): RouteDao
+    abstract fun heatmap(): HeatmapDao
     abstract fun meta(): MetaDao
 
     companion object {
@@ -62,6 +64,23 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 stores the precomputed heatmap raster. Nothing is lost by starting
+         *  empty: it is derived data, and the next clustering rebuilds it. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS heatmap (
+                        id INTEGER NOT NULL,
+                        payload BLOB NOT NULL,
+                        computed_at_utc INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile
         private var instance: HecateDatabase? = null
 
@@ -73,7 +92,7 @@ abstract class HecateDatabase : RoomDatabase() {
             )
                 // Foreign keys do the cascading deletes; without this SQLite
                 // ignores them and orphan samples accumulate.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { instance = it }

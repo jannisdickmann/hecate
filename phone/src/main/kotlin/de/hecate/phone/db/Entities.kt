@@ -203,6 +203,32 @@ data class SessionEventsEntity(
     override fun hashCode(): Int = 31 * sessionId.hashCode() + payload.contentHashCode()
 }
 
+/**
+ * The precomputed heatmap raster, one row for the whole database.
+ *
+ * A blob rather than a table of cells: it is written whole, read whole, and
+ * never queried — 20,736 counts as rows would be a table nothing ever selects
+ * from. Recomputed by `ClusterWorker` on the same trigger as the routes, because
+ * it is derived from exactly the same two things and would otherwise drift.
+ */
+@Entity(tableName = "heatmap")
+data class HeatmapEntity(
+    @PrimaryKey @ColumnInfo(name = "id") val id: Int = SINGLETON,
+    @ColumnInfo(name = "payload", typeAffinity = ColumnInfo.BLOB) val payload: ByteArray,
+    @ColumnInfo(name = "computed_at_utc") val computedAtUtc: Long,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is HeatmapEntity && other.id == id &&
+            other.computedAtUtc == computedAtUtc && other.payload.contentEquals(payload)
+
+    override fun hashCode(): Int = 31 * id + payload.contentHashCode()
+
+    companion object {
+        /** There is only ever one heatmap, and this is its id. */
+        const val SINGLETON = 0
+    }
+}
+
 /** Small key/value table for the bundle version counter and similar. */
 @Entity(tableName = "meta")
 data class MetaEntity(
