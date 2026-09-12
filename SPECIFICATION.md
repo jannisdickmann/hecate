@@ -1252,3 +1252,74 @@ three defects OPEN-POINTS §3.2 lists — cross-device delivery, a vendor librar
 validation, a JDK-versus-Android API difference — would all still have reached
 the device. Robolectric moved the line between "found on a laptop" and "found on
 a wrist". It did not remove it.
+
+### A.17 A permission that no longer exists cost a whole run
+
+A 44-minute run recorded nothing and synced nothing. The post-mortem is worth
+the space because four separate design decisions each turned a small problem
+into a silent one, and only the first was a bug.
+
+**The bug.** `MainActivity` asked for `android.permission.BODY_SENSORS`. On
+Wear OS 6, for an app targeting SDK 36, that is no longer a runtime permission
+the platform tracks for the app at all — `dumpsys package` does not list it among
+the app's runtime permissions, and requesting it is a silent no-op that leaves
+the appop at `ignore`. The grant the platform wants is
+`android.permission.health.READ_HEART_RATE`, which the manifest declared and
+nothing ever requested. So heart rate had been permanently denied since the
+watch app was last installed, and no dialog had ever appeared to say so.
+
+**Why that cost GPS.** `ExerciseSource` warmed up with `{LOCATION,
+HEART_RATE_BPM}` in one `WarmUpConfig`. Health Services rejects a configuration
+as a whole when it names a data type the caller may not collect, so the refused
+heart rate took location with it. `dumpsys location` on the watch keeps a
+registration history and is unambiguous: Health Services registered with the GPS
+provider repeatedly the evening the app was first installed, and not once during
+the run. The receiver was never switched on. The user's report — "it never got a
+GPS connection" — was exactly right and had nothing to do with the sky.
+
+**Why nobody found out for 44 minutes.** `prepareExercise` failing went to
+`Log.w` and no further, and `PREPARING` had no exit but a location fix. No
+exercise was started, so no availability callback and no sample could ever
+arrive to end the wait. The foreground service ran, the ongoing notification said
+the app was recording, and the state machine sat in a state it could not leave.
+A gate with no timeout is not a gate, it is a deadlock with a nice name.
+
+Three changes, of which the middle one is the general lesson:
+
+- The configuration is built from the permissions actually granted, so a missing
+  grant costs that one data type. A workout with no heart rate is worth having.
+- `PREPARING` has a 90 s deadline, after which the session starts regardless and
+  location joins when it arrives, exactly as it does after a mid-run dropout.
+  Waiting for a fix is an optimisation for the matcher, not a precondition.
+- Every one of these now says something on the watch. A failure that reaches only
+  logcat is a failure nobody finds until the run is over — and on this watch the
+  main log ring is 64 KiB, which is about a minute of Wear OS chatter, so by the
+  time anyone looks it is not in logcat either.
+
+**And why the sync failed, which turned out to be the same story.** Stopping
+wrote a session with a header, a footer and no samples, and offered it to the
+phone. `SessionRepository.ingest` refuses anything under two samples, and
+`IngestService` deliberately did not acknowledge a refusal — a good rule, meant
+to stop a bug here throwing away a real recording. For a payload that can never
+become storable it is a trap: the file stays on the watch, is re-offered after
+every reboot, and the data item sits on the phone for ever. Three had
+accumulated.
+
+So a rejection now says whether it is permanent, and only a permanent one is
+acknowledged. A session with nothing in it is dropped on the watch before it is
+ever offered. And `DataLayerIngest.sweep` reads what the Data Layer is already
+holding when the app starts, because `onDataChanged` was the only way in and an
+event that never arrives left an item nothing would look at again. Running that
+sweep against the real phone cleared all three stranded sessions in one launch,
+and confirmed the diagnosis from the other end: each was refused with `zu wenige
+Messpunkte`.
+
+**What this says about the test strategy.** Nothing here was reachable from a
+laptop. The permission is a platform fact about one OS version, Health Services
+is a separate process with its own validation, and the deadlock needs a real
+`prepareExercise` to fail. OPEN-POINTS §3.2 predicted exactly this class —
+"anything that talks to `com.google.android.gms`, `androidx.health`, or
+`javax.xml` should be assumed unverified until it has run on the device" — and
+the prediction held. What the laptop *could* have done, and now does, is make the
+failure loud: the recorder says what went wrong, and the sweep means a missed
+delivery is recoverable instead of permanent.

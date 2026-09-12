@@ -532,12 +532,32 @@ are plain JSONL — one line per sample, readable with `cat`.
 
 ## Permissions to grant by hand after install
 
-- **Watch**: location (allow all the time), heart rate, physical activity,
-  notifications.
+- **Watch**: location, heart rate, physical activity, notifications — the app
+  asks for these on first launch. Then two more that no app is allowed to ask
+  for in that dialog, both in Settings → Apps → Hecate → Permissions:
+  - **Location → "Immer zulassen"**. The first dialog can only grant "while
+    using", which stops being true the moment the screen goes ambient.
+  - Confirm **heart rate** is actually on. On Wear OS 6 this is
+    `health.READ_HEART_RATE`, not the old `BODY_SENSORS`; see below.
 - **Phone**: Health Connect → app permissions → write exercise, exercise route,
   heart rate, distance.
 - Turn **off** the watch's automatic activity detection, or Health Connect gets
   every workout twice.
+
+**Check them after every watch install, and check heart rate in particular.**
+Health Services refuses an exercise configuration *as a whole* when it names a
+data type the app has no permission for, so a missing heart-rate grant does not
+cost you heart rate — it costs you the exercise, GNSS included. That failure is
+silent on the wrist: the service runs, the notification says it is recording, and
+nothing is recorded. The app now builds its configuration from what is actually
+granted, warns on screen, and starts the session after 90 s with or without a
+fix — but a run with no heart rate and no route is still a run you have to do
+again. Appendix A.17 of the specification has the post-mortem.
+
+```bash
+# what the watch actually holds, after any install
+adb -s <watch> shell dumpsys package de.hecate | grep -A8 "runtime permissions"
+```
 
 ## Route priority
 

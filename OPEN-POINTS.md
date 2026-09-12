@@ -299,7 +299,31 @@ at the algorithms and structurally blind to every one of them. Anything that
 talks to `com.google.android.gms`, `androidx.health`, or `javax.xml` should be
 assumed unverified until it has run on the device.
 
-A fourth defect, later and of a different kind: **`MIGRATION_4_5` named a column
+A fourth and fifth, from the first long run on a wrist, both written up in A.17:
+
+- **The heart-rate permission had never been granted, and could not be.** The app
+  asked for `BODY_SENSORS`, which Wear OS 6 no longer tracks as a runtime
+  permission for an app targeting SDK 36; the grant it wants is
+  `health.READ_HEART_RATE`. Health Services rejects an exercise configuration as
+  a whole when it names a data type the caller may not collect, so a missing
+  heart-rate grant cost the whole exercise — GNSS was never switched on for the
+  entire 44 minutes, which `dumpsys location` shows plainly. Nothing on the wrist
+  said so: the service ran, the notification said "recording", and `PREPARING`
+  had no exit but a fix that could not come.
+- **Three empty sessions had stranded themselves.** A session with no samples is
+  refused by ingest, a refusal was never acknowledged, so the watch kept the file
+  and re-offered it after every reboot while the data item sat on the phone.
+
+Both were found with `dumpsys`, not with logcat, because the watch's main log
+ring is 64 KiB — perhaps a minute of Wear OS chatter. **Raise it before any run
+you might want to diagnose**, on both devices; it resets on reboot and the
+persistent property needs root:
+
+```bash
+adb -s <device> shell logcat -G 8M
+```
+
+A sixth defect, of a different kind again: **`MIGRATION_4_5` named a column
 that does not exist.** The property is `tzOffsetMinutes`, the column is
 `tz_offset`, and the migration's SQL said `tz_offset_minutes`. Room runs pending
 migrations the first time the database is opened, so every start of the new build

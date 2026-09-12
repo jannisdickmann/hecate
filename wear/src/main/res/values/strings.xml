@@ -4,4 +4,11 @@
     <string name="app_name">Hecate</string>
     <string name="notif_channel_name">Aufzeichnung</string>
     <string name="notif_channel_desc">Laufende Aufzeichnung einer Aktivität</string>
+
+    <!-- Recorder messages. Shown on the watch, where a failure that only reaches
+         logcat is a failure nobody finds until the run is over. -->
+    <string name="no_location_permission">Kein Standortzugriff — ohne GPS</string>
+    <string name="warmup_failed">GPS-Vorbereitung fehlgeschlagen</string>
+    <string name="started_without_gps">Ohne GPS gestartet</string>
+    <string name="nothing_recorded">Nichts aufgezeichnet — verworfen</string>
 </resources>

@@ -33,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.TimeZone
 import java.util.UUID
@@ -63,6 +64,7 @@ class RecorderService : Service() {
     private var routeNames: Map<Long, String> = emptyMap()
     private var lastNotificationUpdateMs = 0L
     private var sawFirstLocation = false
+    private var samplesWritten = 0
 
     private val bus get() = AppGraph.recorder
 
@@ -160,9 +162,46 @@ class RecorderService : Service() {
         // PREPARING: warm the sensors and wait for a fix before the session starts,
         // so the first few hundred metres — the ones the matcher needs most — are
         // not spent acquiring GNSS.
+        if (!source.canRecordLocation()) {
+            bus.update { it.copy(message = getString(de.hecate.wear.R.string.no_location_permission)) }
+            Log.w(TAG, "Keine Standortberechtigung — Aufzeichnung ohne GPS")
+        }
         runCatching { source.prepare(type) }
-            .onFailure { Log.w(TAG, "prepareExercise fehlgeschlagen", it) }
+            .onFailure {
+                // Swallowed into a warning once, which cost a 44-minute run: the
+                // warm-up was rejected, no exercise was ever started, and the
+                // service sat in PREPARING behind an ongoing notification that
+                // said it was recording. Say so, and let the timeout below start
+                // the session anyway.
+                Log.w(TAG, "prepareExercise fehlgeschlagen", it)
+                bus.update { s -> s.copy(message = getString(de.hecate.wear.R.string.warmup_failed)) }
+            }
         Haptics.tick(this)
+        armPrepareTimeout(id)
+    }
+
+    /**
+     * PREPARING is a nice-to-have, not a gate.
+     *
+     * Waiting for a fix buys the matcher the opening few hundred metres, which is
+     * where it needs the data most — but only if a fix is coming. When it is not,
+     * the old code waited for ever: the exercise was never started, so no sample
+     * and no availability callback could arrive to end the wait, and a stopped
+     * session was a header and a footer with nothing in between.
+     *
+     * So the wait has a deadline. Past it the session starts regardless; heart
+     * rate and distance are recorded, and location joins the moment it becomes
+     * available, exactly as it does after a dropout mid-run.
+     */
+    private fun armPrepareTimeout(id: String) {
+        scope.launch {
+            delay(PREPARE_TIMEOUT_MS)
+            if (sessionId != id || bus.state.value.phase != RecorderPhase.PREPARING) return@launch
+            Log.w(TAG, "Kein Fix nach ${PREPARE_TIMEOUT_MS / 1000}s — Start ohne GPS")
+            recordEvent(SessionEventType.GPS_LOST, "kein Fix beim Start")
+            bus.update { it.copy(message = getString(de.hecate.wear.R.string.started_without_gps)) }
+            startExercise()
+        }
     }
 
     /** Called once a fix exists (or the wait was given up on). */
@@ -197,6 +236,20 @@ class RecorderService : Service() {
         sessionId = null
         lastState = null
         sawFirstLocation = false
+
+        // A recording with no positions in it is not a recording. Offering it to
+        // the phone is worse than useless: ingest refuses anything under two
+        // samples, a refusal is deliberately not acknowledged so that a bug here
+        // cannot throw data away, and the file therefore stays on the watch and
+        // is re-offered for ever. Three of these had accumulated before anyone
+        // noticed. Nothing is lost by dropping it — there was nothing in it.
+        val empty = samplesWritten < MIN_USEFUL_SAMPLES
+        samplesWritten = 0
+        if (empty) {
+            Log.w(TAG, "Sitzung $id ohne Messpunkte — verworfen statt hochgeladen")
+            AppGraph.sessions.discard(id)
+            bus.update { it.copy(message = getString(de.hecate.wear.R.string.nothing_recorded)) }
+        }
 
         Haptics.tick(this)
         AppGraph.uploader.uploadPending()
@@ -380,6 +433,7 @@ class RecorderService : Service() {
      */
     private fun onSample(sample: Sample) {
         writer?.writeSample(sample)
+        samplesWritten++
 
         val state = matcher?.update(sample)
         if (matcher?.disabled == true && !bus.state.value.matcherDisabled) {
@@ -447,6 +501,19 @@ class RecorderService : Service() {
     companion object {
         private const val TAG = "RecorderService"
         private const val NOTIFICATION_INTERVAL_MS = 5_000L
+
+        /**
+         * How long to wait for a first fix before starting the session anyway.
+         *
+         * Long enough for a cold start with a stale almanac — a Pixel Watch 4 in
+         * the open is usually well under half of this — and short enough that a
+         * warm-up which is never going to succeed costs a minute and a half of a
+         * run rather than all of it.
+         */
+        private const val PREPARE_TIMEOUT_MS = 90_000L
+
+        /** Below this, the file holds a header and a footer and nothing else. */
+        private const val MIN_USEFUL_SAMPLES = 2
 
         const val ACTION_START = "de.hecate.wear.START"
         const val ACTION_PAUSE = "de.hecate.wear.PAUSE"

@@ -36,7 +36,14 @@ class SessionRepository(
         /** Already present, or a duplicate by start time. Still acknowledge it. */
         data class Duplicate(val sessionId: String, val reason: String) : IngestResult
 
-        data class Rejected(val reason: String) : IngestResult
+        /**
+         * Not stored. [permanent] separates "this payload can never be stored" —
+         * a recording with no positions in it — from "something went wrong here",
+         * because the two deserve opposite treatment on the wire: the first
+         * should be acknowledged so the watch stops offering it, and the second
+         * must not be, so that a bug here cannot throw a real recording away.
+         */
+        data class Rejected(val reason: String, val permanent: Boolean = false) : IngestResult
     }
 
     /**
@@ -46,7 +53,9 @@ class SessionRepository(
      *        write. A bulk import sets it false and queues once at the end.
      */
     suspend fun ingest(session: RecordedSession, triggerFollowUp: Boolean = true): IngestResult {
-        if (session.samples.size < 2) return IngestResult.Rejected("zu wenige Messpunkte")
+        if (session.samples.size < 2) {
+            return IngestResult.Rejected("zu wenige Messpunkte", permanent = true)
+        }
 
         val dao = db.sessions()
         if (dao.countById(session.id) > 0) {

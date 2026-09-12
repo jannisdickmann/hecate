@@ -6,6 +6,7 @@ import android.content.Context
 import de.hecate.phone.archive.ArchiveRepository
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.health.HealthConnectWriter
+import de.hecate.phone.ingest.DataLayerIngest
 import de.hecate.phone.ingest.SessionRepository
 import de.hecate.phone.tcx.TcxImporter
 
@@ -29,6 +30,8 @@ object AppGraph {
         private set
     lateinit var archive: ArchiveRepository
         private set
+    lateinit var dataLayer: DataLayerIngest
+        private set
 
     @Volatile
     private var initialised = false
@@ -43,6 +46,7 @@ object AppGraph {
             repository = SessionRepository(app, db)
             importer = TcxImporter(app, repository)
             archive = ArchiveRepository(app, db)
+            dataLayer = DataLayerIngest(app, repository)
             initialised = true
         }
     }

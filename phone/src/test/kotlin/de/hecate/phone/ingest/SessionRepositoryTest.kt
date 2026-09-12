@@ -140,6 +140,11 @@ class SessionRepositoryTest {
         val result = repository.ingest(Fixtures.recorded("s-1", sampleCount = 1))
         assertIs<SessionRepository.IngestResult.Rejected>(result)
         assertEquals(0, db.sessions().count())
+        // Permanent: no amount of retrying makes a recording with one position
+        // storable. The wire layer acknowledges these so the watch stops keeping
+        // them — three had accumulated on a watch before that was true, because a
+        // refusal is otherwise never acknowledged and the file is never dropped.
+        assertTrue(result.permanent)
     }
 
     @Test

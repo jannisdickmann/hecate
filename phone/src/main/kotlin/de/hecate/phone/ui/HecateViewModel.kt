@@ -109,6 +109,15 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db get() = AppGraph.db
 
+    init {
+        // Pick up anything the Data Layer is still holding. `IngestService` gets
+        // the event when one arrives; nothing used to look again if that event
+        // never came, and three sessions had been sitting there unnoticed. One
+        // query at app start is the cheapest possible recovery path, and in the
+        // ordinary case it finds nothing.
+        viewModelScope.launch { AppGraph.dataLayer.sweep() }
+    }
+
     private val _screen = MutableStateFlow<Screen>(Screen.Recordings)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
 

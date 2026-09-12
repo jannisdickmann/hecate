@@ -45,6 +45,20 @@ class SessionStore(context: Context) {
         pruneMarkers()
     }
 
+    /**
+     * Throw a session away without ever offering it to the phone.
+     *
+     * Distinct from [markAcked], which records that the phone has it. Nothing
+     * has it; there was nothing to have. The ack marker is written anyway, so a
+     * copy that somehow reached the Data Layer earlier cannot come back as a
+     * pending upload.
+     */
+    fun discard(sessionId: String) {
+        fileFor(sessionId).delete()
+        File(ackDir, sessionId).writeText("")
+        pruneMarkers()
+    }
+
     fun read(file: File): RecordedSession? =
         runCatching { file.bufferedReader().useLines { SessionCodec.decodeSession(it) } }.getOrNull()
 
