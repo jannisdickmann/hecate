@@ -35,6 +35,7 @@ object BundleBuilder {
         val p25: List<Double>,
         val p75: List<Double>,
         val medianHr: List<Double?>,
+        val medianAltM: List<Double?>,
         val prior: RoutePrior,
     )
 
@@ -79,6 +80,7 @@ object BundleBuilder {
                 p25 = profile.p25S,
                 p75 = profile.p75S,
                 medianHr = profile.medianHr,
+                medianAltM = profile.medianAltM,
                 prior = priorOf(members),
             )
         }
@@ -131,6 +133,7 @@ object BundleBuilder {
                     p25S = r.p25,
                     p75S = r.p75,
                     medianHr = r.medianHr,
+                    medianAltM = r.medianAltM,
                 ),
                 prior = r.prior,
             )

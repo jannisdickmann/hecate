@@ -15,6 +15,7 @@ import de.hecate.core.io.BundleCodec
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
+import de.hecate.core.profile.Elevation
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
 import de.hecate.phone.db.RouteSummary
@@ -77,6 +78,11 @@ data class RouteDetail(
     val bestDurationMs: Long?,
     val worstDurationMs: Long?,
     val priority: Int,
+    /** The route's own elevation profile, thinned for drawing, and the numbers
+     *  read off the full one. Empty and null when no member recorded altitude,
+     *  or when the route has not been clustered since schema v6. */
+    val elevation: List<Elevation.Point> = emptyList(),
+    val elevationStats: Elevation.Stats? = null,
     val sessions: List<SessionSummary>,
     /** Per-kilometre median/best/worst splits, in seconds. */
     val splits: List<Split>,
@@ -99,8 +105,15 @@ data class SessionDetail(
      *  Empty for sessions ingested before schema v3, and for TCX imports, which
      *  never had any. */
     val sessionEvents: List<SessionEvent>,
-    /** Whether the watch worked the route out or assumed it from the ranking. */
-    val committedByPriority: Boolean,
+    /** This recording's own altitude against distance, thinned for drawing, and
+     *  the numbers read off the full series. Empty and null for a recording that
+     *  carries no altitude at all. */
+    val elevation: List<Elevation.Point> = emptyList(),
+    val elevationStats: Elevation.Stats? = null,
+    /** How the watch's matcher settled on the route, or null when it never did
+     *  — every imported session, and any recording whose route was assigned by
+     *  the clusterer afterwards rather than live. */
+    val committedByPriority: Boolean?,
 )
 
 /**
@@ -247,6 +260,15 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             append("${report.imported} importiert")
             if (report.duplicates > 0) append(", ${report.duplicates} Duplikate")
             if (report.failed > 0) append(", ${report.failed} fehlgeschlagen")
+            // The counts alone leave the user with no way to find out what was
+            // wrong with a file, and the reasons were being computed and dropped.
+            // It matters more than it used to: a sport this app does not record
+            // is now refused rather than quietly filed as a run, so "1
+            // fehlgeschlagen" is the only sign that a ski tour did not come in.
+            report.messages.firstOrNull()?.let { first ->
+                append(" — ").append(first)
+                if (report.messages.size > 1) append(" (+${report.messages.size - 1})")
+            }
         }
     }
 
@@ -367,6 +389,9 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val profileRows = dao.profile(routeId)
 
         val splits = buildSplits(profileRows.map { it.medianCumTimeS }, members, routeId)
+        // Straight off the profile bins, which are Tuning.RESAMPLE_M apart by
+        // construction, so bin index is distance along the route.
+        val routeElevation = Elevation.ofBins(profileRows.map { it.medianAltM }, Tuning.RESAMPLE_M)
 
         _routeDetail.value = RouteDetail(
             id = route.id,
@@ -379,15 +404,29 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             medianDurationMs = durations.median(),
             bestDurationMs = durations.minOrNull(),
             worstDurationMs = durations.maxOrNull(),
+            elevation = Elevation.simplify(routeElevation, CHART_POINTS),
+            elevationStats = Elevation.stats(routeElevation),
             sessions = members,
             splits = splits,
         )
     }
 
     /**
-     * Per-kilometre splits (US-8). The median column comes from the route
-     * profile; best and worst are taken over the members' own crossings of the
-     * same kilometre marks.
+     * Per-kilometre splits (US-8), all three columns over the same members'
+     * crossings of the same kilometre marks.
+     *
+     * The median used to come from the route profile instead, and the two
+     * disagreed: the profile's figure is a bin-wise median of *cumulative* times,
+     * so differencing two of them is not the median of anybody's kilometre, and
+     * it is taken over every member while best and worst are taken over the
+     * subset whose samples project onto the geometry. The table said so out loud
+     * — one kilometre of the commute showed a median of 22,9 km/h against a best
+     * of 22,6, which cannot happen and made the whole row untrustworthy.
+     *
+     * The profile is still what the matcher compares against live; it is a
+     * per-position model, which is the right thing there and the wrong thing
+     * here. A kilometre no member's track covers keeps the profile's value, so
+     * the row is still populated rather than blank.
      */
     private suspend fun buildSplits(
         medianCum: List<Double>,
@@ -436,7 +475,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             }
             RouteDetail.Split(
                 km = km,
-                medianS = medianSplit,
+                medianS = memberSplits.median() ?: medianSplit,
                 bestS = memberSplits.minOrNull() ?: medianSplit,
                 worstS = memberSplits.maxOrNull() ?: medianSplit,
             )
@@ -454,6 +493,21 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val events = dao.events(id)?.let {
             runCatching { BundleCodec.decodeEvents(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
         } ?: emptyList()
+
+        // Only the four fields the profile reads; the rest of a Sample is of no
+        // interest to a chart of height against distance.
+        val sessionElevation = Elevation.of(
+            samples.map {
+                de.hecate.core.model.Sample(
+                    tOffsetMs = it.tOffsetMs,
+                    activeMs = it.activeMs,
+                    lat = it.lat,
+                    lon = it.lon,
+                    altM = it.altM,
+                    paused = it.paused,
+                )
+            },
+        )
 
         _sessionDetail.value = SessionDetail(
             summary = SessionSummary(
@@ -479,12 +533,14 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             committedByPriority = log.lastOrNull {
                 it.event == de.hecate.core.model.MatchEvent.COMMIT ||
                     it.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY
-            }?.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY,
+            }?.let { it.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY },
             // Only the interesting lines: commits, demotions, deviations.
             matchEvents = log.filter { it.event != de.hecate.core.model.MatchEvent.SAMPLE }.take(50),
             // Uncapped on purpose: a handful per session, and the one that
             // matters is usually the one you did not expect to be there.
             sessionEvents = events,
+            elevation = Elevation.simplify(sessionElevation, CHART_POINTS),
+            elevationStats = Elevation.stats(sessionElevation),
         )
     }
 
@@ -494,7 +550,22 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
     }
 
+    /** As above, for the split seconds. Same rule for an even count, so the
+     *  splits table and the duration rows above it agree about what a median is. */
+    @JvmName("medianOfDoubles")
+    private fun List<Double>.median(): Double? {
+        if (isEmpty()) return null
+        val s = sorted()
+        return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2.0
+    }
+
     companion object {
         private const val BACK_STACK_LIMIT = 16
+
+        /** Points kept for an elevation chart. A phone is a few hundred pixels
+         *  wide and an hour's ride is thousands of samples — see
+         *  [Elevation.simplify], which keeps the peaks rather than averaging
+         *  them away. */
+        private const val CHART_POINTS = 400
     }
 }

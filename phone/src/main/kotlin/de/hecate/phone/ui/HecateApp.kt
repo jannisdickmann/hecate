@@ -73,7 +73,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.profile.Elevation
 import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
@@ -350,6 +352,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         }
         Spacer(Modifier.height(12.dp))
         PolylineView(d.geometry)
+        ElevationSection(d.elevation, d.elevationStats)
         Spacer(Modifier.height(12.dp))
 
         KeyValue("Art", d.summary.exerciseType.label)
@@ -368,7 +371,18 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         SectionHeader("Zuordnung")
         KeyValue("Route", d.routeName ?: "keine")
         KeyValue("Festlegung bei", d.committedAtM?.let { Format.distance(it) } ?: "–")
-        KeyValue("Festlegung durch", if (d.committedByPriority) "Priorität" else "Spurverlauf")
+        // Both "Festlegung" rows describe what the watch's matcher did during the
+        // recording, so both are blank when it did nothing: an imported session
+        // has no match log, and saying "Spurverlauf" there claimed a decision that
+        // was never made — the route came from the clusterer afterwards.
+        KeyValue(
+            "Festlegung durch",
+            when (d.committedByPriority) {
+                null -> "–"
+                true -> "Priorität"
+                false -> "Spurverlauf"
+            },
+        )
         KeyValue("Deckung", d.coverage?.let { String.format(java.util.Locale.GERMANY, "%.2f", it) } ?: "–")
         KeyValue("Match-Log", "${d.matchLogSize} Einträge")
 
@@ -566,6 +580,7 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
 
         Spacer(Modifier.height(8.dp))
         PolylineView(d.geometry)
+        ElevationSection(d.elevation, d.elevationStats)
         Spacer(Modifier.height(16.dp))
 
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
@@ -779,6 +794,33 @@ private fun ClusteringBanner() {
 }
 
 // ----------------------------------------------------------------------- bits
+
+/**
+ * The altitude profile and the numbers read off it, under the track on both
+ * detail screens.
+ *
+ * Absent rather than empty when there is nothing to draw: a recording from a
+ * watch with no altitude, or a route last clustered before the elevation column
+ * existed. A chart of a flat line at zero would be a claim about the ground.
+ */
+@Composable
+private fun ElevationSection(points: List<Elevation.Point>, stats: Elevation.Stats?) {
+    if (points.size < 2 || stats == null) return
+    Spacer(Modifier.height(4.dp))
+    SectionHeader("Höhenprofil")
+    ElevationView(points)
+    // Climb and drop first: they are what the ground cost, and the one pair a
+    // rider compares between days. The band underneath says how high up all of
+    // this happened, without which "+240 m" could be a dyke or an alp.
+    KeyValue("Aufstieg", Format.elevationSigned(stats.ascentM))
+    KeyValue("Abstieg", Format.elevationSigned(-stats.descentM))
+    KeyValue("Höhe", Format.elevationBand(stats.minM, stats.maxM))
+    // Only where it says something the two rows above do not: a loop nets zero
+    // and the row would be noise, a one-way climb does not.
+    if (kotlin.math.abs(stats.netM) >= Tuning.ELEVATION_THRESHOLD_M) {
+        KeyValue("Netto", Format.elevationSigned(stats.netM))
+    }
+}
 
 /**
  * The icon for an exercise type (US-8).

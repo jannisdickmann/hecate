@@ -1,0 +1,226 @@
+package de.hecate.core.profile
+
+import de.hecate.core.Tuning
+import de.hecate.core.geo.Geo
+import de.hecate.core.geo.LatLon
+import de.hecate.core.model.RecordedSession
+import de.hecate.core.model.Sample
+
+/**
+ * Altitude against distance, and the handful of numbers worth reading off it.
+ *
+ * Two things use this: a recording, whose profile comes straight from its own
+ * samples, and a route, whose profile is the per-bin median altitude over its
+ * members and therefore already computed by [ProfileBuilder]. Both end up as the
+ * same [Point] series so that one chart and one set of statistics serve both.
+ *
+ * Everything here is arithmetic over a series, which is why it lives in `:core`
+ * where a laptop can check it rather than in the screen that draws it.
+ */
+object Elevation {
+
+    /** One point of the profile: how far along, and how high. */
+    data class Point(val distanceM: Double, val altM: Double)
+
+    /**
+     * What the detail screens show beside the chart.
+     *
+     * [ascentM] and [descentM] are both positive. They do not have to cancel:
+     * a route that ends where it started still climbs and descends the same
+     * amount, but a commute that ends 200 m above its start does not.
+     */
+    data class Stats(
+        val ascentM: Double,
+        val descentM: Double,
+        val minM: Double,
+        val maxM: Double,
+        val startM: Double,
+        val endM: Double,
+    ) {
+        /** Lowest to highest — how much of a hill this is at all. */
+        val rangeM: Double get() = maxM - minM
+
+        /** Where it ends against where it began. Negative for a net descent. */
+        val netM: Double get() = endM - startM
+    }
+
+    /**
+     * Total climb and drop, with the hysteresis [Tuning.ELEVATION_THRESHOLD_M]
+     * describes.
+     *
+     * The rule is one line: keep an anchor, and only when the current altitude
+     * has moved more than the threshold away from it does that move count — and
+     * the anchor jumps to where we now are. Noise smaller than the threshold
+     * never moves the anchor and so never accumulates, while a real climb is
+     * counted in full, in pieces, no matter how gently it is taken.
+     *
+     * Null for a series too short or too empty to say anything.
+     */
+    fun stats(points: List<Point>, thresholdM: Double = Tuning.ELEVATION_THRESHOLD_M): Stats? {
+        val alts = points.map { it.altM }.filter { it.isFinite() }
+        if (alts.size < 2) return null
+
+        var ascent = 0.0
+        var descent = 0.0
+        var anchor = alts.first()
+        for (alt in alts) {
+            val delta = alt - anchor
+            if (delta >= thresholdM) {
+                ascent += delta
+                anchor = alt
+            } else if (delta <= -thresholdM) {
+                descent -= delta
+                anchor = alt
+            }
+        }
+        return Stats(
+            ascentM = ascent,
+            descentM = descent,
+            minM = alts.min(),
+            maxM = alts.max(),
+            startM = alts.first(),
+            endM = alts.last(),
+        )
+    }
+
+    /**
+     * A recording's own profile: altitude against distance travelled.
+     *
+     * Straight from the samples rather than from the resampled [de.hecate.core.geo.Track],
+     * because a recording is shown as itself — the track exists to be compared
+     * with other tracks, and the even spacing it imposes is of no use to a chart.
+     *
+     * Paused samples are skipped and so is anything without a plausible altitude;
+     * distance still advances across a dropout, for the same reason it does in
+     * `Track`: the ground was covered even though the shape of it is unknown.
+     */
+    fun ofSession(session: RecordedSession): List<Point> = of(session.samples)
+
+    /** As [ofSession], for a caller holding the samples rather than the session. */
+    fun of(samples: List<Sample>): List<Point> {
+        // Distance first, altitude second, so that the median runs over a series
+        // with the same indices as the samples it came from.
+        val usable = samples.filter { !it.paused && it.lat.isFinite() && it.lon.isFinite() }
+        if (usable.isEmpty()) return emptyList()
+
+        val raw = DoubleArray(usable.size) { i ->
+            val alt = usable[i].altM
+            if (alt != null && alt.isFinite() && alt >= Tuning.MIN_ALTITUDE_M && alt <= Tuning.MAX_ALTITUDE_M) {
+                alt
+            } else {
+                Double.NaN
+            }
+        }
+        val cleaned = despike(raw)
+
+        val out = ArrayList<Point>(usable.size)
+        var travelled = 0.0
+        var previous: LatLon? = null
+        for (i in usable.indices) {
+            val here = LatLon(usable[i].lat, usable[i].lon)
+            previous?.let { travelled += Geo.haversine(it, here) }
+            previous = here
+            val alt = cleaned[i]
+            if (alt.isNaN()) continue
+            out.add(Point(travelled, alt))
+        }
+        return out
+    }
+
+    /**
+     * A rolling median over an altitude series, in place, ignoring NaN.
+     *
+     * The one piece of post-processing between what the watch recorded and every
+     * number this app shows about height. Its job is impulses — the altimeter
+     * settling over the first seconds of a recording, and the odd sample that
+     * wanders later — and its virtue is what it leaves alone: the median of a
+     * monotonic run is that run's middle value, so climbs and descents survive
+     * it exactly. See [Tuning.ELEVATION_MEDIAN_WINDOW].
+     *
+     * Raw altitude is still what gets written to the session file and to the
+     * database. This is applied on the way out, every time, so that the stored
+     * data stays the thing the watch actually said and the fix can be changed
+     * later without a migration.
+     *
+     * At the ends the window is slid inward rather than truncated, and that
+     * choice is the whole reason the opening spike goes: a window truncated at
+     * sample 0 contains only the settling samples, so its median is settling too,
+     * while a full window reaching forward contains the good values that outvote
+     * them.
+     *
+     * It is not free, and the cost falls exactly on the first and last half-window.
+     * There the filter no longer has symmetric context, so those samples follow
+     * their neighbourhood instead of themselves: a series already changing fast at
+     * sample 0 is flattened towards what comes next. Measured on ramps, the error
+     * is 1–2 m at the vertical rates a bike or a pair of boots manages, and 32 m
+     * for a ski descent at 8 m/s — which cannot happen at a recording's first
+     * sample, because that is four seconds after somebody pressed start and
+     * nobody is at 8 m/s by then. In the interior the error is not small but
+     * zero: a monotonic run passes through a centred median unchanged.
+     *
+     * The other rounding worth knowing about is a sharp apex, which a median
+     * clips by about half a window's worth of climb — 3 m on a 300 m hill.
+     */
+    fun despike(alts: DoubleArray, window: Int = Tuning.ELEVATION_MEDIAN_WINDOW): DoubleArray {
+        val n = alts.size
+        if (n < 3 || window < 3) return alts
+        val w = minOf(window, n)
+        val out = DoubleArray(n)
+        val scratch = DoubleArray(w)
+        for (i in 0 until n) {
+            if (alts[i].isNaN()) { out[i] = Double.NaN; continue }
+            // Centred where there is room, slid inward at the ends, always w wide.
+            val from = (i - w / 2).coerceIn(0, n - w)
+            var k = 0
+            for (j in from until from + w) if (!alts[j].isNaN()) scratch[k++] = alts[j]
+            if (k == 0) { out[i] = alts[i]; continue }
+            val slice = scratch.copyOf(k)
+            slice.sort()
+            out[i] = if (k % 2 == 1) slice[k / 2] else (slice[k / 2 - 1] + slice[k / 2]) / 2.0
+        }
+        return out
+    }
+
+    /**
+     * A route's profile from the per-bin medians [ProfileBuilder] produced.
+     *
+     * Bins nobody recorded an altitude for are dropped rather than interpolated:
+     * the chart draws what is known, and a gap in the middle of a route is a fact
+     * about the data worth seeing.
+     */
+    fun ofBins(medianAltM: List<Double?>, binM: Double): List<Point> =
+        medianAltM.mapIndexedNotNull { i, alt ->
+            alt?.takeIf { it.isFinite() }?.let { Point(i * binM, it) }
+        }
+
+    /**
+     * Thin a series down to at most [max] points for drawing.
+     *
+     * An hour-long ride is 3600 samples and a phone chart is a few hundred pixels
+     * wide, so most of them land on a pixel that is already painted. Every bucket
+     * keeps its *highest* and *lowest* point rather than an average, because the
+     * shape of a ridge is the whole reason to look at the chart and averaging is
+     * exactly what flattens it.
+     */
+    fun simplify(points: List<Point>, max: Int): List<Point> {
+        if (points.size <= max || max < 4) return points
+        val buckets = max / 2
+        val per = points.size.toDouble() / buckets
+        val out = ArrayList<Point>(max)
+        for (b in 0 until buckets) {
+            val from = (b * per).toInt()
+            val to = (((b + 1) * per).toInt()).coerceAtMost(points.size)
+            if (from >= to) continue
+            var lo = points[from]
+            var hi = points[from]
+            for (i in from until to) {
+                val p = points[i]
+                if (p.altM < lo.altM) lo = p
+                if (p.altM > hi.altM) hi = p
+            }
+            // In the order they were travelled, so the line never doubles back.
+            if (lo.distanceM <= hi.distanceM) { out.add(lo); out.add(hi) } else { out.add(hi); out.add(lo) }
+        }
+        return out
+    }
+}

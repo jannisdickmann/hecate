@@ -187,12 +187,9 @@ class MigrationTest {
     /** The real thing: the same migration list the app registers. */
     private fun open(): HecateDatabase = Room
         .databaseBuilder(context, HecateDatabase::class.java, file.path)
-        .addMigrations(
-            HecateDatabase.MIGRATION_1_2,
-            HecateDatabase.MIGRATION_2_3,
-            HecateDatabase.MIGRATION_3_4,
-            HecateDatabase.MIGRATION_4_5,
-        )
+        // The app's own list, not a copy of it: a migration added to the app and
+        // not to the test is a migration this test cannot see.
+        .addMigrations(*HecateDatabase.MIGRATIONS)
         .build()
         .also { db = it }
 

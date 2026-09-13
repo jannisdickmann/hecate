@@ -159,11 +159,34 @@ object Resampler {
         values: DoubleArray,
         spacingM: Double = Tuning.RESAMPLE_M,
     ): Pair<List<LatLon>, DoubleArray> {
-        require(points.size == values.size) { "points/values length mismatch" }
-        if (points.size < 2) return points to values
+        val (p, a, _) = resampleWithValues(points, values, values, spacingM)
+        return p to a
+    }
+
+    /**
+     * As [resampleWithValue] with a second scalar carried alongside.
+     *
+     * One call rather than two because both series have to land on exactly the
+     * same emitted points: active time and altitude are read together per point
+     * for the rest of their lives, and two passes agreeing only because the
+     * arithmetic happens to be deterministic is not a guarantee worth resting on.
+     *
+     * A NaN in either series propagates through the interpolation, which is what
+     * is wanted — altitude is optional, and a point next to a missing one cannot
+     * be interpolated into existence.
+     */
+    fun resampleWithValues(
+        points: List<LatLon>,
+        first: DoubleArray,
+        second: DoubleArray,
+        spacingM: Double = Tuning.RESAMPLE_M,
+    ): Triple<List<LatLon>, DoubleArray, DoubleArray> {
+        require(points.size == first.size && points.size == second.size) { "points/values length mismatch" }
+        if (points.size < 2) return Triple(points, first, second)
         val outP = ArrayList<LatLon>(points.size)
-        val outV = ArrayList<Double>(points.size)
-        outP.add(points[0]); outV.add(values[0])
+        val outA = ArrayList<Double>(points.size)
+        val outB = ArrayList<Double>(points.size)
+        outP.add(points[0]); outA.add(first[0]); outB.add(second[0])
         var carry = 0.0
         for (i in 0 until points.size - 1) {
             val a = points[i]
@@ -174,14 +197,15 @@ object Resampler {
             while (d <= seg) {
                 val f = d / seg
                 outP.add(Geo.interpolate(a, b, f))
-                outV.add(values[i] + (values[i + 1] - values[i]) * f)
+                outA.add(first[i] + (first[i + 1] - first[i]) * f)
+                outB.add(second[i] + (second[i + 1] - second[i]) * f)
                 d += spacingM
             }
             carry = (carry + seg) % spacingM
         }
         if (Geo.haversine(outP.last(), points.last()) > spacingM * 0.5) {
-            outP.add(points.last()); outV.add(values.last())
+            outP.add(points.last()); outA.add(first.last()); outB.add(second.last())
         }
-        return outP to outV.toDoubleArray()
+        return Triple(outP, outA.toDoubleArray(), outB.toDoubleArray())
     }
 }

@@ -27,7 +27,7 @@ import java.time.ZoneId
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -128,6 +128,37 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 stores the route's elevation profile: one median altitude per bin,
+         * beside the median time that was already there.
+         *
+         * Existing rows get NULL and stay that way until the next clustering
+         * pass, which is derived data and rebuilds from the sessions — the
+         * altitude was in the samples all along, it simply had nowhere to be
+         * aggregated to. A route detail opened before that pass shows no
+         * elevation chart rather than a wrong one.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE route_profile ADD COLUMN median_alt_m REAL")
+            }
+        }
+
+        /**
+         * Every migration, in one place.
+         *
+         * The list used to be spelled out twice — here and again in
+         * `MigrationTest` — and the copies drifted the moment a migration was
+         * added: the test opened the database without the new one and failed
+         * with "a migration from 4 to 6 was required but not found", which is a
+         * true statement about the test and says nothing about the app. One list
+         * makes that impossible, and A.16 is the reminder of what a migration
+         * nobody replays costs.
+         */
+        val MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+        )
+
         @Volatile
         private var instance: HecateDatabase? = null
 
@@ -139,7 +170,7 @@ abstract class HecateDatabase : RoomDatabase() {
             )
                 // Foreign keys do the cascading deletes; without this SQLite
                 // ignores them and orphan samples accumulate.
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(*MIGRATIONS)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { instance = it }

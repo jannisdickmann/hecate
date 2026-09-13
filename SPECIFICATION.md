@@ -675,6 +675,7 @@ the `route_member` table, which is not in §5.5.
   the profile all need elapsed *active* time, which cannot be reconstructed from
   the wall-clock offset once a session contains pauses.
 - `meta(key, value)` — holds the route bundle version counter.
+- `route_profile.median_alt_m` — the route's elevation, one median per bin (A.20).
 
 ### A.7 Dependencies outside AndroidX
 
@@ -984,6 +985,13 @@ distance and duration, and then what is destroyed with it — samples, match log
 recording history — and what is not: the Health Connect entry stays. Deleting
 the only complete copy of a workout on one tap was the last unguarded
 irreversible action in the app.
+
+**The watch says how many routes it has and how old they are**, not which
+version of the bundle it is holding. The version is a counter the phone bumps on
+every rebuild, so "v42" answers nothing a person wants to know before pressing
+start; "4 Routen · vor 3 Tagen" answers all of it. The counter still exists and
+is still what the Data Layer item and the session header are keyed on — it is
+simply not a fact about anybody's day (A.20).
 
 **Activity types have icons.** One vector drawable per type in `res/drawable`,
 the official Material Symbols paths from `google/material-design-icons`, shown on
@@ -1416,3 +1424,168 @@ day: `BACKTRACK_SLACK_M` is 10 m, because position along a route advancing is
 what disambiguates loops, and a lift ride back up a piste is a long run
 backwards along the descent just matched. Repeated laps of one piste are
 unlikely to match the way a loop does.
+
+### A.19 Five bugs the emulators found, and one that was never a bug
+
+A pass over every screen on a Pixel Watch 4 and a Pixel 8 emulator, against a
+real 65-workout history restored from a takeout. The emulators cannot test what
+§6.5 already says they cannot — no pairing, so no Data Layer, no Health Connect,
+and the Wear synthetic provider emits one fixed route, so no matcher. Everything
+else is exactly the app.
+
+**Re-clustering did not finish.** Restoring 65 sessions and waiting: thirteen
+minutes of pegged CPU before the first route appeared. `CoverageMetric.distance`
+calls `fracWithin`, which is indexed, and then `sameDirection`, which was not:
+it called `Polyline.projectAll` once per point of A, and that scans every
+segment of B. Its own KDoc said "O(n); used at candidate admission and by the
+clustering metric" — accurate, and the cost of calling it 1700 times per pair
+over 2000 pairs is 12 billion segment projections. `sameDirection` now goes
+through the same bucket index `fracWithin` uses. Same 4 routes, same heatmap
+down to the byte, 16 seconds instead of 13 minutes; re-clustering by hand went
+from minutes to 6 seconds. `CoverageMetricTest` now checks the indexed verdict
+against a brute-force projection over five track shapes, because an optimisation
+nobody can see the result of is an optimisation that will be quietly broken.
+
+**A paused workout counted the pause as active time.** Health Services reports
+the active duration as a checkpoint — a value at a stated instant — and the
+recorder added the time since, unconditionally. While paused the checkpoint
+stops advancing and the wall clock does not, so the figure kept climbing: on the
+watch the timer ran while the distance sat still. That number is not only shown.
+It is written into every sample and into the footer, so a ride paused ten
+minutes at a level crossing reached the phone claiming ten more minutes of
+effort than it had, and the profile, the splits and "am I faster than usual"
+are all derived from it. The extrapolation now happens only in `ACTIVE`.
+
+**The splits table contradicted itself.** One kilometre of the commute showed a
+median of 22,9 km/h against a best of 22,6. The median came from the route
+profile and best and worst from the members' own crossings — two populations,
+two methods, and nothing holding them together. The profile's number is a
+bin-wise median of *cumulative* times, so differencing two of them is not the
+median of anybody's kilometre, and it is taken over every member while best and
+worst are taken over the subset whose samples project onto the geometry. All
+three columns now come from the members, so worst ≤ median ≤ best holds by
+construction. The profile stays what the matcher compares against live, which is
+a per-position model and the right thing there.
+
+**The watch claimed it had no routes.** The start screen read the bundle version
+out of the recorder state, which only ever learns it when a bundle *arrives*. So
+every launch after the app had been closed said "Keine Routen" — on a watch
+holding a perfectly good bundle, which the same screen had just loaded to order
+the buttons by. It reads the version off that bundle now.
+
+**A failed import said only that it had failed.** `TcxImporter.Report` carries a
+reason per file and the status line dropped it, so "1 fehlgeschlagen" was the
+whole story. That matters more since A.18: a sport this app does not record is
+now refused rather than quietly filed as a run, and the message is the only sign
+a ski tour did not come in. The first reason is now appended, with a count of
+the rest.
+
+**And the altitude that was not a bug, until it was.** The synthetic provider
+sends `Double.MAX_VALUE` for altitude. `LocationData.ALTITUDE_UNAVAILABLE` is
+documented as NaN and the recorder tested `isFinite()`, which is correct against
+the contract and useless against this: 1.8e308 is finite. Nothing reads altitude
+yet — which is the reason to reject it now rather than later, because it was
+landing in the database and in every backup, and would have been waiting there
+for the first feature that did. A plausibility bound, as for heart rate.
+
+**What looked wrong and was not.** Two synthetic TCX imports near Hanau were
+left out of the heatmap; the real routes are 150 km away near Nuremberg and the
+radius is 100 km, so that is the feature working. The average-speed field on the
+watch showed "–" throughout a recording; it is the ahead/behind-against-median
+field, correctly empty without a route. And the recordings list opened partway
+down its own history, which is a remembered scroll position and not an ordering
+fault — the newest recording is at the top where it belongs.
+
+### A.20 Altitude profiles, and what a number for a hill is worth
+
+Both detail screens now draw height against distance under the track, with the
+climb, the drop and the band it all happened in.
+
+**Where each profile comes from.** A recording's is its own samples: altitude
+against distance travelled, drawn as itself. A route's is the per-bin median
+altitude over its members, computed beside the median time that was already
+there and stored in a new `route_profile.median_alt_m` (schema v6). The median
+is the point — altitude is the noisiest thing a watch reports, and the ground
+under a route is the one quantity where averaging over twenty rides is exactly
+right. It is deliberately not taken from the medoid alone, which is where the
+*geometry* comes from: a shape has to belong to one recording to stay a shape,
+an elevation does not.
+
+**Ascent is not the sum of the rises.** At 1 Hz, a barometer wandering by a
+couple of metres adds up to hundreds of metres of imaginary climbing over an
+hour of flat ground — the test builds exactly that and the naive sum reads over
+a kilometre of ascent on a road that never leaves 500 m. The remedy is the
+standard one: an anchor, and a move that only counts once it has committed by
+more than `ELEVATION_THRESHOLD_M`. 5 m, chosen for the barometric altimeter a
+Pixel Watch 4 actually has rather than for bare GNSS altitude, which is far
+worse and which nothing here is fed.
+
+The price is stated rather than hidden: ground gentler than the threshold reads
+as flat, so a long drag gaining 4 m per kilometre counts as nothing. That is why
+the band — "257–308 m" — sits under the totals. It comes from the raw minimum
+and maximum and so sees everything the threshold discards, and it answers the
+question the totals cannot: whether "+240 m" was a dyke or an alp.
+
+**What the numbers say on real data.** A ski day imported from the takeout draws
+as twenty sawtooth teeth and totals +9179 m against −9163 m between 1470 m and
+2382 m, netting +16 m — you finish where the first lift started. The commute is
+quieter and more telling: the two morning routes descend (+0/−46 m and +11/−43 m)
+and the two evening ones climb (+31/−30 m and +37/−33 m), which is the same hill
+read twice from opposite ends and is about as good a check on the arithmetic as
+real data offers.
+
+**Thinning keeps the peaks.** An hour is 3600 samples and the chart is a few
+hundred pixels, so the series is bucketed — and each bucket keeps its highest
+and lowest point rather than an average. Averaging is precisely what turns that
+ski day into a smooth hump: the shape of the teeth is the entire content of the
+picture.
+
+**The one dishonest thing, said out loud.** The chart's axes are not to the same
+scale, unlike the map above it, which is careful never to distort a route's
+shape. A 17 km ride climbing 120 m drawn honestly is a horizontal line. Every
+elevation profile ever printed is exaggerated vertically and this one is too;
+the height band beside it is what stops that being a lie rather than a
+convention.
+
+**The altimeter settles, and it does it in the data.** Every profile opened with
+a spike: the first samples of a recording are routinely 10–25 m out, in either
+direction, before the barometer agrees with itself — 315 m where the next nine
+samples say 296, or 298, 275, 291 before settling on 271. Isolated samples go
+astray later too. Both are impulses, which is what a rolling median is for, and
+the filter runs on the way out of storage rather than into it: the session file
+and the database keep what the watch actually said.
+
+A median is the right tool here and not merely a convenient one, because on a
+monotonic run it is *exactly* the identity — the median of a ramp is its middle
+value — so no climb and no ski descent is touched. Measured over the routes, the
+mean change per bin is 0.25 m and the only bins that move by more than 4 m are
+the first and last: it removes the spike and does nothing else. The cost is
+confined to the first and last half-window, where there is no symmetric context
+and a sample follows its neighbourhood instead of itself, and to a sharp apex,
+which gets clipped by about 3 m in 300.
+
+**The window is 9, and the obvious measurement argues for more.** Ten recordings
+of one commute are ten recordings of the same ground, so the spread of their
+ascent totals is pure noise — and filtering cuts it from 20 m to 9 m, with wider
+windows cutting further. Eight recordings of the evening route went from
+51–97 m raw to 42–57 m filtered, a standard deviation of 17.1 down to 4.2. But
+the *mean* never converges: it falls from 61 m to 32 to 17 to 2 as the window
+grows to 101, with no knee. A filter wide enough to flatten the disagreement is
+wide enough to flatten the hill, and no amount of that metric will say where to
+stop, because a flat line scores perfectly on it. So the window is the smallest
+that removes the impulses actually observed, and the wish behind a wider one —
+less noise in a single recording's total — is answered by a different mechanism
+that already exists: the route profile takes its median across members, which is
+why a route reads +0 m on ground where individual recordings of it still claim
+32.
+
+**Absent rather than empty.** A recording from a watch that reported no altitude,
+and a route last clustered before v6, draw no chart and no rows at all. A flat
+line at zero would be a claim about the ground.
+
+**And one test that had been quietly excused.** `MigrationTest` kept its own copy
+of the migration list, so adding v6 failed it with "a migration from 4 to 6 was
+required but not found" — a true statement about the test and nothing about the
+app. Both now use `HecateDatabase.MIGRATIONS`. A.16 exists because a migration
+nobody replays is a crash on a real phone; a test that replays a different list
+from the app's is the same hazard wearing a passing badge.

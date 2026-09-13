@@ -159,6 +159,10 @@ object Archive {
         val p25S: Double? = null,
         val p75S: Double? = null,
         val medianHr: Double? = null,
+        /** Added after the format was first written, so it defaults to null: an
+         *  archive from an older build simply has no elevation for its routes,
+         *  and the next clustering pass computes it from the sessions. */
+        val medianAltM: Double? = null,
     )
 
     @Serializable

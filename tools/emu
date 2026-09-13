@@ -70,7 +70,17 @@ case "${1:-up}" in
     echo "installed and launched on both"
     ;;
 
-  run)   # synthetic exercise, so the Live page has something to render
+  run)   # synthetic exercise, so the Live page has something to render.
+         #
+         # All five types this app records are accepted by the synthetic
+         # provider. Give it a few seconds after starting the recording: distance
+         # and heart rate arrive first and positions follow, so a session stopped
+         # too early is discarded as "ohne Messpunkte" — which is the recorder
+         # behaving correctly, not a fault.
+    case "${2:-RUNNING}" in
+      RUNNING|WALKING|HIKING|BIKING|SKIING) ;;
+      *) echo "error: unknown type ${2}. One of: RUNNING WALKING HIKING BIKING SKIING" >&2; exit 2 ;;
+    esac
     adb -s "$WATCH" shell am broadcast -a whs.USE_SYNTHETIC_PROVIDERS com.google.android.wearable.healthservices >/dev/null
     adb -s "$WATCH" shell am broadcast -a "whs.synthetic.user.START_${2:-RUNNING}" com.google.android.wearable.healthservices >/dev/null
     echo "synthetic ${2:-RUNNING} started — start the recording on the watch"
@@ -100,5 +110,5 @@ case "${1:-up}" in
   log)   adb -s "$WATCH" logcat -s Hecate:V AndroidRuntime:E ;;
   down)  adb -s "$WATCH" emu kill 2>/dev/null || true; adb -s "$PHONE" emu kill 2>/dev/null || true ;;
 
-  *) echo "usage: tools/emu {up|watch|phone|install|push <zip>|run [RUNNING|WALKING|BIKING]|pause|stop|shot [prefix]|log|down}" >&2; exit 2 ;;
+  *) echo "usage: tools/emu {up|watch|phone|install|push <zip>|run [RUNNING|WALKING|HIKING|BIKING|SKIING]|pause|stop|shot [prefix]|log|down}" >&2; exit 2 ;;
 esac

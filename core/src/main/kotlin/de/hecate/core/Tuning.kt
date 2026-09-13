@@ -296,4 +296,75 @@ object Tuning {
     /** Smallest extent the heatmap will draw [m]. Stops a single route, or one
      *  that doubles back on itself, from being magnified to absurdity. */
     const val HEATMAP_MIN_SPAN_M: Double = 500.0
+
+    // ---------------------------------------------------------------- elevation
+
+    /**
+     * How far altitude has to move from the last counted point [m] before the
+     * move is counted as climb or descent.
+     *
+     * Summing every positive difference between consecutive samples is the
+     * obvious way to total an ascent and it is badly wrong: altitude is the
+     * noisiest thing a watch reports, and at 1 Hz the noise alone accumulates
+     * into hundreds of metres of imaginary climbing on a flat ride. The standard
+     * remedy is this threshold — a move only counts once it has committed to a
+     * direction by more than the noise.
+     *
+     * 5 m is chosen for a barometric altimeter, which is what a Pixel Watch 4 has
+     * and what Health Services fuses: good to a metre or two, drifting with the
+     * weather over hours. It is deliberately not tuned for bare GNSS altitude,
+     * which is far worse and which nothing here is fed.
+     *
+     * The cost of the threshold is that genuinely gentle ground reads as flatter
+     * than it was: a long drag that gains 4 m per kilometre counts as nothing.
+     * That is the right trade for a number a person compares between days.
+     */
+    const val ELEVATION_THRESHOLD_M: Double = 5.0
+
+    /**
+     * Width, in samples, of the rolling median that de-spikes altitude before
+     * anything is read off it.
+     *
+     * Altimeters settle. The first seconds of a recording are routinely 10–25 m
+     * out in either direction before the barometer agrees with itself, and
+     * isolated samples go astray later too. Both are impulses: wrong for a moment,
+     * then right again, which is exactly what a median filter is for and what no
+     * amount of averaging will remove.
+     *
+     * A median filter is *identity on a monotonic run* — the median of a ramp is
+     * its middle value — so a climb, and a ski descent at 5 m/s, pass through
+     * untouched. What it removes is any excursion narrower than half the window:
+     * at the ~1 Hz every source here samples at, about four seconds, which is
+     * 20 m of ground at cycling speed. Terrain does not have 20 m-wide, 10 m-tall
+     * spikes in it; altimeters do.
+     *
+     * 9 rather than 5 because the observed settling runs to eight samples on this
+     * watch, and the window at the very start is slid inward rather than
+     * truncated, so those eight are outvoted by what follows them.
+     *
+     * 9 rather than *more* for a less obvious reason, and it is worth writing down
+     * because the obvious measurement argues for more. Ten recordings of one
+     * commute are ten recordings of identical ground, so the spread of their
+     * ascent totals is pure noise: widening the window from 1 to 9 cuts that
+     * spread from 20 m to 9 m, and widening it further keeps cutting. But the
+     * *mean* never settles — it falls from 61 m to 32 m to 17 m to 2 m as the
+     * window grows to 101, with no knee anywhere. A filter wide enough to flatten
+     * the disagreement is wide enough to flatten the hill, and the metric cannot
+     * tell you where to stop because a constant series scores perfectly on it.
+     *
+     * So the window is chosen by what it is for rather than by what it optimises:
+     * the smallest that removes the impulses actually observed. This is a spike
+     * filter. Wanting less noise in a single recording's total is a real wish and
+     * a different mechanism — and the route profile already grants it, by taking
+     * the median across members, which is why a route says +0 m on ground where
+     * individual recordings of it still claim 32.
+     */
+    const val ELEVATION_MEDIAN_WINDOW: Int = 9
+
+    /**
+     * Plausible altitudes [m]. Outside this the value is a sentinel or a broken
+     * fix, not a place anyone has been — see the same bound in the recorder.
+     */
+    const val MIN_ALTITUDE_M: Double = -1_000.0
+    const val MAX_ALTITUDE_M: Double = 10_000.0
 }

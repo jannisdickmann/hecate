@@ -44,6 +44,7 @@ import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchPhase
+import de.hecate.core.model.RouteBundle
 import de.hecate.wear.AppGraph
 import de.hecate.wear.recorder.RecorderPhase
 import de.hecate.wear.recorder.RecorderService
@@ -86,14 +87,18 @@ fun HecateWearApp() {
 private fun StartScreen(state: RecorderUiState) {
     val context = LocalContext.current
     val listState = rememberScalingLazyListState()
-    // Most-recorded type first, counted from the bundle the phone last sent.
-    // Read off the main thread and keyed on the bundle version, so a bundle
-    // arriving while this screen is up reorders it; before the first bundle, and
-    // on a watch whose phone has never had enough history, this is exactly the
-    // enum's own order.
-    val types by produceState(ExerciseType.entries.toList(), state.bundleVersion) {
-        value = withContext(Dispatchers.IO) { AppGraph.bundles.load().typesByFrequency() }
+    // The cached bundle, read off the main thread, and re-read when a new one
+    // arrives while this screen is up.
+    //
+    // It is the source of both things below: the order of the buttons, and the
+    // version in the footer. The footer used to read the version out of the
+    // recorder state instead, which only ever learns it when a bundle *arrives*
+    // — so every start after the app had been closed said "Keine Routen" over a
+    // watch that was holding a perfectly good bundle and matching against it.
+    val bundle by produceState<RouteBundle?>(null, state.bundleVersion) {
+        value = withContext(Dispatchers.IO) { AppGraph.bundles.load() }
     }
+    val types = bundle?.typesByFrequency() ?: ExerciseType.entries.toList()
     ScreenScaffold(listState) { contentPadding ->
         ScalingLazyColumn(
             state = listState,
@@ -112,7 +117,18 @@ private fun StartScreen(state: RecorderUiState) {
             item {
                 Text(
                     buildString {
-                        append(if (state.bundleVersion > 0) "Routen v${state.bundleVersion}" else "Keine Routen")
+                        // How many routes the watch knows and how stale they are,
+                        // which is what you want to know before pressing start.
+                        // This used to be the bundle's version number, and a
+                        // counter the phone bumps on every rebuild answers nothing
+                        // at a glance — see Format.age.
+                        val routes = bundle?.routes.orEmpty()
+                        if (routes.isEmpty()) {
+                            append("Keine Routen")
+                        } else {
+                            append(Format.routeCount(routes.size))
+                            append(" · ").append(Format.age(bundle!!.builtAtUtcMs, System.currentTimeMillis()))
+                        }
                         if (state.pendingUploads > 0) append(" · ${state.pendingUploads} offen")
                     },
                     style = MaterialTheme.typography.bodyExtraSmall,

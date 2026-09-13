@@ -44,6 +44,11 @@ data class RouteProfile(
     val p25S: List<Double> = emptyList(),
     val p75S: List<Double> = emptyList(),
     val medianHr: List<Double?> = emptyList(),
+    /** Median altitude [m] over the members at each bin, null where no member
+     *  recorded one. The route's elevation profile: a property of the ground
+     *  rather than of anybody's day, which is why it is a median over members
+     *  and not taken from the medoid alone. */
+    val medianAltM: List<Double?> = emptyList(),
 ) {
     val totalMedianTimeS: Double get() = medianCumTimeS.lastOrNull() ?: 0.0
 

@@ -26,6 +26,15 @@ class Track(
     val points: List<LatLon>,
     /** Active elapsed time [s] at each point. Parallel to [points]. */
     val timeS: DoubleArray,
+    /** Altitude [m] at each point, NaN where the recording had none. Parallel to
+     *  [points], and interpolated onto exactly the same emitted positions as
+     *  [timeS] rather than resampled separately.
+     *
+     *  Raw, as recorded. The rolling median that takes the altimeter's settling
+     *  out of it is [de.hecate.core.profile.Elevation.despike], applied by
+     *  whoever reads this — a track is what the watch said, and `geo` has no
+     *  business depending on `profile` to say it. */
+    val altM: DoubleArray,
     /** Index of the first point of each run; used to avoid measuring across gaps. */
     val runStarts: IntArray,
     val totalDistanceM: Double,
@@ -49,16 +58,31 @@ class Track(
 
             val points = ArrayList<LatLon>()
             val times = ArrayList<Double>()
+            val alts = ArrayList<Double>()
             val starts = ArrayList<Int>()
             for (run in runs) {
                 if (run.size < 2) continue
                 val p = run.map { LatLon(it.lat, it.lon) }
                 val v = DoubleArray(run.size) { run[it].activeMs / 1000.0 }
-                val (rp, rv) = Resampler.resampleWithValue(p, v, spacingM)
+                // NaN for a sample with no altitude, or one outside the plausible
+                // range; the resampler carries that through, and the profile
+                // builder reads NaN as "this member does not vote on this bin".
+                val a = DoubleArray(run.size) {
+                    val alt = run[it].altM
+                    if (alt != null && alt.isFinite() &&
+                        alt >= Tuning.MIN_ALTITUDE_M && alt <= Tuning.MAX_ALTITUDE_M
+                    ) {
+                        alt
+                    } else {
+                        Double.NaN
+                    }
+                }
+                val (rp, rv, ra) = Resampler.resampleWithValues(p, v, a, spacingM)
                 if (rp.size < 2) continue
                 starts.add(points.size)
                 points.addAll(rp)
                 for (x in rv) times.add(x)
+                for (x in ra) alts.add(x)
             }
             if (points.size < 2) return null
 
@@ -75,6 +99,7 @@ class Track(
                 tzOffsetMinutes = session.header.tzOffsetMinutes,
                 points = points,
                 timeS = times.toDoubleArray(),
+                altM = alts.toDoubleArray(),
                 runStarts = starts.toIntArray(),
                 totalDistanceM = session.footer?.totalDistanceM?.takeIf { it > 0 } ?: dist,
                 activeDurationS = session.activeDurationMs / 1000.0,

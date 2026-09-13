@@ -20,7 +20,7 @@ import de.hecate.core.model.Sample
 object ProfileBuilder {
 
     /** One member's arrival time at each bin; NaN where the member never got there. */
-    class MemberCurve(val timesS: DoubleArray, val hr: DoubleArray)
+    class MemberCurve(val timesS: DoubleArray, val hr: DoubleArray, val alt: DoubleArray)
 
     /**
      * @param geometry the route polyline (already resampled)
@@ -47,6 +47,7 @@ object ProfileBuilder {
         val p25 = DoubleArray(bins)
         val p75 = DoubleArray(bins)
         val hr = arrayOfNulls<Double>(bins)
+        val alt = arrayOfNulls<Double>(bins)
 
         val scratch = DoubleArray(curves.size)
         for (b in 0 until bins) {
@@ -70,6 +71,17 @@ object ProfileBuilder {
                 if (!v.isNaN()) scratch[hk++] = v
             }
             hr[b] = if (hk == 0) null else scratch.copyOf(hk).also { it.sort() }.let { quantile(it, 0.5) }
+
+            // The same median over members, for the ground rather than the effort.
+            // Deliberately not smoothed or made monotone afterwards as the times
+            // are: a route climbs and descends, and forcing it either way would
+            // draw a hill that is not there.
+            var ak = 0
+            for (c in curves) {
+                val v = c.alt[b]
+                if (!v.isNaN()) scratch[ak++] = v
+            }
+            alt[b] = if (ak == 0) null else scratch.copyOf(ak).also { it.sort() }.let { quantile(it, 0.5) }
         }
 
         // Bins nobody reached (start-of-route offsets, dropouts) are filled by
@@ -89,6 +101,7 @@ object ProfileBuilder {
             p25S = p25.toList(),
             p75S = p75.toList(),
             medianHr = hr.toList(),
+            medianAltM = alt.toList(),
         )
     }
 
@@ -105,9 +118,15 @@ object ProfileBuilder {
     ): MemberCurve {
         val times = DoubleArray(bins) { Double.NaN }
         val hrs = DoubleArray(bins) { Double.NaN }
-        if (track.size < 2) return MemberCurve(times, hrs)
+        val alts = DoubleArray(bins) { Double.NaN }
+        if (track.size < 2) return MemberCurve(times, hrs, alts)
 
         val hrLookup = hrSamples?.filter { it.hrBpm != null }?.sortedBy { it.activeMs }
+        // Once per member, before any bin reads off it. The altimeter's settling
+        // is systematic — every recording of a route starts in the same place and
+        // mis-reads it the same way — so the median *across* members below cannot
+        // remove it. It has to come out of each member first.
+        val altitude = Elevation.despike(track.altM)
 
         var lastPos = -1.0
         var runIdx = 0
@@ -135,9 +154,10 @@ object ProfileBuilder {
             if (times[b].isNaN()) {
                 times[b] = t
                 hrLookup?.let { hrs[b] = nearestHr(it, (t * 1000).toLong()) }
+                alts[b] = altitude.getOrElse(i) { Double.NaN }
             }
         }
-        return MemberCurve(times, hrs)
+        return MemberCurve(times, hrs, alts)
     }
 
     private fun nearestHr(samples: List<Sample>, activeMs: Long): Double {

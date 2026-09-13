@@ -114,6 +114,10 @@ class ArchiveRepositoryTest {
 
         assertEquals(3, target.routes().points(1).size)
         assertEquals(2, target.routes().profile(1).size)
+        // The elevation profile rides in the archive with the rest of the bin,
+        // so a restored route draws its altitude without waiting to be
+        // re-clustered.
+        assertEquals(listOf(300.0, 312.0), target.routes().profile(1).map { it.medianAltM })
         assertEquals(source.routes().allMembers().size, target.routes().allMembers().size)
         assertEquals("7", target.meta().get("bundleVersion"))
     }
@@ -268,7 +272,7 @@ class ArchiveRepositoryTest {
             (0..2).map { RoutePointEntity(1, it, 50.1 + it * 0.001, 8.6, it * 100.0) },
         )
         db.routes().insertProfile(
-            (0..1).map { RouteProfileEntity(1, it, it * 60.0, it * 55.0, it * 65.0, 140.0) },
+            (0..1).map { RouteProfileEntity(1, it, it * 60.0, it * 55.0, it * 65.0, 140.0, 300.0 + it * 12.0) },
         )
         db.meta().put(MetaEntity("bundleVersion", "7"))
     }

@@ -92,6 +92,20 @@ object Format {
         return String.format(DE, "%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
     }
 
+    /** "412 m", rounded — a metre of altitude is already more precision than a
+     *  barometer deserves, and a decimal point would only invite belief in it. */
+    fun elevation(meters: Double): String = String.format(DE, "%d m", meters.roundToInt())
+
+    /** "+240 m" or "−185 m". The minus is U+2212, as elsewhere. */
+    fun elevationSigned(meters: Double): String {
+        val v = meters.roundToInt()
+        return if (v < 0) String.format(DE, "−%d m", -v) else String.format(DE, "+%d m", v)
+    }
+
+    /** "412–652 m", the band the route lives in. */
+    fun elevationBand(minM: Double, maxM: Double): String =
+        String.format(DE, "%d–%d m", minM.roundToInt(), maxM.roundToInt())
+
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
 
     fun hcState(state: Int): String = when (state) {

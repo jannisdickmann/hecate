@@ -176,6 +176,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                             p25S = cluster.p25.getOrNull(i),
                             p75S = cluster.p75.getOrNull(i),
                             medianHr = cluster.medianHr.getOrNull(i),
+                            medianAltM = cluster.medianAltM.getOrNull(i),
                         )
                     },
                 )
@@ -238,6 +239,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         p25S = profile.map { it.p25S ?: it.medianCumTimeS },
                         p75S = profile.map { it.p75S ?: it.medianCumTimeS },
                         medianHr = profile.map { it.medianHr },
+                        medianAltM = profile.map { it.medianAltM },
                     ),
                     prior = de.hecate.core.model.RoutePrior(members.size, priors),
                     priority = route.priority,

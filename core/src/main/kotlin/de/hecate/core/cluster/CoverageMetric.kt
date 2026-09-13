@@ -52,12 +52,19 @@ object CoverageMetric {
     fun sameDirection(a: Track, b: Track, tolM: Double = Tuning.CLUSTER_TOL_M): Boolean {
         val bp = b.polyline
         if (bp.size < 2 || a.points.size < 3) return true
+        // Through the same index [fracWithin] uses, and for the same reason. This
+        // used to call Polyline.projectAll once per point of A, which scans every
+        // segment of B: O(n·m), and its own KDoc says so. One pair of hour-long
+        // rides is then 3 M segment projections, and re-clustering is every pair —
+        // 65 imported sessions took over half an hour of CPU on an emulator and
+        // had not finished, so the routes never appeared at all.
+        val idx = SegmentIndex(bp, tolM)
         var prevPos = Double.NaN
         var forward = 0
         var backward = 0
         for (p in a.points) {
-            val hit = bp.projectAll(p)
-            if (hit.distanceM > tolM) { prevPos = Double.NaN; continue }
+            val hit = idx.project(p, tolM)
+            if (hit == null || hit.distanceM > tolM) { prevPos = Double.NaN; continue }
             if (!prevPos.isNaN()) {
                 val d = hit.positionM - prevPos
                 if (d > 0.0) forward++ else if (d < 0.0) backward++
@@ -109,16 +116,55 @@ object CoverageMetric {
         }
 
         fun within(p: LatLon, tolM: Double): Boolean {
+            forEachNearbyVertex(p) { i ->
+                if (Geo.haversine(p.lat, p.lon, poly.lat[i], poly.lon[i]) <= tolM) return true
+            }
+            return false
+        }
+
+        /**
+         * Where [p] projects onto the polyline, or null when nothing is near
+         * enough to matter.
+         *
+         * Only the segments incident to a nearby vertex are projected onto, which
+         * is what makes this near-constant instead of a scan of the whole
+         * polyline. It shares [within]'s candidate set exactly — the same 3x3
+         * neighbourhood, so the two halves of [distance] cannot disagree about
+         * which points of A lie on B — and therefore inherits the same slack: a
+         * point that is within [tolM] of a segment but farther than that from
+         * either of its endpoints can be missed, by at most half a resampling
+         * step. For [sameDirection] that costs a borderline point or two out of
+         * several hundred in a ratio, which is well inside what
+         * [Tuning.DIRECTION_AGREE_MIN] is set to tolerate.
+         */
+        fun project(p: LatLon, tolM: Double): Polyline.Hit? {
+            var bestD = Double.MAX_VALUE
+            var bestPos = 0.0
+            var bestSeg = -1
+            forEachNearbyVertex(p) { v ->
+                // A vertex is the end of the segment before it and the start of
+                // the one after; both are candidates.
+                for (seg in maxOf(0, v - 1)..minOf(v, poly.size - 2)) {
+                    val pr = Geo.projectToSegment(p, poly.point(seg), poly.point(seg + 1))
+                    if (pr.distanceM < bestD) {
+                        bestD = pr.distanceM
+                        bestPos = poly.cum[seg] + pr.t * (poly.cum[seg + 1] - poly.cum[seg])
+                        bestSeg = seg
+                    }
+                }
+            }
+            return if (bestSeg < 0) null else Polyline.Hit(bestPos, bestD, bestSeg)
+        }
+
+        /** The vertices in the 3x3 bucket neighbourhood of [p]. */
+        private inline fun forEachNearbyVertex(p: LatLon, body: (Int) -> Unit) {
             val l = Geo.toLocal(origin, p)
             val cx = floor(l[0] / cell).toLong()
             val cy = floor(l[1] / cell).toLong()
             for (dy in -1..1) for (dx in -1..1) {
                 val list = buckets[((cx + dx) shl 32) xor ((cy + dy) and 0xffffffffL)] ?: continue
-                for (i in list) {
-                    if (Geo.haversine(p.lat, p.lon, poly.lat[i], poly.lon[i]) <= tolM) return true
-                }
+                for (i in list) body(i)
             }
-            return false
         }
     }
 }

@@ -13,7 +13,7 @@
             "id": "syntheticExercise",
             "type": "pickString",
             "description": "Which synthetic exercise Health Services should emit",
-            "options": ["RUNNING", "WALKING", "BIKING"],
+            "options": ["RUNNING", "WALKING", "HIKING", "BIKING", "SKIING"],
             "default": "RUNNING"
         },
         {

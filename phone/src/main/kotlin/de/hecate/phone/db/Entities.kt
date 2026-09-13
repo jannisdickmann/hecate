@@ -127,6 +127,10 @@ data class RouteProfileEntity(
     @ColumnInfo(name = "p25_s") val p25S: Double?,
     @ColumnInfo(name = "p75_s") val p75S: Double?,
     @ColumnInfo(name = "median_hr") val medianHr: Double?,
+    /** Median altitude [m] over the members at this bin — the route's elevation
+     *  profile. Null for a bin no member recorded an altitude for, and for every
+     *  bin of a route last clustered before schema v6. */
+    @ColumnInfo(name = "median_alt_m") val medianAltM: Double? = null,
 )
 
 /** Which sessions a route was built from. Needed to keep route identity — and

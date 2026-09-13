@@ -70,7 +70,9 @@ class ArchiveRepository(
             },
             routeProfile = routes.flatMap { r ->
                 db.routes().profile(r.id).map {
-                    Archive.ProfileBin(it.routeId, it.bin, it.medianCumTimeS, it.p25S, it.p75S, it.medianHr)
+                    Archive.ProfileBin(
+                        it.routeId, it.bin, it.medianCumTimeS, it.p25S, it.p75S, it.medianHr, it.medianAltM,
+                    )
                 }
             },
             meta = db.meta().all().map { Archive.Meta(it.key, it.value) },
@@ -264,7 +266,11 @@ class ArchiveRepository(
                 .takeIf { it.isNotEmpty() }?.let { db.routes().insertPoints(it) }
 
             dump.routeProfile.filter { it.routeId in restoredRouteIds }
-                .map { RouteProfileEntity(it.routeId, it.bin, it.medianCumTimeS, it.p25S, it.p75S, it.medianHr) }
+                .map {
+                    RouteProfileEntity(
+                        it.routeId, it.bin, it.medianCumTimeS, it.p25S, it.p75S, it.medianHr, it.medianAltM,
+                    )
+                }
                 .takeIf { it.isNotEmpty() }?.let { db.routes().insertProfile(it) }
 
             for (m in dump.meta) db.meta().put(MetaEntity(m.key, m.value))

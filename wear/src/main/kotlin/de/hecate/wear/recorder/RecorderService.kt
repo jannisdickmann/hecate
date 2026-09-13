@@ -356,10 +356,24 @@ class RecorderService : Service() {
             }
         }
 
+        // Health Services reports the active duration as a *checkpoint*: the value
+        // it had at a stated instant. The live figure is therefore that value plus
+        // the time since — but only while the exercise is actually running. While
+        // it is paused the checkpoint stops advancing and the wall clock does not,
+        // so extrapolating there invents active seconds the workout never had.
+        //
+        // Not a display bug: this number is written into every sample and into the
+        // footer, so a workout paused at a level crossing used to come back from
+        // the watch with the wait counted as active time — and the profile, the
+        // splits and "am I faster than usual" are all derived from it.
         val activeMs = update.activeDurationCheckpoint
             ?.let { cp ->
-                cp.activeDuration.toMillis() +
+                val sinceCheckpoint = if (exerciseState == ExerciseState.ACTIVE) {
                     (System.currentTimeMillis() - cp.time.toEpochMilli()).coerceAtLeast(0)
+                } else {
+                    0L
+                }
+                cp.activeDuration.toMillis() + sinceCheckpoint
             }
             ?: bus.state.value.activeDurationMs
 
@@ -420,12 +434,18 @@ class RecorderService : Service() {
             activeMs = activeMs,
             lat = d.latitude,
             lon = d.longitude,
-            altM = d.altitude.takeIf { it.isFinite() },
+            // LocationData.ALTITUDE_UNAVAILABLE is documented as NaN, which
+            // isFinite() rejects — but the emulator's synthetic provider sends
+            // Double.MAX_VALUE instead, and that is finite. Nothing reads altitude
+            // yet, which is exactly why it is worth rejecting now: 1.8e308 m would
+            // sit in the database and in every backup until the first feature that
+            // did read it. A bound, as for heart rate below, rather than a test
+            // against one sentinel a second provider will not use.
+            altM = d.altitude.takeIf { it.isFinite() && it in MIN_ALTITUDE_M..MAX_ALTITUDE_M },
             hrBpm = hr,
             // LocationData carries only lat/lon/altitude/bearing; the horizontal
             // error lives on the data point's accuracy, which is null whenever
-            // Health Services has no estimate to give. Altitude and bearing signal
-            // "unavailable" with NaN, which isFinite() already rejects.
+            // Health Services has no estimate to give.
             accuracyM = (point.accuracy as? LocationAccuracy)
                 ?.horizontalPositionErrorMeters
                 ?.takeIf { it.isFinite() },
@@ -506,6 +526,11 @@ class RecorderService : Service() {
 
     companion object {
         private const val TAG = "RecorderService"
+
+        /** Dead Sea shore to well above Everest. Anything outside is a sentinel
+         *  or a broken fix, not a place this watch has been. */
+        private const val MIN_ALTITUDE_M = -1_000.0
+        private const val MAX_ALTITUDE_M = 10_000.0
         private const val NOTIFICATION_INTERVAL_MS = 5_000L
 
         /**

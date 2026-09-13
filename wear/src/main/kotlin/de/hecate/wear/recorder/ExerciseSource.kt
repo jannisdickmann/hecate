@@ -12,6 +12,7 @@ import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.ExerciseConfig
 import androidx.health.services.client.data.ExerciseLapSummary
 import androidx.health.services.client.data.ExerciseType as HsExerciseType
+import androidx.health.services.client.data.ExerciseTypeCapabilities
 import androidx.health.services.client.data.ExerciseUpdate
 import androidx.health.services.client.data.WarmUpConfig
 import androidx.core.content.ContextCompat
@@ -92,17 +93,61 @@ class ExerciseSource(private val context: Context) {
         runCatching { client.clearUpdateCallbackAsync(NO_OP).await() }
     }
 
+    /**
+     * What Health Services says this exercise type can do, or null when it will
+     * not say. Read once per session start; it is a local IPC, not a sensor.
+     */
+    private suspend fun capabilitiesFor(type: HsExerciseType): ExerciseTypeCapabilities? =
+        runCatching { client.getCapabilitiesAsync().await().getExerciseTypeCapabilities(type) }
+            .onFailure { Log.w(TAG, "Fähigkeiten für $type nicht lesbar", it) }
+            .getOrNull()
+
+    /**
+     * The wanted types minus the ones this *exercise type* does not produce.
+     *
+     * The permission filter above is only half of it. A configuration is also
+     * rejected as a whole for naming a data type the exercise does not support,
+     * and the two lists are not the same list.
+     */
+    private fun <T : DataType<*, *>> supported(types: Set<T>, caps: ExerciseTypeCapabilities?): Set<T> {
+        val available = caps?.supportedDataTypes ?: return types
+        return types.filterTo(HashSet()) { it in available }
+    }
+
     /** Warm the sensors up and wait for a fix before the session proper starts. */
     suspend fun prepare(type: ExerciseType) {
-        client.prepareExerciseAsync(WarmUpConfig(map(type), permitted(wantedWarmUpTypes))).await()
+        val hs = map(type)
+        val caps = capabilitiesFor(hs)
+        client.prepareExerciseAsync(WarmUpConfig(hs, supported(permitted(wantedWarmUpTypes), caps))).await()
     }
 
     suspend fun start(type: ExerciseType) {
-        val config = ExerciseConfig.builder(map(type))
-            .setDataTypes(permitted(wantedDataTypes))
-            .setIsAutoPauseAndResumeEnabled(true) // US-1: honour Health Services auto-pause
+        val hs = map(type)
+        val caps = capabilitiesFor(hs)
+        // US-1 asks for auto-pause to be honoured, and it still is wherever
+        // Health Services offers it — but asking for it where it is not offered
+        // does not cost auto-pause, it costs the whole recording. Skiing is such a
+        // type: `startExercise` fails outright with "Auto pause is not supported
+        // for the exercise type SKIING", the session is discarded, and the user
+        // is standing at the top of a piste with nothing recording.
+        //
+        // Same lesson as A.17 and the permission filter above: build the config
+        // from what is actually on offer, never from what ought to be. Unknown
+        // capabilities mean off, because a session without auto-pause is worth
+        // having and a session that will not start is not.
+        val autoPause = caps?.supportsAutoPauseAndResume ?: false
+        val config = ExerciseConfig.builder(hs)
+            .setDataTypes(supported(permitted(wantedDataTypes), caps))
+            .setIsAutoPauseAndResumeEnabled(autoPause)
             .setIsGpsEnabled(true)
             .build()
+        // A.17's lesson again: say what was dropped and why, on the device, rather
+        // than leaving a silently thinner recording to be discovered afterwards.
+        val asked = permitted(wantedDataTypes)
+        val dropped = asked - config.dataTypes
+        if (dropped.isNotEmpty()) Log.w(TAG, "$hs kann nicht: ${dropped.joinToString { it.name }}")
+        if (!autoPause) Log.i(TAG, "$hs ohne Auto-Pause: von Health Services nicht unterstützt")
+        Log.i(TAG, "$hs startet mit ${config.dataTypes.joinToString { it.name }}")
         client.startExerciseAsync(config).await()
     }
 

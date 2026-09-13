@@ -60,6 +60,30 @@ object Format {
         return (distanceM / 1000.0) / (activeMs / 3_600_000.0)
     }
 
+    /**
+     * How long ago the watch's routes were worked out: "heute", "gestern",
+     * "vor 3 Tagen", "vor 5 Wochen".
+     *
+     * This replaced the bundle's version number, which was on the start screen
+     * for a while and answered nothing: the version is a counter the phone bumps
+     * on every rebuild, so "v42" cannot tell you whether your routes are current
+     * or three weeks stale, which is the only thing worth knowing about them
+     * before you press start. The counter is still what the Data Layer and the
+     * session header use; it is simply not a fact about the user's day.
+     */
+    fun age(builtAtUtcMs: Long, nowMs: Long): String {
+        val days = ((nowMs - builtAtUtcMs) / 86_400_000L).toInt()
+        return when {
+            days <= 0 -> "heute"
+            days == 1 -> "gestern"
+            days < 14 -> "vor $days Tagen"
+            else -> "vor ${days / 7} Wochen"
+        }
+    }
+
+    /** "4 Routen", "1 Route". */
+    fun routeCount(n: Int): String = if (n == 1) "1 Route" else "$n Routen"
+
     /** Signed seconds against the median, e.g. "−12 s" (faster) or "+45 s". */
     fun delta(seconds: Double?): String {
         if (seconds == null || !seconds.isFinite()) return "–"
