@@ -115,7 +115,7 @@ class ArchiveCodecTest {
                 medoidSessionId = sessionIds.first(),
                 createdAt = 1_699_000_000_000,
                 active = true,
-                priority = 8,
+                priority = 2,
             ),
         ),
         routeMembers = sessionIds.map { Archive.RouteMember(3, it) },
@@ -232,7 +232,7 @@ class ArchiveCodecTest {
             assertEquals(db, reader.database)
             // The two things no amount of re-clustering could recompute.
             assertEquals("Weg zur Arbeit", reader.database.routes.single().name)
-            assertEquals(8, reader.database.routes.single().priority)
+            assertEquals(2, reader.database.routes.single().priority)
             assertEquals(2, reader.manifest.sessionCount)
         }
     }

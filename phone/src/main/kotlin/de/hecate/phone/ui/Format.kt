@@ -25,7 +25,7 @@ object Format {
     }
 
     /** Speed as "10,8". Never pace: this app speaks km/h everywhere. The unit is
-     *  left off so the number fits the splits table; callers with room for it
+     *  left off so the number fits a narrow column; callers with room for it
      *  append " km/h". */
     fun speed(kmh: Double?): String {
         if (kmh == null || !kmh.isFinite() || kmh <= 0) return "–"
@@ -36,12 +36,6 @@ object Format {
     fun speedFrom(meters: Double, activeMs: Long): Double? {
         if (meters <= 0 || activeMs <= 0) return null
         return (meters / 1000.0) / (activeMs / 3_600_000.0)
-    }
-
-    /** km/h from the seconds a single kilometre took — one split's worth. */
-    fun speedOverKm(seconds: Double?): Double? {
-        if (seconds == null || !seconds.isFinite() || seconds <= 0) return null
-        return 3600.0 / seconds
     }
 
     /** "14,8 MB" or "412 kB". Decimal units, as file managers show them. */
@@ -107,6 +101,35 @@ object Format {
         String.format(DE, "%d–%d m", minM.roundToInt(), maxM.roundToInt())
 
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
+
+    /**
+     * A route priority as the user sees it: "−1", "0", "+1".
+     *
+     * Signed on both sides, because the scale is centred and a bare "1" beside a
+     * "−1" reads as a rank rather than as a preference. The minus is U+2212, as
+     * everywhere else in this app.
+     */
+    fun priority(value: Int): String = when {
+        value > 0 -> "+$value"
+        value < 0 -> "−${-value}"
+        else -> "0"
+    }
+
+    /**
+     * The same, with the words for what it means — for the one place that has
+     * room for them, above the picker itself.
+     *
+     * They describe an *order among tied routes*, never a certainty: priority
+     * cannot make the watch believe you are somewhere you are not, so "ganz
+     * vorn" is as strong as this may honestly be phrased.
+     */
+    fun priorityLabel(value: Int): String = when (value) {
+        -2 -> "−2 · ganz hinten"
+        -1 -> "−1 · eher nicht"
+        0 -> "0 · keine Meinung"
+        1 -> "+1 · eher schon"
+        else -> "+2 · ganz vorn"
+    }
 
     fun hcState(state: Int): String = when (state) {
         0 -> "ausstehend"

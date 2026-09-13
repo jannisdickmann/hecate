@@ -570,15 +570,31 @@ Shortcuts and variants are independent routes that happen to share a prefix
 between them — it shows `Suche…`, with no ETA, until the paths part. On a route
 family that shares most of its length, that is most of the run.
 
-Each route therefore carries a priority from 1 to 10, set on its detail screen.
-Where several routes currently coincide and exactly one outranks the rest, the
-watch assumes that one and gives you its name, remaining distance and ETA from
-the start. A tie decides nothing, so leaving everything at the default 5 keeps
-the cautious behaviour — the feature turns itself on when you first use it.
+Each route therefore carries a priority from −2 to +2, set on its detail screen:
+ganz hinten, eher nicht, keine Meinung, eher schon, ganz vorn. Where several
+routes currently coincide and exactly one outranks the rest, the watch assumes
+that one and gives you its name, remaining distance and ETA from the start. A
+tie decides nothing, so leaving everything at the default 0 keeps the cautious
+behaviour — the feature turns itself on when you first use it.
 
 It is a tie-breaker and nothing more. It cannot put you on a route you are not
 on: the moment the ground contradicts it, the evidence wins and the label
 switches. An assumed route shows blue on the watch, a worked-out one green.
+
+## Intensity colours and your peak heart rate
+
+The track drawing and the altitude profile on both detail screens are coloured
+by how hard you were working: **Leicht** (blue), **Mittel** (green),
+**Intensiv** (orange) and **Höchstleistung** (red), at 70 / 80 / 90 % of your
+peak heart rate. A recording is coloured from its own samples, a route from the
+median heart rate of its members at each point along it, and a stretch with no
+reading at all is drawn plain rather than as an easy one.
+
+The peak rate is under Einstellungen → Belastung and starts at 180 bpm. Set your
+own: `220 − age` is out by more than a whole band for about one person in three,
+and the app has nothing else to go on — it has never measured a resting rate.
+The setting only decides which colour a stretch is drawn in; nothing recorded
+changes, and it is carried in the backup archive.
 
 ## Tuning
 

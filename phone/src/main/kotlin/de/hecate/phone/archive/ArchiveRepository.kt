@@ -408,7 +408,14 @@ class ArchiveRepository(
             medoidSessionId = medoidSessionId,
             createdAt = createdAt,
             active = active,
-            priority = priority,
+            // Clamped on the way in, because an archive written before the scale
+            // was rescaled (schema v7) carries 1..10. Nothing would crash on a 9
+            // — it is an integer the matcher only ever compares — but the picker
+            // has no button for it, so the route would show no priority at all
+            // and the only way to change it would be to pick a different one
+            // first. A 9 becomes the top of the new scale, which is what it
+            // meant.
+            priority = priority.coerceIn(Tuning.MIN_ROUTE_PRIORITY, Tuning.MAX_ROUTE_PRIORITY),
         )
 
         fun Sample.toEntity(sessionId: String) = SampleEntity(

@@ -286,6 +286,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         Log.i(
             TAG,
             "Heatmap: ${grid.routeIds.size} Routen, ${grid.sessionsUsed} Aufzeichnungen, " +
+                "${grid.width}x${grid.height} Zellen à ${grid.cellM.toInt()} m, " +
                 "max ${grid.maxCount}, ${payload.size} B" +
                 if (grid.routesDiscarded > 0 || grid.sessionsDiscarded > 0) {
                     " (${grid.routesDiscarded} Routen / ${grid.sessionsDiscarded} Aufzeichnungen außerhalb des Radius)"

@@ -103,7 +103,7 @@ data class RouteEntry(
     val profile: RouteProfile,
     val prior: RoutePrior,
     /**
-     * The user's own ranking of this route, 1..10.
+     * The user's own ranking of this route, −2..2, zero being "no opinion".
      *
      * Purely a tie-breaker, and only where the evidence cannot break the tie
      * itself: while two routes share the same ground they explain every sample

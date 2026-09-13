@@ -92,7 +92,7 @@ class PriorityTest {
     fun `a higher priority commits inside the shared segment`() {
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
-        val bundle = withPriorities(base, mapOf(longId to 7))
+        val bundle = withPriorities(base, mapOf(longId to 1))
 
         val today = Synthetic.record("today", Synthetic.workRoute, day(51), seed = 502)
         val states = replay(today, bundle)
@@ -110,7 +110,7 @@ class PriorityTest {
     fun `a priority commitment carries remaining distance and eta`() {
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
-        val bundle = withPriorities(base, mapOf(longId to 9))
+        val bundle = withPriorities(base, mapOf(longId to 2))
 
         val today = Synthetic.record("today", Synthetic.workRoute, day(52), speedMps = 3.0, seed = 503)
         val states = replay(today, bundle)
@@ -132,7 +132,7 @@ class PriorityTest {
         val base = learned()
         // Both raised, and equally: the user has expressed a preference over the
         // rest of the world but not between these two.
-        val bundle = withPriorities(base, base.routes.associate { it.geometry.routeId to 8 })
+        val bundle = withPriorities(base, base.routes.associate { it.geometry.routeId to 1 })
         val today = Synthetic.record("today", Synthetic.workRoute, day(53), seed = 504)
         val states = replay(today, bundle)
         assertTrue(
@@ -147,7 +147,7 @@ class PriorityTest {
         val longId = idOf(base, Synthetic.workRoute)
         val shortId = idOf(base, Synthetic.shortcut)
         // The long route is preferred, but today the shortcut is actually run.
-        val bundle = withPriorities(base, mapOf(longId to 10, shortId to 1))
+        val bundle = withPriorities(base, mapOf(longId to 2, shortId to -1))
 
         val today = Synthetic.record("today", Synthetic.shortcut, day(54), seed = 505)
         val log = ArrayList<MatchLogEntry>()
@@ -170,7 +170,7 @@ class PriorityTest {
     fun `a priority commitment is not claimed as evidence once it is one`() {
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
-        val bundle = withPriorities(base, mapOf(longId to 7))
+        val bundle = withPriorities(base, mapOf(longId to 1))
         val today = Synthetic.record("today", Synthetic.workRoute, day(55), seed = 506)
         val states = replay(today, bundle)
 
@@ -184,7 +184,7 @@ class PriorityTest {
     fun `priority never invents a route that is not there`() {
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
-        val bundle = withPriorities(base, mapOf(longId to 10))
+        val bundle = withPriorities(base, mapOf(longId to 2))
         // A path with nothing in common with either route.
         val today = Synthetic.record("today", Synthetic.novelRoute, day(56), seed = 507)
         val states = replay(today, bundle)
@@ -202,7 +202,7 @@ class PriorityTest {
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
         val shortId = idOf(base, Synthetic.shortcut)
-        val bundle = withPriorities(base, mapOf(longId to 8))
+        val bundle = withPriorities(base, mapOf(longId to 1))
 
         val today = Synthetic.record("today", Synthetic.shortcut, day(57), seed = 508)
         val states = replay(today, bundle)
@@ -220,7 +220,7 @@ class PriorityTest {
         // suppressed the real one.
         val base = learned()
         val longId = idOf(base, Synthetic.workRoute)
-        val bundle = withPriorities(base, mapOf(longId to 8))
+        val bundle = withPriorities(base, mapOf(longId to 1))
 
         val detour = Synthetic.path(
             listOf(
@@ -236,7 +236,7 @@ class PriorityTest {
 
     @Test
     fun `priority is carried through bundle serialization`() {
-        val bundle = withPriorities(learned(), mapOf(1L to 9, 2L to 2))
+        val bundle = withPriorities(learned(), mapOf(1L to 2, 2L to -1))
         val out = java.io.ByteArrayOutputStream()
         de.hecate.core.io.BundleCodec.writeGzip(bundle, out)
         val back = de.hecate.core.io.BundleCodec.readGzip(java.io.ByteArrayInputStream(out.toByteArray()))

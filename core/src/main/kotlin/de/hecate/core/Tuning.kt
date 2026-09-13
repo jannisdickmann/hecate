@@ -155,10 +155,17 @@ object Tuning {
      *  The default is the middle of the range and is the same for every route, so
      *  until the user actually differentiates two routes nothing changes: equal
      *  priorities tie, and a tie decides nothing. The feature is opt-in by
-     *  construction rather than by a flag. */
-    const val MIN_ROUTE_PRIORITY: Int = 1
-    const val MAX_ROUTE_PRIORITY: Int = 10
-    const val DEFAULT_ROUTE_PRIORITY: Int = 5
+     *  construction rather than by a flag.
+     *
+     *  Only the *order* matters — nothing multiplies by a priority — so the range
+     *  is as small as it can be while still saying the four things a person means:
+     *  never this one, rather not, no opinion, rather this one, always this one.
+     *  Signed and centred on zero, because "no opinion" is what almost every route
+     *  should be, and a scale whose neutral value is 5 out of 10 invites the user
+     *  to spend the other nine. */
+    const val MIN_ROUTE_PRIORITY: Int = -2
+    const val MAX_ROUTE_PRIORITY: Int = 2
+    const val DEFAULT_ROUTE_PRIORITY: Int = 0
 
     /** Commitment additionally requires every other live candidate to be at least
      *  this much further [m] from the current position than the leader is.
@@ -283,11 +290,61 @@ object Tuning {
      */
     const val HEATMAP_MAX_RADIUS_M: Double = 100_000.0
 
-    /** Heatmap raster size. 16:9, and deliberately coarser than the phone screen
-     *  it is drawn on — this counts GPS samples, and a cell finer than the noise
-     *  in those samples resolves nothing but the noise. */
-    const val HEATMAP_WIDTH: Int = 192
-    const val HEATMAP_HEIGHT: Int = 108
+    /**
+     * Edge length [m] of one heatmap cell, on the ground.
+     *
+     * A fixed *physical* size, which is the whole point: the raster used to be
+     * 192x108 cells whatever it covered, so a cell was 40 m across a town and
+     * 400 m across a county, and the same two tracks a street apart merged into
+     * one blob or stayed separate depending on where else the user had been. A
+     * constant here means a constant on the ground, and the raster's dimensions
+     * follow from the extent instead of the other way round.
+     *
+     * 15 m is the GNSS error this app already assumes ([GPS_SIGMA_M]) and below
+     * the spacing of adjacent streets — which sounds like resolving noise, and
+     * would be if a cell were painted as a cell. It is not:
+     * [HEATMAP_BLUR_SIGMA_CELLS] spreads each track over its neighbours before
+     * anything is drawn, so the cell is the sampling grid of a continuous
+     * density, not a pixel. Sampling at the scale of the noise is what lets that
+     * density come out smooth rather than blocky.
+     */
+    const val HEATMAP_CELL_M: Double = 15.0
+
+    /** The shape the extent is grown to, wide:high. A picture on a phone, and
+     *  the same 16:9 the fixed raster used to impose. */
+    const val HEATMAP_ASPECT: Double = 16.0 / 9.0
+
+    /**
+     * Ceiling on the number of cells, whatever [HEATMAP_CELL_M] would ask for.
+     *
+     * The extent is bounded — nothing beyond [HEATMAP_MAX_RADIUS_M] of home is
+     * drawn at all — but the bound is 100 km, and 15 m cells over that much
+     * ground would be sixty million of them. Above this count the cell size
+     * doubles until it fits, so the physical size stays constant *per doubling*
+     * rather than sliding continuously with the extent, and the cells of two
+     * rasters always line up.
+     *
+     * Three million is a 2300x1300 raster: 12 MB as counts, another 12 to blur
+     * it and 12 more as the bitmap it is drawn from, and it takes an extent of
+     * about 35 x 20 km before the first doubling. Everything a person rides
+     * from one home is inside that; a second home 60 km away is what buys 30 m
+     * cells, and a picture of two towns is not a picture of a street anyway.
+     */
+    const val HEATMAP_MAX_CELLS: Int = 3_000_000
+
+    /**
+     * Standard deviation [cells] of the blur applied to the counts before they
+     * are coloured.
+     *
+     * This is what makes the picture read as density rather than as a
+     * spreadsheet, and it is a blur rather than a coarser grid because the two
+     * are not the same thing: a coarse grid quantises, a blur spreads. One and
+     * a half cells at [HEATMAP_CELL_M] is about 22 m of ground — one GNSS error
+     * — so a drawn track is as wide as the uncertainty about where it was,
+     * which is the honest thickness for it to have. Wider than that and two
+     * streets a block apart merge into one smear.
+     */
+    const val HEATMAP_BLUR_SIGMA_CELLS: Double = 1.5
 
     /** Breathing room around the routes' own bounding box, as a fraction of its
      *  larger side. */
@@ -367,4 +424,67 @@ object Tuning {
      */
     const val MIN_ALTITUDE_M: Double = -1_000.0
     const val MAX_ALTITUDE_M: Double = 10_000.0
+
+    // ---------------------------------------------------------------- intensity
+
+    /**
+     * The heart rate the zones are measured against [bpm], when the user has not
+     * said otherwise.
+     *
+     * Their own peak, not a formula. `220 − age` is the best known number in
+     * amateur sport and one of the worst: its standard deviation across people
+     * is 10-12 bpm, so for one person in three it is out by more than a whole
+     * zone. Anybody who has ever finished a hard climb knows their own figure
+     * better than arithmetic on their birthday does, so this is a default to be
+     * replaced in settings rather than a model to be trusted.
+     *
+     * 180 is roughly the peak of a fit adult in their thirties and is chosen to
+     * be *plausible*, not accurate. Being wrong here recolours a chart; it
+     * changes no stored data and no decision the app makes.
+     */
+    const val DEFAULT_PEAK_HR_BPM: Int = 180
+
+    /** What the settings field will accept [bpm]. Wide enough for a well-trained
+     *  teenager and a well-rested seventy-year-old, narrow enough that a typo of
+     *  one digit too many is refused rather than stored. */
+    const val MIN_PEAK_HR_BPM: Int = 100
+    const val MAX_PEAK_HR_BPM: Int = 240
+
+    /**
+     * Width, in samples, of the rolling median applied to heart rate before it
+     * is turned into a band.
+     *
+     * Not for spikes, which is what the altitude filter is for — for boundaries.
+     * An effort a few beats under the line between Mittel and Intensiv reaches
+     * over it every few seconds, and the drawing would alternate between two
+     * colours every few pixels: noise rendered at the resolution of a decision.
+     * Fifteen seconds at the 1 Hz everything here samples at, and a median rather
+     * than a mean for the reason [de.hecate.core.profile.Series] gives — a real
+     * effort ramping up is a monotonic run, and a median leaves those exactly
+     * alone.
+     *
+     * It settles a reading that is *mostly* one side of a line, which is what a
+     * heart rate does. A reading balanced exactly on one has no band and no
+     * filter can invent it one; that case alternates, and honestly so.
+     */
+    const val HR_MEDIAN_WINDOW: Int = 15
+
+    /**
+     * Where one intensity zone ends and the next begins, as a fraction of the
+     * peak heart rate.
+     *
+     * Four zones, not five or seven: this colours a line on a chart, and a
+     * reader distinguishes four colours at a glance and seven never. The cuts
+     * are the conventional ones — 70 / 80 / 90 % of maximum — which is where
+     * every zone model puts its boundaries whatever it calls the bands, because
+     * the physiology behind them (aerobic, threshold, anaerobic) does not move
+     * with the naming.
+     *
+     * Fractions of the peak rather than of the reserve (Karvonen): the reserve
+     * needs a resting heart rate, this app has never measured one, and asking
+     * for a second number to colour a chart is a poor trade.
+     */
+    const val HR_ZONE_MODERATE_FRACTION: Double = 0.70
+    const val HR_ZONE_HARD_FRACTION: Double = 0.80
+    const val HR_ZONE_PEAK_FRACTION: Double = 0.90
 }

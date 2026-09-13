@@ -85,13 +85,26 @@ class StandoutsTest {
     }
 
     /** Three members is where a route begins to exist, and is still too few for
-     *  a quartile to be anything but "the best one". */
+     *  a percentile to be anything but "the best one". */
     @Test
     fun `a route with fewer than four recordings marks nothing`() {
         val out = Standouts.compute(
             listOf(rec("a", kmh = 8.0), rec("b", kmh = 9.0), rec("c", kmh = 20.0)),
         )
         assertTrue(out.isEmpty(), "expected no highlights, got $out")
+    }
+
+    @Test
+    fun `a long history marks about one in seven, not one in four`() {
+        // Twelve recordings of the same commute. At the 75th percentile three of
+        // them were emphasised and the emphasis stopped being read as emphasis;
+        // at the 85th it is two.
+        val out = Standouts.compute((1..12).map { rec("r$it", kmh = 8.0 + it) })
+        assertEquals(
+            setOf("r11", "r12"),
+            out.filterValues { it.fast }.keys,
+            "marked the wrong recordings",
+        )
     }
 
     @Test

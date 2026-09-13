@@ -181,8 +181,9 @@ either; it ingests into Room and keeps no raw JSONL.
 ### 2.3 Route priority in use
 
 Priority (Appendix A.4b) breaks ties between routes that share the same ground.
-One integer per route, compared only against other *contenders*, and not
-context-aware — see §4 for why that is settled rather than pending.
+One integer per route, −2..2 since schema v7 (A.21), compared only against other
+*contenders*, and not context-aware — see §4 for why that is settled rather than
+pending.
 
 Two things to watch once you are using it:
 
@@ -439,61 +440,104 @@ Also unverified, and cheap to check at the same time: `TimeText` now draws a
 clock the app never had, and the `EdgeButton` on the control page is positioned
 by the scaffold rather than by this code.
 
-### 3.7 The quartile thresholds have never met a real history
+### 3.7 The standout threshold has been raised once, on one history
 
-The recordings list marks a recording whose speed or average heart rate is in
-the upper quartile for its route (Appendix A.13). The arithmetic is tested —
-eleven cases in `StandoutsTest`, including that each route ranks against itself
-and that missing heart rates do not drag the threshold down — but tests use
-invented numbers, and the only question that matters here is whether the marks
-are *useful* against a real history.
+The recordings list marks a recording whose speed or average heart rate is at or
+above the 85th percentile for its route (Appendix A.13). The arithmetic is
+tested — twelve cases in `StandoutsTest`, including that each route ranks against
+itself and that missing heart rates do not drag the threshold down — but tests
+use invented numbers, and the only question that matters here is whether the
+marks are *useful*.
 
-Two things to watch once there are enough recordings to tell.
+The threshold was 0.75 and was raised to 0.85 by A.21, which is one judgement
+against one history: a quarter of a sixty-ride commute carried a mark and the
+emphasis had stopped reading as emphasis. Two things to watch.
 
-- **Whether a quarter is too many.** On a route done weekly for a year, a
-  quarter of the rows carry a mark, which may read as decoration rather than as
-  a signal. If so the fix is the threshold, not the mechanism: 0.9 marks roughly
-  the best in ten. The constant is `Standouts.QUARTILE`.
-- **Whether four members is too few.** At exactly four, the upper quartile is
-  one recording, and that recording changes every time a faster one arrives.
-  That is arguably correct — it is a personal best against the route — but it
-  means a brand-new route immediately marks one of its own recordings, which may
-  look like a claim rather than a fact.
+- **Whether one in seven is now too few.** 0.85 marks roughly the best in seven,
+  and on a route with a dozen recordings that is two rows. If the mark now feels
+  absent rather than rare, the constant is `Standouts.PERCENTILE` and nothing
+  else has to move.
+- **Whether four members is too few.** At exactly four, only the best recording
+  clears the threshold, and it changes every time a faster one arrives. That is
+  arguably correct — it is a personal best against the route — but it means a
+  brand-new route immediately marks one of its own recordings, which may look
+  like a claim rather than a fact.
 
 Also unverified, and only visible on a device: whether the two marks can be told
 apart at a glance. They are distinguished by colour — primary for speed,
-tertiary for heart rate — plus bold weight, and both colours come from the
-wallpaper under dynamic theming. A wallpaper whose primary and tertiary land
-close together would leave weight and the unit suffix doing all the work.
+tertiary for heart rate — plus bold weight and an upward arrow, and both colours
+come from the wallpaper under dynamic theming. The arrow is the same on both, so
+a wallpaper whose primary and tertiary land close together would leave weight
+and the unit suffix doing all the work of telling them apart.
 
 ### 3.8 The heatmap has been rendered, but not on a phone
 
-The picture above the routes list (Appendix A.14) was checked by rasterising it
-off-device — `Heatmap.build` is pure JVM — against synthetic data with a commute
-ridden sixty times, a loop ridden twelve, a ride done twice, wanderings that
-never became routes, a holiday outside the extent and a glitched fix. Seventeen
-tests pin the extent, the radius filter, the aspect ratio and which way up the
-raster is. None of that is the same as looking at it on a phone with a real
-history behind it.
+The picture above the routes list (Appendix A.14, rebuilt in A.21) was checked
+by rasterising it off-device — `Heatmap.build` and `Heatmap.blur` are pure JVM —
+against synthetic data with a commute ridden sixty times, a loop ridden twelve,
+a ride done four times and wanderings that never became routes; the tests pin
+the extent, the radius filter, the cell size, the line drawing, the blur and
+which way up the raster is. None of that is the same as looking at it on a phone
+with a real history behind it, and after A.21 there is more to look at.
 
-Three things to judge there.
+Four things to judge there.
 
 - **Whether the log scale separates the right things.** It is tuned so that a
   route ridden twice is visible at all next to one ridden two hundred times. If
   everything looks equally hot, the scale is too compressive; if the rare stuff
-  vanishes, not compressive enough. Both are one line in `rasterOf`.
-- **Whether 192×108 is the right raster.** At a 10 km extent each cell is about
-  50 m, which is roughly GPS noise. On a much larger extent — routes in two
-  towns — cells get coarse and everything merges into blobs; on a small one the
-  grid may start to show as squares despite the filtering.
-- **Whether the warm route lines are right.** They were chosen against a blue
-  ramp on a neutral surface. The surface here is wallpaper-derived, so a strongly
-  orange wallpaper would put the lines close to their own background.
+  vanishes, not compressive enough. Both are one line in `rasterOf`. Note that
+  the counts are now passes rather than samples, so the range they span is
+  narrower than it used to be and this may want retuning in the other direction.
+- **Whether 15 m cells and σ = 1.5 are the right pair.** They are meant to make
+  a track as wide as the uncertainty about where it was, roughly 22 m of ground.
+  Too wide and two streets a block apart merge; too narrow and the picture goes
+  back to being a line drawing. They are two constants in `Tuning` and a redraw,
+  not a re-clustering.
+- **What the cap costs in practice.** Past about 35 × 20 km of extent the cell
+  doubles, and nothing here has been looked at in that state. A history with two
+  homes in it is the case: it is also the case where the picture is of two towns
+  rather than of a street, so coarser cells may be exactly right.
+- **Whether the full-screen view is usable one-handed.** Pinch to 8×, drag to
+  pan, tap to close; the pan clamp has only been reasoned about, never felt.
+
+Also worth timing on a device: the bitmap is built on `Dispatchers.Default` and
+the blur alone is about 300 ms on a laptop at the cap, so the card may show its
+empty extent for a visible moment on a large history. If that reads as a bug
+rather than as loading, the answer is probably a placeholder rather than a
+faster blur.
 
 Not yet decided, and only answerable with a real history: whether the extent
 should follow the routes of the *selected activity type* rather than all of
 them. A cycling route of 60 km and a running loop of 5 km in one picture means
-the running loop is a smudge.
+the running loop is a smudge. The recordings list has an activity filter now
+(A.21); the routes list has none, and this is the reason it might want one.
+
+### 3.9 The intensity colours have never been seen against a real heart rate
+
+Both drawings on both detail screens are coloured by effort (A.21), and every
+part of that is arithmetic that produces a picture rather than an error: a wrong
+boundary still colours something. `IntensityTest` pins the boundaries, the
+saturation above the peak and the difference between "no reading" and "an easy
+one"; what it cannot say is whether the result is legible.
+
+- **Whether the 15 s median is enough at a boundary.** An effort sitting a few
+  beats under 80 % settles to one colour after smoothing; one balanced exactly on
+  the line still alternates, because it genuinely has no band. If that reads as
+  noise on a real ride, the answer is hysteresis — remember the previous band and
+  require a margin to leave it — which is a change to `Intensity` and its tests
+  and to nothing else.
+- **Whether the full-height backdrop is too much.** It is drawn at 10 % alpha
+  behind the profile so that a hard stretch is legible where the ground is low.
+  On a chart that changes band every few hundred metres it may read as stripes.
+- **Whether 180 bpm is a reasonable place to start.** It is a plausible figure
+  for a fit adult in their thirties and nothing more; the setting is under
+  Einstellungen → Belastung, and the bands are listed there in bpm precisely so
+  that a wrong default is obvious rather than invisible.
+
+Worth knowing: a route's colours come from `route_profile.median_hr`, which has
+been filled since the first schema but is null for any bin whose members carried
+no heart rate. A route whose recordings all predate a strap draws plain, like
+such a recording does.
 
 ---
 

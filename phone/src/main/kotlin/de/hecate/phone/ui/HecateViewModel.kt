@@ -16,20 +16,25 @@ import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.profile.Elevation
+import de.hecate.core.profile.Series
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.tcx.TcxImporter
 import de.hecate.phone.work.Jobs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Which screen is showing (§4: no Compose Navigation).
@@ -73,7 +78,9 @@ data class RouteDetail(
     val exerciseType: ExerciseType,
     val lengthM: Double,
     val memberCount: Int,
-    val geometry: List<LatLon>,
+    /** The route's own geometry, carrying the per-bin median heart rate so the
+     *  drawing can be coloured by effort. */
+    val geometry: List<TrackPoint>,
     val medianDurationMs: Long?,
     val bestDurationMs: Long?,
     val worstDurationMs: Long?,
@@ -84,16 +91,14 @@ data class RouteDetail(
     val elevation: List<Elevation.Point> = emptyList(),
     val elevationStats: Elevation.Stats? = null,
     val sessions: List<SessionSummary>,
-    /** Per-kilometre median/best/worst splits, in seconds. */
-    val splits: List<Split>,
-) {
-    data class Split(val km: Int, val medianS: Double, val bestS: Double, val worstS: Double)
-}
+)
 
 /** Everything the session detail screen renders (US-8). */
 data class SessionDetail(
     val summary: SessionSummary,
-    val geometry: List<LatLon>,
+    /** The recording's own track, carrying each sample's heart rate so the
+     *  drawing can be coloured by effort. */
+    val geometry: List<TrackPoint>,
     val routeName: String?,
     val coverage: Double?,
     val committedAtM: Double?,
@@ -167,6 +172,64 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     val sessions: StateFlow<List<SessionSummary>> = db.sessions().summaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /**
+     * The activities the filter offers: the ones that actually occur, in the
+     * enum's own order.
+     *
+     * Derived from the history rather than from [ExerciseType.entries], because
+     * a filter chip for a sport the user has never recorded is a chip that can
+     * only ever produce an empty list. Someone who has never skied should not
+     * have to read the word.
+     */
+    val activityTypes: StateFlow<List<ExerciseType>> = sessions
+        .map { list -> ExerciseType.entries.filter { type -> list.any { it.exerciseType == type } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Which activity the recordings list is restricted to, or null for all of
+     * them.
+     *
+     * Here rather than in the screen so that it survives a trip into a recording
+     * and back — the list is restored to where it was scrolled (A.13), and
+     * coming back to the same scroll position in a differently filtered list
+     * would be worse than not restoring it at all. Not persisted across a
+     * process death on purpose: a filter the user cannot see the cause of is a
+     * list with recordings missing from it.
+     */
+    private val _activityFilter = MutableStateFlow<ExerciseType?>(null)
+
+    /**
+     * The filter as it actually applies: what the user picked, unless that
+     * activity has since stopped occurring.
+     *
+     * Delete the last ski tour while the list is filtered to skiing and the
+     * alternative is an empty list, no chip selected, and — once only one
+     * activity is left and the row hides itself — no way back out of a state
+     * the user cannot see. Derived rather than corrected by a collector, so
+     * that nothing has to be subscribed for the correction to have happened.
+     */
+    val activityFilter: StateFlow<ExerciseType?> =
+        combine(_activityFilter, activityTypes) { picked, types -> picked?.takeIf { it in types } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** The recordings the list shows: [sessions] through [activityFilter]. */
+    val filteredSessions: StateFlow<List<SessionSummary>> =
+        combine(sessions, activityFilter) { list, filter ->
+            if (filter == null) list else list.filter { it.exerciseType == filter }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * The heart rate the intensity bands are measured against.
+     *
+     * Watched rather than read once, so changing it in settings recolours every
+     * chart that is already on screen. The default stands in until the user says
+     * otherwise — see [Tuning.DEFAULT_PEAK_HR_BPM] for why it is a placeholder
+     * rather than a calculation.
+     */
+    val peakHr: StateFlow<Int> = db.meta().watch(de.hecate.phone.db.Settings.PEAK_HR_BPM)
+        .map { rows -> rows.firstOrNull()?.toIntOrNull() ?: Tuning.DEFAULT_PEAK_HR_BPM }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Tuning.DEFAULT_PEAK_HR_BPM)
+
     val routes: StateFlow<List<RouteSummary>> = db.routes().summaries()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -194,6 +257,11 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
+        // After the map, not before it: `flowOn` moves what is *upstream* of it,
+        // and the work worth moving is the decoding. At a fixed cell size the
+        // stored raster is millions of cells, and inflating and parsing it is
+        // real work rather than the microseconds a 192x108 grid used to be.
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /**
@@ -318,7 +386,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Set the user's ranking for a route, 1..10 (US-4 manual override).
+     * Set the user's ranking for a route, −2..2 (US-4 manual override).
      *
      * Takes effect on the watch with the next bundle push, so the bundle is
      * rebuilt immediately rather than waiting for the next workout to be
@@ -330,7 +398,28 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         db.routes().setPriority(routeId, clamped)
         loadRoute(routeId)
         Jobs.enqueueClustering(getApplication())
-        _status.value = "Priorität $clamped"
+        _status.value = "Priorität ${Format.priority(clamped)}"
+    }
+
+    /**
+     * The heart rate the intensity bands are measured against.
+     *
+     * Clamped here as well as filtered in the field, because the range is the
+     * rule and a rule enforced only by the one screen that happens to call this
+     * is not enforced. Nothing stored changes either way; this only decides
+     * which colour a stretch of a chart is drawn in.
+     */
+    fun setPeakHr(bpm: Int) = viewModelScope.launch {
+        val clamped = bpm.coerceIn(Tuning.MIN_PEAK_HR_BPM, Tuning.MAX_PEAK_HR_BPM)
+        db.meta().put(
+            de.hecate.phone.db.MetaEntity(de.hecate.phone.db.Settings.PEAK_HR_BPM, clamped.toString()),
+        )
+        _status.value = "Maximalpuls $clamped bpm"
+    }
+
+    /** Restrict the recordings list to one activity, or to all of them. */
+    fun setActivityFilter(type: ExerciseType?) {
+        _activityFilter.value = type
     }
 
     fun recluster() = viewModelScope.launch {
@@ -388,10 +477,14 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val members = dao.memberSessions(routeId)
         val profileRows = dao.profile(routeId)
 
-        val splits = buildSplits(profileRows.map { it.medianCumTimeS }, members, routeId)
         // Straight off the profile bins, which are Tuning.RESAMPLE_M apart by
         // construction, so bin index is distance along the route.
-        val routeElevation = Elevation.ofBins(profileRows.map { it.medianAltM }, Tuning.RESAMPLE_M)
+        val medianHr = profileRows.map { it.medianHr }
+        val routeElevation = Elevation.ofBins(
+            profileRows.map { it.medianAltM },
+            Tuning.RESAMPLE_M,
+            medianHr,
+        )
 
         _routeDetail.value = RouteDetail(
             id = route.id,
@@ -400,86 +493,23 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             lengthM = route.lengthM,
             memberCount = route.memberCount,
             priority = route.priority,
-            geometry = points.map { LatLon(it.lat, it.lon) },
+            // The route's heart rate is the per-bin median over its members, and
+            // a route point's distance along the route is what says which bin it
+            // is in — the geometry is resampled at exactly the profile's bin
+            // width, so this is a lookup rather than an interpolation.
+            geometry = points.map { p ->
+                TrackPoint(
+                    LatLon(p.lat, p.lon),
+                    medianHr.getOrNull((p.cumDistM / Tuning.RESAMPLE_M).toInt()),
+                )
+            },
             medianDurationMs = durations.median(),
             bestDurationMs = durations.minOrNull(),
             worstDurationMs = durations.maxOrNull(),
             elevation = Elevation.simplify(routeElevation, CHART_POINTS),
             elevationStats = Elevation.stats(routeElevation),
             sessions = members,
-            splits = splits,
         )
-    }
-
-    /**
-     * Per-kilometre splits (US-8), all three columns over the same members'
-     * crossings of the same kilometre marks.
-     *
-     * The median used to come from the route profile instead, and the two
-     * disagreed: the profile's figure is a bin-wise median of *cumulative* times,
-     * so differencing two of them is not the median of anybody's kilometre, and
-     * it is taken over every member while best and worst are taken over the
-     * subset whose samples project onto the geometry. The table said so out loud
-     * — one kilometre of the commute showed a median of 22,9 km/h against a best
-     * of 22,6, which cannot happen and made the whole row untrustworthy.
-     *
-     * The profile is still what the matcher compares against live; it is a
-     * per-position model, which is the right thing there and the wrong thing
-     * here. A kilometre no member's track covers keeps the profile's value, so
-     * the row is still populated rather than blank.
-     */
-    private suspend fun buildSplits(
-        medianCum: List<Double>,
-        members: List<SessionSummary>,
-        routeId: Long,
-    ): List<RouteDetail.Split> {
-        if (medianCum.isEmpty()) return emptyList()
-        val binsPerKm = (1000.0 / Tuning.RESAMPLE_M).toInt()
-        val kmCount = medianCum.size / binsPerKm
-        if (kmCount == 0) return emptyList()
-
-        // Each member's cumulative time at each kilometre mark, reconstructed by
-        // projecting the member onto the route geometry once.
-        val perMember = ArrayList<DoubleArray>()
-        val geometry = db.routes().points(routeId)
-        if (geometry.size >= 2) {
-            val poly = de.hecate.core.cluster.BundleBuilder.toPolyline(
-                geometry.map { de.hecate.core.model.RoutePoint(it.lat, it.lon, it.cumDistM) },
-            )
-            for (m in members) {
-                val samples = db.sessions().samples(m.id)
-                if (samples.size < 2) continue
-                val marks = DoubleArray(kmCount + 1) { Double.NaN }
-                var lastPos = -1.0
-                for (s in samples) {
-                    if (s.paused) continue
-                    val p = LatLon(s.lat, s.lon)
-                    val hit = if (lastPos < 0) poly.projectAll(p) else poly.projectWindow(p, lastPos, lastPos + Tuning.SEARCH_WINDOW_M)
-                    if (hit.distanceM > Tuning.CLUSTER_TOL_M * 2) continue
-                    val pos = maxOf(hit.positionM, lastPos)
-                    lastPos = pos
-                    val km = (pos / 1000.0).toInt()
-                    if (km in 0..kmCount && marks[km].isNaN()) marks[km] = s.activeMs / 1000.0
-                }
-                perMember.add(marks)
-            }
-        }
-
-        return (1..kmCount).map { km ->
-            val medianSplit = medianCum.getOrElse(km * binsPerKm) { medianCum.last() } -
-                medianCum.getOrElse((km - 1) * binsPerKm) { 0.0 }
-            val memberSplits = perMember.mapNotNull { marks ->
-                val a = marks.getOrNull(km - 1)
-                val b = marks.getOrNull(km)
-                if (a == null || b == null || a.isNaN() || b.isNaN() || b <= a) null else b - a
-            }
-            RouteDetail.Split(
-                km = km,
-                medianS = memberSplits.median() ?: medianSplit,
-                bestS = memberSplits.minOrNull() ?: medianSplit,
-                worstS = memberSplits.maxOrNull() ?: medianSplit,
-            )
-        }
     }
 
     private fun loadSession(id: String) = viewModelScope.launch {
@@ -494,16 +524,36 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { BundleCodec.decodeEvents(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
         } ?: emptyList()
 
-        // Only the four fields the profile reads; the rest of a Sample is of no
+        // Paused samples are dropped once, here, so that the track drawing, the
+        // altitude profile and the smoothed heart rate all index the same series
+        // — the colours would otherwise slide along the line by however many
+        // samples a level crossing took.
+        val moving = samples.filterNot { it.paused }
+
+        // Heart rate is smoothed before anything reads it, and for a reason that
+        // has nothing to do with the sensor being noisy: the screen quantises it
+        // into four bands, so a steady effort sitting on a boundary would cross
+        // it every few seconds and the drawing would alternate between two
+        // colours every few pixels. See Tuning.HR_MEDIAN_WINDOW.
+        val heartRate = Series.rollingMedian(
+            DoubleArray(moving.size) { i ->
+                moving[i].hrBpm?.takeIf { it > 0 }?.toDouble() ?: Double.NaN
+            },
+            Tuning.HR_MEDIAN_WINDOW,
+        )
+        fun hrAt(i: Int): Double? = heartRate[i].takeIf { !it.isNaN() }
+
+        // Only the fields the profile reads; the rest of a Sample is of no
         // interest to a chart of height against distance.
         val sessionElevation = Elevation.of(
-            samples.map {
+            moving.mapIndexed { i, it ->
                 de.hecate.core.model.Sample(
                     tOffsetMs = it.tOffsetMs,
                     activeMs = it.activeMs,
                     lat = it.lat,
                     lon = it.lon,
                     altM = it.altM,
+                    hrBpm = hrAt(i)?.roundToInt(),
                     paused = it.paused,
                 )
             },
@@ -523,7 +573,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
                 routeName = route?.name,
                 avgHr = entity.avgHr,
             ),
-            geometry = samples.filterNot { it.paused }.map { LatLon(it.lat, it.lon) },
+            geometry = moving.mapIndexed { i, it -> TrackPoint(LatLon(it.lat, it.lon), hrAt(i)) },
             routeName = route?.name,
             coverage = entity.matchCoverage,
             committedAtM = entity.committedAtM,
@@ -548,15 +598,6 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         if (isEmpty()) return null
         val s = sorted()
         return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
-    }
-
-    /** As above, for the split seconds. Same rule for an even count, so the
-     *  splits table and the duration rows above it agree about what a median is. */
-    @JvmName("medianOfDoubles")
-    private fun List<Double>.median(): Double? {
-        if (isEmpty()) return null
-        val s = sorted()
-        return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2.0
     }
 
     companion object {

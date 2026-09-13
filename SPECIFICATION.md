@@ -145,8 +145,8 @@ the watch.*
 
 - Route list: name, length, number of recordings, median time, best time.
 - Route detail: table of all recordings (date, time, active duration, avg HR),
-  median/best/worst splits per kilometre, a plain polyline drawing of the route
-  geometry.
+  and a plain polyline drawing of the route geometry. Per-kilometre splits were
+  specified here, built, and removed again — see A.21.
 - Session detail: the same table row plus which route it matched, coverage
   score, and where commitment occurred.
 
@@ -604,14 +604,19 @@ these are correct and unhelpful: on a route family sharing 3 km of a 5 km run,
 the watch shows `Suche…` — and no remaining distance and no ETA — for most of
 the workout. The matcher is right that it cannot know. The user usually does.
 
-Implemented: every route carries an integer priority, 1..10, settable on the
+Implemented: every route carries an integer priority, −2..2, settable on the
 route detail screen and stored alongside the name. Where two or more routes are
 *contenders* — live, being tracked, and within `COMMIT_SEPARATION_M` of the
 nearest one — and exactly one of them outranks the rest, the matcher commits to
 that one and reports remaining distance and ETA from it. A tie at the top
 decides nothing and leaves the display searching, so the default (every route at
-5) reproduces the previous behaviour exactly; the feature is opt-in by
+0) reproduces the previous behaviour exactly; the feature is opt-in by
 construction rather than by a flag.
+
+The range was 1..10 until schema v7 rescaled it (A.21): only the *order* of
+these numbers has ever mattered, so ten values offered a precision the mechanism
+cannot use, and a neutral value of 5 out of 10 invited the user to spend the
+other nine.
 
 Priority does not touch the probabilistic weights, and cannot make the matcher
 believe the user is somewhere they demonstrably are not:
@@ -670,7 +675,8 @@ the `route_member` table, which is not in §5.5.
   Rows written before v2 keep NULL, because the value cannot be reconstructed.
 - `route.name_is_custom` — distinguishes an auto-generated name, which may be
   regenerated, from one the user chose, which may not.
-- `route.priority` — see A.4b. Like the name, preserved across re-clustering.
+- `route.priority` — see A.4b, and A.21 for the rescaling to −2..2. Like the
+  name, preserved across re-clustering.
 - `sample.active_ms` — §5.5 stores only `t_offset_ms`. Splits, ahead/behind and
   the profile all need elapsed *active* time, which cannot be reconstructed from
   the wall-clock offset once a session contains pauses.
@@ -732,15 +738,14 @@ anywhere shows pace.**
 
 - The watch's metrics page shows `10,8 km/h` where it showed `5:32 /km`.
 - The phone's session detail shows `Ø Geschwindigkeit … km/h`.
-- The per-kilometre splits table is headed `Kilometer-Splits (km/h)` and its
-  Median / Beste / Schlechteste columns are speeds. "Beste" still means the
-  fastest kilometre; the smallest time is the largest speed, so the column
-  picks the same member it always did.
+- The per-kilometre splits table was headed `Kilometer-Splits (km/h)` and its
+  Median / Beste / Schlechteste columns were speeds, "Beste" still meaning the
+  fastest kilometre. That table has since been removed altogether (A.21); the
+  rule it illustrated holds for everything that remains.
 
 This is a presentation change and nothing more. The stored measurement is
-unchanged — the route profile holds cumulative *time* per bin (§5.7), splits are
-the seconds a kilometre took, and `deltaVsMedianS` is still seconds against the
-median (A.2 of the open points has the sign convention). Speed is derived at the
+unchanged — the route profile holds cumulative *time* per bin (§5.7), and
+`deltaVsMedianS` is still seconds against the median (A.2 of the open points has the sign convention). Speed is derived at the
 formatter and never persisted, so no database column, no bundle field and no
 wire constant moves, and existing sessions need no migration.
 
@@ -1018,19 +1023,19 @@ compile error rather than a blank space at run time — which is what it used to
 be, back when the icon was chosen by matching the string `"RUNNING"`.
 
 **Fast and hard recordings are marked.** A recording is marked fast when its
-average speed is at or above the 75th percentile of the recordings on the same
-route, and marked for effort when its average heart rate is. Three decisions
-worth naming:
+average speed is at or above the 85th percentile of the recordings on the same
+route — the 75th until A.21 raised it and gave the mark an arrow — and marked
+for effort when its average heart rate is. Three decisions worth naming:
 
 - **Per route, or not at all.** A recording with no matched route has nothing to
   be fast against and is never marked. Ranking is within the route, so the best
   climb of a slow hilly route is marked even though every recording of the flat
   route beat it.
-- **Four members minimum.** A route exists at three (§5.6), and the 75th
-  percentile of three values is "the best one" wearing a statistician's hat.
-  Four is the first count at which the top quartile is genuinely a quarter, and
-  even then it is one recording — this marks a personal best against the route
-  and claims no more.
+- **Four members minimum.** A route exists at three (§5.6), and a percentile of
+  three values is "the best one" wearing a statistician's hat. Four is the first
+  count at which the threshold falls between two recordings rather than on one,
+  and even then only the best of them clears it — this marks a personal best
+  against the route and claims no more.
 - **Speed and heart rate rank independently**, because a hard effort on a slow
   day is worth seeing precisely when the two come apart. Heart rate ranks only
   over the members that have one, and only if at least four do: a route whose
@@ -1069,15 +1074,16 @@ history — the same pass the clusterer already makes over the same data — so
 `ClusterWorker` builds it and stores it, and the routes screen reads a row. It
 runs last in that worker, after the bundle is pushed, so a failure while drawing
 can never cost the watch its routes. Schema v4 holds it as one gzipped blob:
-written whole, read whole, never queried, and 20,736 counts as rows would be a
-table nothing ever selects from.
+written whole, read whole, never queried, and a raster's worth of counts as rows
+would be a table nothing ever selects from. (A.21 made the raster a great deal
+larger and run-length encoded the blob; everything else here still holds.)
 
 **The extent comes from the routes, never from the recordings.** This is the
 whole reason the feature needed thinking about. One trip to another city is a
 recording, not a route, and if it got a vote on the bounding box then everything
 you actually run would be squashed into a corner of the picture by a thing you
 did once. So the box is the routes' box, padded by 8% and then *grown* — never
-cropped, never stretched — to the raster's 16:9. Recordings still contribute
+cropped, never stretched — to 16:9. Recordings still contribute
 their heat wherever they cross that box; they simply do not get to move it. A
 sample outside the box is dropped rather than clamped, because clamping piles
 every distant point onto the border cells and draws a hot frame around a map
@@ -1600,3 +1606,172 @@ required but not found" — a true statement about the test and nothing about th
 app. Both now use `HecateDatabase.MIGRATIONS`. A.16 exists because a migration
 nobody replays is a crash on a real phone; a test that replays a different list
 from the app's is the same hazard wearing a passing badge.
+
+### A.21 A filter, a louder mark, a heatmap worth looking at, and one table fewer
+
+Six changes, all from using the phone app against a real history. Four of them
+are about *reading* a screen rather than about what is on it.
+
+**The recordings list has an activity filter, offering only activities that
+exist.** A chip row above the list, from `ExerciseType.entries` intersected with
+the history — a chip for a sport the user has never recorded can do exactly one
+thing, empty the list, and reads as a promise the app cannot keep. The row hides
+itself entirely below two kinds of recording, because a filter with one option
+and an "Alle" beside it says the same thing twice.
+
+The filter lives in the view model rather than in the screen, so that a trip
+into a recording and back does not silently drop it — the list is restored to
+where it was scrolled (A.13), and coming back to that scroll position in a
+differently filtered list is worse than not restoring it at all. It is *derived*
+rather than stored: what the user picked, unless that activity has since stopped
+occurring. Delete the last ski tour while filtered to skiing and the alternative
+is an empty list, no chip selected, and — once one activity is left and the row
+hides — no way back out of a state with no visible cause. Marking stays over the
+whole history: a recording is fast against the others on its route, and
+narrowing what is on screen does not change which those are.
+
+**The standout mark is rarer and louder.** The threshold moves from the 75th
+percentile to the 85th, which is roughly the best in seven rather than the best
+in four; on a commute ridden sixty times, fifteen emphasised rows had stopped
+being emphasis. Rarer needs louder, and the two are one change rather than two:
+a mark on a quarter of the rows is found by comparing two rows, while a mark on
+one row in seven has to be findable by scanning, and a shade of colour with a
+slightly heavier weight is not. So the figure now carries an upward arrow —
+`res/drawable/ic_arrow_up.xml`, one more Material Symbol beside the activity
+icons, for the reason A.11 gives: `Icons.Filled` has no upward arrow and
+`material-icons-extended` would ship every icon that is not this one. The
+constant is `Standouts.PERCENTILE`; §3.7 of the open points was the prediction
+that a quarter would be too many.
+
+**The heatmap is a heatmap now.** It looked like a spreadsheet with the numbers
+hidden, and three separate things were responsible.
+
+- **A cell is now a fixed size on the ground.** The raster was 192×108 whatever
+  it covered, so a cell was 40 m across a town and 400 m across a county: how
+  much detail the picture had depended on where else the user had been. It is
+  now `HEATMAP_CELL_M` = 15 m always, and the raster is as many cells as the
+  extent needs — a few hundred thousand for a town, and capped at
+  `HEATMAP_MAX_CELLS` = 3 million, past which the cell *doubles* until it fits.
+  Doubling rather than scaling to fit, so the cell stays a fixed physical size
+  per zoom level and two rasters of the same ground line up. The cap is reached
+  at an extent of about 35 × 20 km, and the extent can never exceed the 100 km
+  radius filter, so the worst case is bounded and known.
+- **The raster counts passes, not samples.** A sample is a second of somebody's
+  life, so counting samples measured how *slowly* the ground was covered: five
+  minutes waiting at a level crossing outshouted a route ridden sixty times, in
+  one cell. Each recording now contributes at most one count per cell it passes
+  through, and the segment between consecutive samples is drawn rather than its
+  endpoints — which is also what stops a 15 m cell going empty because nobody's
+  receiver happened to fire inside it. A gap beyond
+  `MAX_INTERPOLATION_GAP_M` is a dropout and is not bridged, the same rule and
+  the same constant resampling a track already uses.
+- **A Gaussian blur before the colour ramp.** This is what turns counts into
+  density, and it is a blur rather than a coarser grid because the two are not
+  the same thing: a coarse grid quantises, a blur spreads. σ is 1.5 cells, about
+  22 m of ground — one GNSS error — so a drawn track is as wide as the
+  uncertainty about where it was. Wider merges streets a block apart. It is
+  applied at drawing time rather than stored, so the counts stay what was
+  measured and changing σ costs a redraw rather than a re-clustering of the
+  whole history. The ramp normalises against the *blurred* peak, since a blur
+  lowers the peak it spreads.
+
+Two consequences followed. The blob is run-length encoded: the raster is now
+millions of cells, almost all of them zero, and gzip compresses those perfectly
+well but a decoder does not survive four million JSON integers. The reader still
+accepts the old shape — every cell as an integer, and no cell size, which is its
+extent over its width — because the alternative is a routes screen with no
+picture on it until the next clustering, over a file this code can plainly
+understand. And the work moved off the main thread — the stored raster is decoded with `flowOn`, and the
+bitmap is built in a `produceState` on `Dispatchers.Default`; the blur alone is
+about 300 ms on a laptop at the cap.
+
+**The heatmap opens full screen, and drags.** The card is a thumbnail of a
+raster far finer than a card can show. Tapping it opens a `Dialog` with the
+platform width rule off — covering the system bars, rather than becoming a
+fourth entry in the screen enum, which would put a picture into the back stack
+beside the panels and the details. Pinch to zoom to 8×, drag to pan, and the pan
+is clamped against the *drawn* picture rather than the window: the picture is
+16:9 inside a taller screen, and clamping against the window lets it be dragged
+off the edge and lost. Both views share one bitmap.
+
+**Priority is −2..2 in a single button group.** Only the order of these numbers
+has ever mattered — nothing multiplies by a priority — so ten values asked for a
+precision the mechanism cannot use, and choosing between a 6 and a 7 for a route
+is a question with no answer. Five values, centred on zero, each of which is a
+sentence a person can mean: ganz hinten, eher nicht, keine Meinung, eher schon,
+ganz vorn. A neutral value of 5 out of 10 also invited the user to spend the
+other nine; a neutral value of 0 does not.
+
+Schema v7 rescales it, and **resets every route to 0** rather than mapping the
+old value on. The old default was 5, so all but a handful of routes hold a
+number nobody chose, and nothing distinguishes those from a deliberate 5 —
+mapping would turn a value nobody picked into a value nobody picked on a
+different scale. The table is rebuilt rather than updated, because the column
+default changes and SQLite has no `ALTER COLUMN`: the twelve-step rebuild from
+the SQLite manual, minus the steps for indices and triggers that `route` does
+not have. Foreign keys are off while Room runs a migration, so dropping the
+parent does not cascade into `route_point`, `route_profile` and `route_member`,
+and the rename does not rewrite their `REFERENCES` clauses. Every clause of that
+sentence fails silently, so `MigrationTest` now puts rows in all three children,
+migrates, reads them back, and then deletes the route to prove the cascade still
+works. A restore clamps what it reads, since an archive written before v7
+carries 1..10 — a 9 is not a crash, it is a route whose priority the picker has
+no button for and therefore cannot be changed.
+
+**Both drawings are coloured by effort.** The track on both detail screens, and
+the altitude profile under it, are drawn in four bands: Leicht, Mittel, Intensiv
+and Höchstleistung, at 70 / 80 / 90 % of the user's peak heart rate. The
+boundaries are the conventional ones and are fractions of the peak rather than
+of the heart-rate reserve, which would need a resting rate this app has never
+measured. Four bands because this exists to be seen, and a reader tells four
+colours apart at a glance and seven never; blue → green → orange → red because
+that is the order every heart-rate display in the sport uses and it runs cool to
+hot, which is the one ordering of hues a person infers without a legend. The
+colours are fixed rather than scheme roles, for the reason the start and end
+markers are: a wallpaper must not be able to turn a maximal effort into the
+colour of an easy day.
+
+The peak rate is a setting, defaulting to 180 bpm. Not `220 − age`, which is the
+best known number in amateur sport and one of the worst — its spread across
+people is 10-12 bpm, so for one person in three it is out by more than a whole
+band. It lives in the `meta` table, which the backup archive already carries: a
+setting stored anywhere else is a setting that does not survive a restore.
+Changing it recolours every chart already on screen, because the screens read it
+as a flow rather than at load.
+
+Where the heart rate comes from differs by screen and is worth writing down. A
+recording's is its own samples, carried along with the position and with the
+altitude profile — `Elevation.Point` gained an `hrBpm` for exactly this, because
+a parallel list would have to be thinned in lock-step with the points by every
+caller, and the moment it is not, the colours slide along the line. A route's is
+the per-bin median over its members, which `route_profile.median_hr` has held
+since the beginning; a route point's distance along the route says which bin it
+is in, so it is a lookup rather than an interpolation. Consecutive segments in
+the same band are drawn as one path — two hours is seven thousand segments and,
+ordinarily, a handful of colour runs.
+
+"Ordinarily" is doing work there, and it is why the rate is passed through a
+15 s rolling median first. An effort a few beats under a boundary reaches over
+it every few seconds, and without smoothing the line would alternate between two
+colours every few pixels: noise rendered at the resolution of a decision, and
+also seven thousand paths where there should be six. A median rather than a mean
+because a real effort ramping up is a monotonic run and a median is the identity
+on those — the same property, and now literally the same function
+(`Series.rollingMedian`), that the altitude de-spiking in A.20 rests on. What it
+cannot do is settle a rate balanced exactly on a boundary: that case has no band,
+and no filter can invent it one. The profile draws its band three times at three strengths: full height
+behind the chart, so a hard stretch is legible where the ground is low and the
+curve leaves nothing to colour; under the curve, which is what makes a profile
+read as ground; and the line itself, the only one of the three that is exactly
+where the data is. A stretch with no reading gets no band at all rather than a
+grey one, so absence looks like absence rather than like a fifth band, and the
+legend appears only where there was something to colour.
+
+**The kilometre splits are gone from the route screen.** Removed on request, and
+with them the reconstruction behind them: every member of the route was
+projected onto the route geometry to find its crossings of each kilometre mark,
+which was the most expensive thing the route detail screen did. The route
+profile still holds the per-bin median times — it is what the matcher compares
+against live (§5.7) — so nothing the watch does changed. `Format.speedOverKm`
+went with the table; A.19 is the record of the day that table spent contradicting
+itself.

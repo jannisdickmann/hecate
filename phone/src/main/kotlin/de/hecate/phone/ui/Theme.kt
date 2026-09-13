@@ -7,6 +7,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import de.hecate.core.model.Intensity
 
 /**
  * The phone theme.
@@ -68,6 +69,39 @@ object HecateMapColors {
      */
     val RouteOnHeatLight = Color(0xFFB4560F)
     val RouteOnHeatDark = Color(0xFFF0A868)
+}
+
+/**
+ * The four intensity bands, on the track drawing and the altitude profile.
+ *
+ * Fixed, like the start and end markers above and for the same reason: these
+ * carry meaning. Blue → green → orange → red is the order every heart-rate
+ * display in the sport uses, so it is already read correctly by anybody who has
+ * seen one, and it runs cool to hot, which is the one ordering of hues a person
+ * infers without a legend. A wallpaper must not be able to turn "Höchstleistung"
+ * into the colour of an easy day.
+ *
+ * A legend is still drawn under the chart, because four colours *in this order*
+ * is a convention rather than a fact, and because the bands have names the user
+ * set the boundaries of.
+ */
+object HecateIntensityColors {
+    val Easy = Color(0xFF1E88E5)
+    val Moderate = Color(0xFF2E9E5B)
+    val Hard = Color(0xFFEF6C00)
+    val Peak = Color(0xFFD32F2F)
+
+    /** The colour for a stretch with no heart rate at all — drawn in the
+     *  scheme's own line colour rather than in any band's, since "unknown" is
+     *  not an effort level. */
+    @Composable
+    fun of(intensity: Intensity?): Color = when (intensity) {
+        Intensity.EASY -> Easy
+        Intensity.MODERATE -> Moderate
+        Intensity.HARD -> Hard
+        Intensity.PEAK -> Peak
+        null -> routeLineColor
+    }
 }
 
 /**
