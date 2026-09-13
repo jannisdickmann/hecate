@@ -62,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,6 +109,7 @@ fun HecateApp(
     val busy by vm.busy.collectAsStateWithLifecycle()
     val canGoBack by vm.canGoBack.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(status) {
         status?.let {
@@ -187,14 +189,28 @@ fun HecateApp(
             },
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
-                when (screen) {
-                    is Screen.Recordings -> RecordingsScreen(vm)
-                    is Screen.Routes -> RoutesScreen(vm)
-                    is Screen.Settings -> SettingsScreen(
-                        vm, onPickTcx, onExportArchive, onRestoreArchive, onRequestHealthConnect,
-                    )
-                    is Screen.SessionDetail -> RecordingDetailScreen(vm)
-                    is Screen.RouteDetail -> RouteDetailScreen(vm)
+                // Each screen keeps its own scroll position across a trip away and
+                // back. Screens are swapped by a `when`, so the one being left
+                // drops out of composition and everything it remembered goes with
+                // it — including where the list was — and a back press out of a
+                // recording landed at the top of a year of them.
+                //
+                // This is the mechanism Navigation-Compose uses for the same
+                // problem: a holder that keeps each key's saved state alive while
+                // the composable itself is gone. Nothing inside the screens has to
+                // know about it, because `LazyColumn`'s own state and
+                // `rememberScrollState` are already `rememberSaveable` underneath;
+                // they were being saved into a slot that no longer existed.
+                stateHolder.SaveableStateProvider(scrollKeyOf(screen)) {
+                    when (screen) {
+                        is Screen.Recordings -> RecordingsScreen(vm)
+                        is Screen.Routes -> RoutesScreen(vm)
+                        is Screen.Settings -> SettingsScreen(
+                            vm, onPickTcx, onExportArchive, onRestoreArchive, onRequestHealthConnect,
+                        )
+                        is Screen.SessionDetail -> RecordingDetailScreen(vm)
+                        is Screen.RouteDetail -> RouteDetailScreen(vm)
+                    }
                 }
                 if (busy) {
                     Box(
@@ -207,6 +223,28 @@ fun HecateApp(
             }
         }
     }
+}
+
+/**
+ * What a screen's remembered scroll position is filed under.
+ *
+ * Per detail screen rather than per kind: two recordings scrolled to different
+ * places are two different places, and coming back to one of them should not
+ * land where the other was left. A plain string because it ends up in the saved
+ * instance state, and what goes in there survives a process death and should be
+ * something legible when it does.
+ *
+ * Entries are never evicted. Each is an item index and a pixel offset — a few
+ * bytes — so a session that opens a hundred recordings has spent a few hundred
+ * bytes to remember all of them, which is a better trade than losing the one the
+ * user is about to come back to.
+ */
+private fun scrollKeyOf(screen: Screen): String = when (screen) {
+    is Screen.Recordings -> "recordings"
+    is Screen.Routes -> "routes"
+    is Screen.Settings -> "settings"
+    is Screen.SessionDetail -> "session:${screen.id}"
+    is Screen.RouteDetail -> "route:${screen.id}"
 }
 
 private fun titleOf(screen: Screen): String = when (screen) {

@@ -980,6 +980,17 @@ the wire format, the table name, the archive's directory and the watch's
 filename — renaming it downward would change the backup format in order to
 relabel a screen. `Screen.Recordings` is the boundary.
 
+**Every screen keeps its scroll position.** Screens are swapped by a `when`, so
+the one being left drops out of composition and everything it remembered goes
+with it — which meant a back press out of a recording landed at the top of a
+year of them, and the same on the way out of a route. A `SaveableStateHolder`,
+keyed per screen, keeps each key's saved state alive while its composable is
+gone; it is the mechanism Navigation-Compose uses for exactly this, and nothing
+inside the screens had to change, because `LazyColumn`'s own state and
+`rememberScrollState` were already saveable and were simply being saved into a
+slot that no longer existed. Detail screens are keyed by id rather than by
+kind: two recordings scrolled to different places are two different places.
+
 **Delete asks first, and says what goes.** The dialog names the recording's date,
 distance and duration, and then what is destroyed with it — samples, match log,
 recording history — and what is not: the Health Connect entry stays. Deleting
