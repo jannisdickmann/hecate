@@ -317,6 +317,10 @@ private fun StatusLine(state: RecorderUiState) {
             (if (state.autoPaused) "Auto-Pause" else "Pausiert") to HecateStatus.Pending
         state.phase == RecorderPhase.PREPARING -> "GPS…" to HecateStatus.Pending
         state.offRoute -> "Abweichung" to HecateStatus.Behind
+        // Last, because anything above it is a fact about the activity and this is
+        // only a fact about where the samples come from — but never absent, so
+        // that nothing on this screen can be read as a workout when it is not one.
+        state.replayLabel != null -> state.replayLabel to HecateStatus.Assumed
         else -> return
     }
     Spacer(Modifier.height(3.dp))

@@ -53,6 +53,10 @@ data class RecorderUiState(
     val pendingUploads: Int = 0,
     val bundleVersion: Long = 0,
     val message: String? = null,
+    /** Set while a stored session is being replayed instead of recorded (§6.5).
+     *  Always null in a release build, and shown on the Live page so that a
+     *  screenshot of a replay can never be mistaken for one of a workout. */
+    val replayLabel: String? = null,
 ) {
     val isRecording: Boolean get() = phase == RecorderPhase.ACTIVE || phase == RecorderPhase.PAUSED
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only additions (§6.5). This file is not merged into a release APK, so
+     the replay receiver below exists only in builds installed by tools/emu. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!-- Exported on purpose and unprotected on purpose: `adb shell am
+             broadcast` is the caller, and a permission it cannot hold would defeat
+             the point. Safe because it is absent from every build that is not a
+             debug one, and because all it can name is a file this app already
+             holds in its own storage. -->
+        <receiver
+            android:name=".recorder.ReplayReceiver"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="de.hecate.wear.REPLAY" />
+                <action android:name="de.hecate.wear.REPLAY_STOP" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

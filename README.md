@@ -225,6 +225,78 @@ To re-run something Gradle thinks is already done — after changing a version, 
 ./gradlew :core:test --rerun-tasks --no-build-cache
 ```
 
+## Replaying an activity on the emulator
+
+The Wear emulator's synthetic provider emits one default route with identical
+values every run, so the one thing it could never show is the part of this app
+that is worth looking at: the screen finding a route and settling on it. A replay
+fixes that. A stored activity is played into the recorder in place of the
+sensors, and everything downstream — the matcher, the metrics, the deviation
+haptic, the ongoing notification — runs exactly as it does on a wrist, because
+none of it is told which of the two it is running in.
+
+It writes nothing and uploads nothing. A replay produces no session file and
+never offers anything to the phone, so it cannot reach your history, your routes
+or Health Connect. The receiver that starts one exists only in debug builds.
+
+**1. Put the routes there.** The watch matches against the bundle it holds, and
+on a wrist the phone sends it one. The two emulators are not paired, so it has to
+be put there by hand — without it every replay says "Unbekannt", correctly:
+
+```bash
+./gradlew :core:run --args="bundle --sessions ./fixtures --out bundle.json"
+tools/emu bundle bundle.json
+```
+
+**2. Choose an activity by what it does**, not by the date on it:
+
+```bash
+tools/emu replay --list --archive ~/hecate-sicherung-20260911-1432.zip --bundle bundle.json
+tools/emu replay --list --sessions ./fixtures --bundle bundle.json
+```
+
+**3. Replay it**, from a file or straight out of a backup, at ten times speed:
+
+```bash
+tools/emu replay fixtures/commute.jsonl 10
+tools/emu replay --archive ~/hecate-sicherung-20260911-1432.zip a3f91b2c 10
+tools/emu replay --stop
+```
+
+The watch app comes to the front, the Live page opens with `Wiedergabe ×10` under
+the numbers, and the route name appears when the matcher commits — for a commute
+that is usually a few hundred metres in, which at ×10 is about twenty seconds of
+watching. Pause and stop work as they always do.
+
+**Speed changes the wait and nothing else.** The matcher never reads a clock and
+its hold windows are counted in samples rather than seconds, so a replay at ×10
+commits on exactly the sample a replay at ×1 does, and on the sample the watch
+did on the day. The one figure that is not faithful is the predicted arrival
+time, which is "now plus the seconds remaining" and at ×10 those are real
+seconds. The route name, the ahead/behind figure and the deviation alert are all
+exactly what the wrist would have shown.
+
+Gaps in the recording are replayed as gaps, divided by the speed: a session with
+a 90 s GPS dropout in it sits there for nine seconds at ×10, doing what the watch
+did. That is the point of replaying that particular fixture.
+
+Both halves of this reach into the app's own storage with `adb shell run-as`, so
+they need the **debug** build — `tools/emu install` — and will say so rather than
+failing quietly. On a real watch, never: `run-as` needs a debuggable APK, which
+is a signature change, which costs an uninstall and any session not yet uploaded
+(§6.3).
+
+If nothing happens, the watch says why:
+
+```bash
+adb -s emulator-5554 logcat -s ReplayReceiver:* ReplayFeed:* RecorderService:*
+```
+
+The one failure worth knowing in advance: a broadcast cannot start a foreground
+service while the app is in the background, which is why `tools/emu replay`
+brings it to the front first. If it still refuses, the replay stays armed —
+press any exercise on the watch and it starts the replay instead of a recording.
+
 ## Testing on the wrist
 
 The layer nothing above can substitute for: real GNSS noise, ambient batching,
@@ -373,10 +445,11 @@ adb -s <watch> shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.androi
 adb logcat -s RecorderService:* ExerciseSource:* Uploader:* BootReceiver:*
 ```
 
-A Wear emulator can exercise service lifecycle, permissions and layout, but §6.5
-is blunt about its limit: its synthetic data emits a single default route with
-identical values every run, so it can never test matching. Use it for plumbing,
-never for the matcher.
+A Wear emulator can exercise service lifecycle, permissions and layout, and its
+synthetic data still emits a single default route with identical values every
+run, so it can never *match* anything. What it can now do is replay one of the
+files you just pulled — see **Replaying an activity on the emulator** below,
+which is where the matcher becomes something you can watch rather than read.
 
 ## Backup and restore
 
@@ -529,10 +602,32 @@ be reproduced exactly on a laptop. That is what makes tuning tractable.
 
 # Assert that ambient batching cannot change a decision
 ./gradlew :core:run --args="selfcheck --bundle bundle.json --session fixtures/a.jsonl"
+
+# What is there to replay, and which of them find a route?
+./gradlew :core:run --args="sessions --archive backup.zip --bundle bundle.json"
+
+# Take one out of a backup, in the same JSONL the watch writes
+./gradlew :core:run --args="extract --archive backup.zip --session a3f91b2c"
 ```
 
 Sessions live on the watch at `/data/data/de.hecate/files/sessions/` and
 are plain JSONL — one line per sample, readable with `cat`.
+
+`sessions` is the one to run before choosing anything to replay. Its last column
+is what each activity matches, and with `--bundle` that answer comes from
+actually replaying it against that bundle rather than from what the phone
+concluded on the day:
+
+```
+id         started          type      distance    active  locks onto
+a3f91b2c   2026-03-11 07:42 RUNNING    8.42 km     42:15  Weg zur Arbeit @ 1.2 km, t=131s
+b71c40de   2026-03-14 18:05 BIKING    22.10 km   1:04:33  unknown
+```
+
+The id column is only as long as it needs to be to name one session, and is what
+`extract --session` and `tools/emu replay` take. Without `--bundle`, a backup is
+listed from its database part alone — no samples are parsed, which for a few
+hundred sessions is the difference between instant and not.
 
 ## Permissions to grant by hand after install
 
