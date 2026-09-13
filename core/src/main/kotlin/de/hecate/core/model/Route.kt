@@ -124,6 +124,28 @@ data class RouteBundle(
     val builtAtUtcMs: Long,
     val routes: List<RouteEntry>,
 ) {
+    /**
+     * Every exercise type, most-recorded first, so the watch can put the one the
+     * user actually does at the top of the start screen.
+     *
+     * Counted from [RoutePrior.totalCount], which is how often each route has
+     * been taken — the only history the watch has, since the bundle is all the
+     * phone ever sends it. That makes this an undercount rather than a census:
+     * a recording that never matched a route belongs to no route and is counted
+     * nowhere. It is the right shape of answer anyway, because a type the user
+     * has no routes for is a type they have no history on the watch for either.
+     *
+     * Always every type, never only the ones with a count: the picker has to
+     * offer a first ski tour before there is a ski route to notice. Ties and
+     * zeroes keep the enum's own order, which is a stable sort, so a watch with
+     * no bundle at all shows exactly the list it always showed.
+     */
+    fun typesByFrequency(): List<ExerciseType> {
+        val counts = routes.groupingBy { it.geometry.exerciseType }
+            .fold(0) { total, entry -> total + entry.prior.totalCount }
+        return ExerciseType.entries.sortedByDescending { counts[it] ?: 0 }
+    }
+
     companion object {
         val EMPTY = RouteBundle(version = 0, builtAtUtcMs = 0, routes = emptyList())
     }

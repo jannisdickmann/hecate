@@ -88,10 +88,10 @@ class SessionRepository(
             startedAtUtc = session.header.startedAtUtcMs,
             endedAtUtc = session.footer?.endedAtUtcMs,
             tzOffsetMinutes = session.header.tzOffsetMinutes,
-            exerciseType = session.header.exerciseType.name,
+            exerciseType = session.header.exerciseType,
             activeDurationMs = session.activeDurationMs,
             totalDistanceM = session.footer?.totalDistanceM ?: trackDistance(session),
-            source = session.header.source.name,
+            source = session.header.source,
             // US-9: imported sessions are not re-written to Health Connect.
             hcWriteState = if (session.header.source.isImport) {
                 HcWriteState.SKIPPED

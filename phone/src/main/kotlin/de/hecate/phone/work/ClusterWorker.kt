@@ -15,7 +15,6 @@ import de.hecate.core.heat.Heatmap
 import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.RouteTrack
 import de.hecate.core.heat.SessionTrack
-import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteEntry
 import de.hecate.core.model.RouteGeometry
@@ -25,7 +24,6 @@ import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
-import de.hecate.core.model.SessionSource
 import de.hecate.phone.AppGraph
 import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.RouteEntity
@@ -88,8 +86,8 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     sessionId = s.id,
                     startedAtUtcMs = s.startedAtUtc,
                     tzOffsetMinutes = s.tzOffsetMinutes,
-                    exerciseType = ExerciseType.valueOf(s.exerciseType),
-                    source = SessionSource.valueOf(s.source),
+                    exerciseType = s.exerciseType,
+                    source = s.source,
                 ),
                 samples = samples,
                 footer = SessionFooter(
@@ -145,7 +143,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         RouteNamer.autoName(ordinal, cluster.exerciseType, hours, cluster.lengthM)
                     },
                     nameIsCustom = prior?.nameIsCustom ?: false,
-                    exerciseType = cluster.exerciseType.name,
+                    exerciseType = cluster.exerciseType,
                     lengthM = cluster.lengthM,
                     memberCount = cluster.memberSessionIds.size,
                     medoidSessionId = cluster.medoidSessionId,
@@ -220,7 +218,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             for (sessionId in members) {
                 val s = db.sessions().byId(sessionId) ?: continue
                 val key = de.hecate.core.matcher.RouteMatcher.contextKeyOf(
-                    ExerciseType.valueOf(s.exerciseType), s.startedAtUtc, s.tzOffsetMinutes,
+                    s.exerciseType, s.startedAtUtc, s.tzOffsetMinutes,
                 )
                 priors[key] = (priors[key] ?: 0) + 1
             }
@@ -230,7 +228,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     geometry = RouteGeometry(
                         routeId = route.id,
                         name = route.name,
-                        exerciseType = ExerciseType.valueOf(route.exerciseType),
+                        exerciseType = route.exerciseType,
                         points = points.map { RoutePoint(it.lat, it.lon, it.cumDistM) },
                     ),
                     profile = RouteProfile(

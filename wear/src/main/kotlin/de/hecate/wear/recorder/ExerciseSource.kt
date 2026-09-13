@@ -138,10 +138,21 @@ class ExerciseSource(private val context: Context) {
             override fun onAvailabilityChanged(dataType: DataType<*, *>, availability: Availability) = Unit
         }
 
+        /**
+         * The app's type to the one Health Services starts a session with.
+         *
+         * Health Services knows finer distinctions than this — MOUNTAIN_BIKING,
+         * ALPINE_SKIING, CROSS_COUNTRY_SKIING — and none of them is used, because
+         * Health Connect has no constant to write them back as and the workout
+         * would end up as plain BIKING or SKIING in Google Health anyway. Better
+         * that the watch and the phone agree about what was recorded.
+         */
         fun map(type: ExerciseType): HsExerciseType = when (type) {
             ExerciseType.RUNNING -> HsExerciseType.RUNNING
             ExerciseType.WALKING -> HsExerciseType.WALKING
+            ExerciseType.HIKING -> HsExerciseType.HIKING
             ExerciseType.BIKING -> HsExerciseType.BIKING
+            ExerciseType.SKIING -> HsExerciseType.SKIING
         }
     }
 }

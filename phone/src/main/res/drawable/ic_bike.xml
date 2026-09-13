@@ -8,7 +8,7 @@
   rather than the path being rewritten by hand, which would make the next update
   a transcription exercise.
 
-  Deliberately three files rather than material-icons-extended, which would ship
+  Deliberately five files rather than material-icons-extended, which would ship
   every unused icon given isMinifyEnabled = false (§6.3) — see Appendix A.11.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

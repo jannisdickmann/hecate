@@ -5,6 +5,8 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionSource
 
 /**
  * The phone's schema, §5.5 verbatim where the spec named columns.
@@ -30,10 +32,10 @@ data class SessionEntity(
      *  interrupted and never wrote one (NFR-1); such a session is still ingested. */
     @ColumnInfo(name = "ended_at_utc") val endedAtUtc: Long? = null,
     @ColumnInfo(name = "tz_offset") val tzOffsetMinutes: Int,
-    @ColumnInfo(name = "exercise_type") val exerciseType: String,
+    @ColumnInfo(name = "exercise_type") val exerciseType: ExerciseType,
     @ColumnInfo(name = "active_duration_ms") val activeDurationMs: Long,
     @ColumnInfo(name = "total_distance_m") val totalDistanceM: Double,
-    @ColumnInfo(name = "source") val source: String,
+    @ColumnInfo(name = "source") val source: SessionSource,
     @ColumnInfo(name = "hc_write_state") val hcWriteState: Int = HcWriteState.PENDING,
     @ColumnInfo(name = "hc_error") val hcError: String? = null,
     @ColumnInfo(name = "matched_route_id") val matchedRouteId: Long? = null,
@@ -74,7 +76,7 @@ data class RouteEntity(
     @ColumnInfo(name = "name") val name: String,
     /** True once the user has renamed it: auto-naming must not overwrite that. */
     @ColumnInfo(name = "name_is_custom") val nameIsCustom: Boolean = false,
-    @ColumnInfo(name = "exercise_type") val exerciseType: String,
+    @ColumnInfo(name = "exercise_type") val exerciseType: ExerciseType,
     @ColumnInfo(name = "length_m") val lengthM: Double,
     @ColumnInfo(name = "member_count") val memberCount: Int,
     @ColumnInfo(name = "medoid_session_id") val medoidSessionId: String,

@@ -6,6 +6,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionSource
 import kotlinx.coroutines.flow.Flow
 
 /** A row of the sessions list, without dragging every sample along. */
@@ -13,10 +15,10 @@ data class SessionSummary(
     val id: String,
     val startedAtUtc: Long,
     val tzOffsetMinutes: Int,
-    val exerciseType: String,
+    val exerciseType: ExerciseType,
     val activeDurationMs: Long,
     val totalDistanceM: Double,
-    val source: String,
+    val source: SessionSource,
     val hcWriteState: Int,
     val matchedRouteId: Long?,
     val routeName: String?,
@@ -27,7 +29,7 @@ data class SessionSummary(
 data class RouteSummary(
     val id: Long,
     val name: String,
-    val exerciseType: String,
+    val exerciseType: ExerciseType,
     val lengthM: Double,
     val memberCount: Int,
     val medianDurationMs: Long?,

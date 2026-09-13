@@ -7,7 +7,6 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
-import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RecordedSession
@@ -149,10 +148,8 @@ class ArchiveRepository(
                 sessionId = session.id,
                 startedAtUtcMs = session.startedAtUtc,
                 tzOffsetMinutes = session.tzOffsetMinutes,
-                exerciseType = runCatching { ExerciseType.valueOf(session.exerciseType) }
-                    .getOrDefault(ExerciseType.RUNNING),
-                source = runCatching { SessionSource.valueOf(session.source) }
-                    .getOrDefault(SessionSource.WATCH),
+                exerciseType = session.exerciseType,
+                source = session.source,
             ),
             samples = samples,
             events = events,
@@ -303,8 +300,7 @@ class ArchiveRepository(
      * route's member count.
      */
     private suspend fun isDuplicateImport(row: Archive.Session): Boolean {
-        val source = runCatching { SessionSource.valueOf(row.source) }.getOrNull()
-        if (source?.isImport != true) return false
+        if (!row.source.isImport) return false
         return db.sessions().near(row.startedAtUtc, Tuning.DUPLICATE_START_WINDOW_MS).any {
             Track.likelyDuplicate(
                 it.startedAtUtc, it.activeDurationMs,

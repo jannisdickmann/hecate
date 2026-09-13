@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Emulators for UI work (§6.5's emulator layer): a 45 mm Pixel Watch 4 and a
+# Pixel 8. Plumbing, permissions and layout only — the Wear emulator's synthetic
+# provider emits one default route with identical values every run, so nothing
+# here can test the matcher. Use fixtures and `:core:run replay` for that.
+set -euo pipefail
+
+export ANDROID_HOME="${ANDROID_HOME:-/usr/local/android-sdk}"
+export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
+
+WATCH=emulator-5554
+PHONE=emulator-5556
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+boot() { # avd serial
+  if adb devices | grep -q "^$2[[:space:]]*device"; then echo "$1: already up"; return; fi
+  echo "$1: booting…"
+  # -port pins the serial. Without it the emulator takes the lowest free console
+  # port, so which AVD is 5554 depends on boot order — and a push meant for the
+  # phone silently lands on the watch.
+  #
+  # setsid, not `nohup ... &`: the emulator must outlive this shell, and a plain
+  # background job dies with its parent's process group when the task ends.
+  setsid -f emulator -avd "$1" -port "${2##*-}" -no-boot-anim -gpu host \
+    >/dev/null 2>&1 </dev/null
+  until [ "$(adb -s "$2" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 5; done
+  echo "$1: up on $2"
+}
+
+# Cheap insurance against the above ever being wrong again: the watch image
+# reports "watch" in ro.build.characteristics and the phone image does not.
+assert_roles() {
+  local w p
+  w=$(adb -s "$WATCH" shell getprop ro.build.characteristics 2>/dev/null | tr -d '\r')
+  p=$(adb -s "$PHONE" shell getprop ro.build.characteristics 2>/dev/null | tr -d '\r')
+  case "$w" in *watch*) ;; *) echo "error: $WATCH is not the watch ($w)" >&2; exit 1 ;; esac
+  case "$p" in *watch*) echo "error: $PHONE is the watch, not the phone" >&2; exit 1 ;; esac
+}
+
+# Granted here rather than tapped through: the runtime prompts are not what is
+# being iterated on, and BODY_SENSORS/health.READ_HEART_RATE differ by platform
+# version in a way that is easy to get wrong by hand.
+grant() {
+  for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACCESS_BACKGROUND_LOCATION \
+           BODY_SENSORS ACTIVITY_RECOGNITION POST_NOTIFICATIONS; do
+    adb -s "$1" shell pm grant de.hecate "android.permission.$p" >/dev/null 2>&1 || true
+  done
+  adb -s "$1" shell pm grant de.hecate android.permission.health.READ_HEART_RATE >/dev/null 2>&1 || true
+}
+
+case "${1:-up}" in
+  up)
+    boot hecate_watch4 "$WATCH"
+    boot hecate_pixel8 "$PHONE"
+    ;;
+  watch) boot hecate_watch4 "$WATCH" ;;
+  phone) boot hecate_pixel8 "$PHONE" ;;
+
+  install)
+    assert_roles
+    # -s explicitly: a real watch and phone are often attached over adb at the
+    # same time, and a debug-signed APK over the release install there costs an
+    # uninstall — which costs any session not yet uploaded (§6.3).
+    ( cd "$ROOT" && ./gradlew :wear:assembleDebug :phone:assembleDebug )
+    adb -s "$WATCH" install -r -t "$ROOT/wear/build/outputs/apk/debug/wear-debug.apk"
+    adb -s "$PHONE" install -r -t "$ROOT/phone/build/outputs/apk/debug/phone-debug.apk"
+    grant "$WATCH"; grant "$PHONE"
+    adb -s "$WATCH" shell monkey -p de.hecate -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    adb -s "$PHONE" shell monkey -p de.hecate -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    echo "installed and launched on both"
+    ;;
+
+  run)   # synthetic exercise, so the Live page has something to render
+    adb -s "$WATCH" shell am broadcast -a whs.USE_SYNTHETIC_PROVIDERS com.google.android.wearable.healthservices >/dev/null
+    adb -s "$WATCH" shell am broadcast -a "whs.synthetic.user.START_${2:-RUNNING}" com.google.android.wearable.healthservices >/dev/null
+    echo "synthetic ${2:-RUNNING} started — start the recording on the watch"
+    ;;
+  pause) adb -s "$WATCH" shell am broadcast -a whs.AUTO_PAUSE_DETECTED com.google.android.wearable.healthservices >/dev/null ;;
+  stop)  adb -s "$WATCH" shell am broadcast -a whs.synthetic.user.STOP_EXERCISE com.google.android.wearable.healthservices >/dev/null ;;
+
+  push)  # a backup ZIP from the computer into the phone's Downloads, where the
+         # app's Storage-Access-Framework picker (Einstellungen → Sicherung einlesen)
+         # it. No storage permission is involved on either side.
+    assert_roles
+    [ -f "${2:-}" ] || { echo "usage: tools/emu push <archive.zip>" >&2; exit 2; }
+    adb -s "$PHONE" push "$2" /sdcard/Download/
+    echo "pushed — in the app: Einstellungen → Sicherung einlesen → ☰ → Downloads"
+    ;;
+
+  shot) # into build/, which .gitignore already covers — screenshots of a
+        # restored backup are personal data and must not land in the tree.
+    assert_roles
+    mkdir -p "$ROOT/build/screenshots"
+    out="$ROOT/build/screenshots/${2:-shot}"
+    adb -s "$WATCH" exec-out screencap -p > "$out-watch.png"
+    adb -s "$PHONE" exec-out screencap -p > "$out-phone.png"
+    echo "wrote $out-watch.png $out-phone.png"
+    ;;
+
+  log)   adb -s "$WATCH" logcat -s Hecate:V AndroidRuntime:E ;;
+  down)  adb -s "$WATCH" emu kill 2>/dev/null || true; adb -s "$PHONE" emu kill 2>/dev/null || true ;;
+
+  *) echo "usage: tools/emu {up|watch|phone|install|push <zip>|run [RUNNING|WALKING|BIKING]|pause|stop|shot [prefix]|log|down}" >&2; exit 2 ;;
+esac

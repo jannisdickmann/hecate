@@ -60,7 +60,9 @@ Stories are ordered by build sequence. Each has acceptance criteria.
 distance until I stop it.*
 
 - Start/pause/resume/stop from the watch, no phone required, no phone in range.
-- Exercise types: `RUNNING`, `WALKING`, `BIKING` (outdoor, GPS on).
+- Exercise types: `RUNNING`, `WALKING`, `HIKING`, `BIKING`, `SKIING`
+  (outdoor, GPS on). The original three were `RUNNING`, `WALKING` and
+  `BIKING`; the other two were added later, under the rule in A.18.
 - Survives: screen off for the whole activity, app process death, watch reboot
   mid-activity (recording resumes or the partial session is preserved).
 - Auto-pause events from Health Services are honoured and recorded.
@@ -983,17 +985,18 @@ recording history — and what is not: the Health Connect entry stays. Deleting
 the only complete copy of a workout on one tap was the last unguarded
 irreversible action in the app.
 
-**Activity types have icons.** Three vector drawables in `res/drawable`, the
-official Material Symbols paths from `google/material-design-icons`, shown on
+**Activity types have icons.** One vector drawable per type in `res/drawable`,
+the official Material Symbols paths from `google/material-design-icons`, shown on
 both lists and both detail screens. Not `material-icons-extended`, for the
 reason A.11 already gives: release builds run with `isMinifyEnabled = false`, so
 an unused icon is an icon that ships. Symbols are drawn in a 960×960 box whose
 origin is the baseline — the viewBox is `0 -960 960 960` — and Android's
 viewport has no negative origin, so each drawable wraps its path in a
 `<group android:translateY="960">` rather than having the path rewritten by
-hand, which would make the next update a transcription exercise. An exercise
-type this build does not recognise draws no icon at all, rather than defaulting
-to a plausible wrong one.
+hand, which would make the next update a transcription exercise. The lookup is
+over the enum rather than over its name, so a type without a drawable is a
+compile error rather than a blank space at run time — which is what it used to
+be, back when the icon was chosen by matching the string `"RUNNING"`.
 
 **Fast and hard recordings are marked.** A recording is marked fast when its
 average speed is at or above the 75th percentile of the recordings on the same
@@ -1323,3 +1326,93 @@ is a separate process with its own validation, and the deadlock needs a real
 the prediction held. What the laptop *could* have done, and now does, is make the
 failure loud: the recorder says what went wrong, and the sweep means a missed
 delivery is recoverable instead of permanent.
+
+### A.18 Two more exercise types, and the enums that made them safe to add
+
+v1 recorded three types. It now records five: `HIKING` and `SKIING` joined
+`RUNNING`, `WALKING` and `BIKING`.
+
+**The rule for adding one.** A type has to exist on both sides of the round
+trip — Health Services must be able to start a session of it on the watch, and
+Health Connect must have an `EXERCISE_TYPE_*` for the phone to write it back as.
+Both of these do: `HIKING` is 37 and `SKIING` is 61 in Health Connect, and both
+are constants of `androidx.health.services.client.data.ExerciseType`. Health
+Services knows finer distinctions that Health Connect cannot express —
+`MOUNTAIN_BIKING`, `ALPINE_SKIING`, `CROSS_COUNTRY_SKIING` — and none of them is
+used, because a type that collapses into another one on write-back leaves the
+watch and Google Health disagreeing about what the workout was.
+
+**What the compiler found, and what it could not.** Four `when` expressions over
+the type are exhaustive and broke until each was handled: the Health Services
+mapping, the Health Connect constant, the route-name word, and the watch's
+picker label. Two lookups did not break, because they matched on the *name*:
+`Format.exerciseType("RUNNING")` returned the raw string for anything else, and
+`ActivityIcon` drew nothing. Both were silent, both would have shipped, and both
+are now `when` expressions over the enum. That is the general shape of this
+entry: every place the type had been a `String` is now the type itself.
+
+**The three German words are three jobs.** `label` is what the user taps and
+reads (*Fahrradfahren*), `sessionTitle` is the noun Health Connect shows in its
+own list (*Radfahrt*), `routeWord` goes inside an auto-generated route name
+(*Route 4 (Rad abends, 8,2 km)*). They live on the enum rather than in each
+module's formatter, because the watch and the phone had been keeping their own
+copies and had already drifted: walking was *Gehen* in one place and
+*Spaziergang* in the other.
+
+**No migration, and none was needed.** `exercise_type` and `source` have always
+been `TEXT` holding the constant's name. Only the Kotlin type either side of them
+changed, so the schema is untouched at v5 and every row an older build wrote
+reads back unaltered — including the walks that were really hikes, which stay
+walks. Nothing in the row says otherwise, and guessing would be worse than
+leaving them.
+
+**Unknown names are now an error rather than a run.** `ExerciseType.parse`
+returns null instead of falling back, the Room converter throws naming the value
+it could not read, and the backup archive carries both enums as enums, so it
+fails to parse rather than mislabelling. The one situation that produces an
+unknown name is a build that knew a type this one does not — a downgrade, or an
+archive restored from a newer phone — and in every one of those the honest
+outcome is a loud failure. The alternative is what the code used to do: file the
+workout as a run, permanently, with nothing left to say it was ever anything
+else.
+
+**The import tables, and why they are ordered.** Both importers now share one
+keyword table, `ActivityNames`, so a name the takeout understands cannot be a
+name the TCX reader silently gets wrong. It is a list rather than a `when`
+because the order is load bearing, and the containment runs the wrong way in
+more places than one would guess: `Langlauf` ends in "lauf" and is not a run,
+`Wanderung` contains "run" and is not a run either — that one was found by the
+test and not by reading — `Skitourengehen` contains "geh" and is not a walk, and
+`Mountainbiking` contains "mountain", which is why there is deliberately no bare
+"mountain" keyword for hiking. Indoor variants (`Laufband`, `Indoor Cycling`,
+`Ergometer`) and look-alikes (`Eislaufen`, `Wasserski`, `Rollschuhlaufen`) are
+refused ahead of the table: they share every root the outdoor ones do and have
+no route in them.
+
+**And the TCX reader stopped guessing.** `exerciseTypeOf` used to end in
+`else -> RUNNING`, so a ski tour exported as TCX imported as a run, silently,
+and the clusterer got a route nobody can ever run. It returns null now, and a
+file holding nothing this app records is rejected with the sport's own name in
+the message.
+
+**The watch offers them most-used first.** Five buttons is enough that a fixed
+order costs a scroll before every ski tour, so the start screen sorts them by how
+often each type has been recorded. The count comes from the route bundle — the
+sum of `RoutePrior.totalCount` over the routes of that type — because the bundle
+is the only history the watch has. That makes it an undercount rather than a
+census: a recording that never matched a route belongs to no route and is
+counted nowhere. Every type stays on the list whatever its count, since the
+picker has to offer a first ski tour before there is a ski route to notice, and
+the sort is stable, so ties and zeroes keep the enum's own order and a watch with
+no bundle shows exactly the list it always showed. Read off the main thread and
+keyed on the bundle version, so a bundle arriving while the screen is up
+reorders it.
+
+**What this does not fix.** A route is per type, so the same forest track walked
+once and hiked once is two routes with separate histories — the clusterer treats
+different types as infinitely far apart, and that is the intended behaviour, not
+an oversight. And skiing has a caveat worth writing down before the first ski
+day: `BACKTRACK_SLACK_M` is 10 m, because position along a route advancing is
+what disambiguates loops, and a lift ride back up a piste is a long run
+backwards along the descent just matched. Repeated laps of one piste are
+unlikely to match the way a loop does.

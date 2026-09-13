@@ -61,8 +61,9 @@ object TakeoutImport {
          * that was already recorded properly.
          */
         val includeAutoDetected: Boolean = true,
-        /** Activity names to force onto a type, for what [GoogleHealth.exerciseTypeOf]
-         *  cannot map. `Skiing=WALKING` is the reason this exists. */
+        /** Activity names to force onto a type, for what
+         *  [de.hecate.core.model.ActivityNames] cannot map — a sport this app
+         *  does not record, which the user nevertheless wants the route of. */
         val typeOverrides: Map<String, ExerciseType> = emptyMap(),
         /** Sessions already in the app, from a backup exported by the phone.
          *  Anything here that looks like the same workout is left out. */
@@ -112,7 +113,8 @@ object TakeoutImport {
         // once however many workouts fall in it, and dropped before the next.
         val sessions = ArrayList<RecordedSession>(candidates.size)
         // Google's own name for each workout, kept only so that a session left
-        // out later can be reported as "Hike" rather than as "WALKING".
+        // out later can be reported under the name the export gave it — "Outdoor
+        // Bike" rather than "Fahrradfahren", which is all the type could say.
         val activityNames = HashMap<String, String>(candidates.size * 2)
         for ((_, sameDay) in candidates.groupBy { UTC_DATE.format(Instant.ofEpochMilli(it.startUtcMs)) }) {
             // A workout that runs over UTC midnight has its tail in the next day's
@@ -331,7 +333,7 @@ object TakeoutImport {
                 skipped.add(
                     Skipped(
                         session.header.startedAtUtcMs,
-                        activityNames[session.id] ?: session.header.exerciseType.name,
+                        activityNames[session.id] ?: session.header.exerciseType.label,
                         "schon in der App vorhanden (${clash.id})",
                         notable = true,
                     ),
@@ -379,11 +381,11 @@ object TakeoutImport {
             startedAtUtc = header.startedAtUtcMs,
             endedAtUtc = footer?.endedAtUtcMs,
             tzOffsetMinutes = header.tzOffsetMinutes,
-            exerciseType = header.exerciseType.name,
+            exerciseType = header.exerciseType,
             activeDurationMs = activeDurationMs,
             totalDistanceM = footer?.totalDistanceM?.takeIf { it > 0 }
                 ?: Track.of(this)?.totalDistanceM ?: 0.0,
-            source = header.source.name,
+            source = header.source,
             hcWriteState = HC_WRITE_STATE_SKIPPED,
             avgHr = if (hr.isEmpty()) null else hr.average(),
             ingestedAt = System.currentTimeMillis(),

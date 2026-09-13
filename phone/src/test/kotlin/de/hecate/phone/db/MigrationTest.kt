@@ -3,6 +3,8 @@ package de.hecate.phone.db
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionSource
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -12,6 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.util.TimeZone
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -103,6 +106,38 @@ class MigrationTest {
         assertEquals(null, row.endedAtUtc)
     }
 
+    // ------------------------------------------------------------ stored enums
+
+    /**
+     * `exercise_type` and `source` became enums without becoming a migration.
+     *
+     * The columns have always held the constant's name and still do; only the
+     * Kotlin type either side of them changed. So every row an older build wrote
+     * reads back unaltered — including the walks that were really hikes, which
+     * stay walks, because nothing in the row says otherwise.
+     */
+    @Test
+    fun `a row written before the enum existed reads back as the type it names`() {
+        SchemaFixture.create(file, 1)
+        insertSessionV1("old-walk", JULY, tzOffset = 60, source = "WATCH", type = "WALKING")
+
+        val row = runBlocking { open().sessions().byId("old-walk") }
+        assertNotNull(row)
+        assertEquals(ExerciseType.WALKING, row.exerciseType)
+        assertEquals(SessionSource.WATCH, row.source)
+    }
+
+    /** The other half of Appendix A.18: a name from the future is an error. */
+    @Test
+    fun `a type this build does not know is refused rather than read as a run`() {
+        SchemaFixture.create(file, 1)
+        insertSessionV1("from-the-future", JULY, tzOffset = 60, source = "WATCH", type = "PARAGLIDING")
+
+        val dao = open().sessions()
+        val e = assertFailsWith<IllegalArgumentException> { runBlocking { dao.byId("from-the-future") } }
+        assertTrue(e.message!!.contains("PARAGLIDING"), e.message!!)
+    }
+
     // ------------------------------------------------------------------ v4→v5
 
     @Test
@@ -161,8 +196,13 @@ class MigrationTest {
         .build()
         .also { db = it }
 
-    private fun insertSessionV1(id: String, startedAtUtc: Long, tzOffset: Int, source: String) =
-        rawInsert(id, startedAtUtc, tzOffset, source, endedAtUtc = null)
+    private fun insertSessionV1(
+        id: String,
+        startedAtUtc: Long,
+        tzOffset: Int,
+        source: String,
+        type: String = "RUNNING",
+    ) = rawInsert(id, startedAtUtc, tzOffset, source, endedAtUtc = null, type = type)
 
     private fun insertSessionV4(id: String, startedAtUtc: Long, tzOffset: Int, source: String) =
         rawInsert(id, startedAtUtc, tzOffset, source, endedAtUtc = startedAtUtc + 1_800_000L)
@@ -178,6 +218,7 @@ class MigrationTest {
         tzOffset: Int,
         source: String,
         endedAtUtc: Long?,
+        type: String = "RUNNING",
     ) {
         android.database.sqlite.SQLiteDatabase.openDatabase(
             file.path,
@@ -190,7 +231,7 @@ class MigrationTest {
                 if (endedAtUtc != null) append(", ended_at_utc")
             }
             val values = arrayListOf<Any>(
-                id, startedAtUtc, tzOffset, "RUNNING", 1_500_000L, 5000.0, source, 3, 0L,
+                id, startedAtUtc, tzOffset, type, 1_500_000L, 5000.0, source, 3, 0L,
             )
             endedAtUtc?.let { values.add(it) }
             raw.execSQL(

@@ -83,9 +83,15 @@ class RecorderService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val type = runCatching {
-                    ExerciseType.valueOf(intent.getStringExtra(EXTRA_TYPE) ?: ExerciseType.RUNNING.name)
-                }.getOrDefault(ExerciseType.RUNNING)
+                // The extra is a String because an Intent cannot carry the enum
+                // itself. It is written by the picker in this same process, so an
+                // unreadable one is a bug rather than a downgrade — but starting
+                // *something* still beats refusing to record (NFR-1), so it falls
+                // back to running and says so.
+                val raw = intent.getStringExtra(EXTRA_TYPE)
+                val type = ExerciseType.parse(raw) ?: ExerciseType.RUNNING.also {
+                    Log.w(TAG, "Sportart im Intent unlesbar ($raw), starte als ${it.label}")
+                }
                 startForegroundNow(type)
                 scope.launch { beginSession(type) }
             }

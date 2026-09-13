@@ -3,12 +3,51 @@ package de.hecate.core.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** The three outdoor, GPS-on exercise types v1 records (US-1). */
+/**
+ * The outdoor, GPS-on exercise types the app records (US-1).
+ *
+ * Every one of them exists on both sides of the round trip — Health Services can
+ * start a session of that type on the watch, and Health Connect has a matching
+ * `EXERCISE_TYPE_*` for the phone to write it back as. That is the rule for
+ * adding another: Health Services offers finer grain than Health Connect can
+ * express (`MOUNTAIN_BIKING`, `ALPINE_SKIING`, `CROSS_COUNTRY_SKIING`), and a
+ * type that collapses into another one on write-back would leave the watch and
+ * Google Health disagreeing about what the workout was.
+ *
+ * The three German words are three different jobs, which is why they are not one
+ * string: [label] is what the user taps and reads, [sessionTitle] is the noun
+ * Health Connect shows in its own list, and [routeWord] goes inside an
+ * auto-generated route name. They live here rather than in each module's
+ * formatter so that the watch and the phone cannot drift apart.
+ */
 @Serializable
-enum class ExerciseType {
-    RUNNING,
-    WALKING,
-    BIKING,
+enum class ExerciseType(
+    /** Picker, lists, detail screens — everywhere the user reads the type. */
+    val label: String,
+    /** The title Health Connect shows for a written session. A noun. */
+    val sessionTitle: String,
+    /** The word [de.hecate.core.cluster.RouteNamer] builds route names from. */
+    val routeWord: String,
+) {
+    RUNNING("Laufen", "Lauf", "Lauf"),
+    WALKING("Spaziergang", "Spaziergang", "Gehen"),
+    HIKING("Wandern", "Wanderung", "Wandern"),
+    BIKING("Fahrradfahren", "Radfahrt", "Rad"),
+    SKIING("Skifahren", "Skitour", "Ski"),
+    ;
+
+    companion object {
+        /**
+         * A stored name back to a value, or null if this build has never heard
+         * of it.
+         *
+         * Deliberately not [valueOf] with a fallback. The one way an unknown name
+         * can reach a database or an archive is a build that knew a type this one
+         * does not, and quietly calling that a run would file the workout under
+         * the wrong sport for good — see Appendix A.18.
+         */
+        fun parse(name: String?): ExerciseType? = entries.firstOrNull { it.name == name }
+    }
 }
 
 /** Where a session came from. Imported sessions are never written back to Health
@@ -32,6 +71,12 @@ enum class SessionSource {
      *  kind a restore is allowed to reject as a duplicate of something already
      *  in the database. */
     val isImport: Boolean get() = this != WATCH
+
+    companion object {
+        /** As [ExerciseType.parse], and for the same reason: a name this build
+         *  does not know is an error, not a session recorded on the watch. */
+        fun parse(name: String?): SessionSource? = entries.firstOrNull { it.name == name }
+    }
 }
 
 /**

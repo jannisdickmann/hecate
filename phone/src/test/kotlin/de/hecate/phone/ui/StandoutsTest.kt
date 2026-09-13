@@ -1,5 +1,7 @@
 package de.hecate.phone.ui
 
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionSource
 import de.hecate.phone.db.SessionSummary
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -24,10 +26,10 @@ class StandoutsTest {
         id = id,
         startedAtUtc = 1_700_000_000_000,
         tzOffsetMinutes = 60,
-        exerciseType = "RUNNING",
+        exerciseType = ExerciseType.RUNNING,
         activeDurationMs = 3_600_000,
         totalDistanceM = kmh * 1000.0,
-        source = "WATCH",
+        source = SessionSource.WATCH,
         hcWriteState = 1,
         matchedRouteId = routeId,
         routeName = routeId?.let { "Route $it" },

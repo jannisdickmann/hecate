@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +48,8 @@ import de.hecate.wear.AppGraph
 import de.hecate.wear.recorder.RecorderPhase
 import de.hecate.wear.recorder.RecorderService
 import de.hecate.wear.recorder.RecorderUiState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The whole watch UI (§5.3): a start screen until something is recording, then
@@ -83,6 +86,14 @@ fun HecateWearApp() {
 private fun StartScreen(state: RecorderUiState) {
     val context = LocalContext.current
     val listState = rememberScalingLazyListState()
+    // Most-recorded type first, counted from the bundle the phone last sent.
+    // Read off the main thread and keyed on the bundle version, so a bundle
+    // arriving while this screen is up reorders it; before the first bundle, and
+    // on a watch whose phone has never had enough history, this is exactly the
+    // enum's own order.
+    val types by produceState(ExerciseType.entries.toList(), state.bundleVersion) {
+        value = withContext(Dispatchers.IO) { AppGraph.bundles.load().typesByFrequency() }
+    }
     ScreenScaffold(listState) { contentPadding ->
         ScalingLazyColumn(
             state = listState,
@@ -90,11 +101,11 @@ private fun StartScreen(state: RecorderUiState) {
             modifier = Modifier.fillMaxSize(),
         ) {
             item { ListHeader { Text("Hecate") } }
-            items(ExerciseType.entries.size) { i ->
-                val type = ExerciseType.entries[i]
+            items(types.size) { i ->
+                val type = types[i]
                 Button(
                     onClick = { RecorderService.start(context, type) },
-                    label = { Text(labelFor(type)) },
+                    label = { Text(type.label) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -123,12 +134,6 @@ private fun StartScreen(state: RecorderUiState) {
             }
         }
     }
-}
-
-private fun labelFor(type: ExerciseType): String = when (type) {
-    ExerciseType.RUNNING -> "Laufen"
-    ExerciseType.WALKING -> "Gehen"
-    ExerciseType.BIKING -> "Radfahren"
 }
 
 // --------------------------------------------------------------------- pager

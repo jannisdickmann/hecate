@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.Sample
 import de.hecate.phone.AppGraph
 import de.hecate.phone.db.HcWriteState
@@ -47,7 +46,7 @@ class HealthConnectWorker(context: Context, params: WorkerParameters) :
                 startedAtUtcMs = session.startedAtUtc,
                 endedAtUtcMs = session.endedAtUtc,
                 tzOffsetMinutes = session.tzOffsetMinutes,
-                exerciseType = ExerciseType.valueOf(session.exerciseType),
+                exerciseType = session.exerciseType,
                 activeDurationMs = session.activeDurationMs,
                 totalDistanceM = session.totalDistanceM,
                 samples = samples,

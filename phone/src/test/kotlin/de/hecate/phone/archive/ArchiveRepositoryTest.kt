@@ -3,6 +3,7 @@ package de.hecate.phone.archive
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
@@ -150,6 +151,28 @@ class ArchiveRepositoryTest {
 
     // ------------------------------------------------------------------ merge
 
+    /**
+     * The archive carries the type as the enum's own name, so a build that gained
+     * a type writes a word an older build has never seen. That is the case this
+     * covers from the good side: every type this build records survives the round
+     * trip as itself, rather than arriving back as a run.
+     */
+    @Test
+    fun `every exercise type survives the round trip`(): Unit = runBlocking {
+        for ((i, type) in ExerciseType.entries.withIndex()) {
+            val id = "type-$i"
+            val row = sessionRow(id, 1_784_109_600_000L + i * 86_400_000L, SessionSource.WATCH)
+            source.sessions().insert(row.copy(exerciseType = type))
+            source.sessions().insertSamples(sampleRows(id))
+        }
+        ArchiveRepository(context, source).export(uri())
+        ArchiveRepository(context, target).restore(uri())
+
+        for ((i, type) in ExerciseType.entries.withIndex()) {
+            assertEquals(type, target.sessions().byId("type-$i")!!.exerciseType, type.name)
+        }
+    }
+
     @Test
     fun `restoring over a populated database changes nothing already there`(): Unit = runBlocking {
         seed(source)
@@ -256,10 +279,10 @@ class ArchiveRepositoryTest {
             startedAtUtc = startedAtUtc,
             endedAtUtc = startedAtUtc + 29_000L,
             tzOffsetMinutes = 120,
-            exerciseType = "RUNNING",
+            exerciseType = ExerciseType.RUNNING,
             activeDurationMs = 29_000L,
             totalDistanceM = 60.0,
-            source = source.name,
+            source = source,
             hcWriteState = HcWriteState.SKIPPED,
             ingestedAt = 0L,
         )

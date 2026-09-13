@@ -453,7 +453,7 @@ have learned had it been installed all along — same code, same thresholds.
 | `--input` | a ZIP, a directory, or a quoted glob. Default: every `*.zip` in `takeout/` |
 | `--out` | a file, or a directory to name one in. Default: `takeout/parsed/` |
 | `--existing` | a backup exported from the phone; anything already in it is left out |
-| `--map` | `"Skiing=WALKING,Tennis=RUNNING"`, for sports this app has no type for |
+| `--map` | `"Rudern=WALKING,Tennis=RUNNING"`, for sports this app has no type for |
 | `--zone` | overrides the zone from the takeout's own profile |
 | `--no-auto` | ignore auto-detected activities, even ones carrying a track |
 | `--verbose` | list every workout that was not imported, not just the first twenty |
@@ -478,8 +478,12 @@ run:
 - Workouts with no positions in the export. Google keeps the exercise long
   after it has dropped the day's position file, so the early history is summary
   rows and nothing else.
-- Sports with no type here — skiing, tennis. `--map` forces one through if you
-  want the track anyway.
+- Sports with no type here — rowing, tennis, and anything indoor, which has no
+  route in it whatever it is called. `--map` forces one through if you want the
+  track anyway. The names it does recognise are generous and shared with the TCX
+  reader: `Mountainbiking`, `Rennrad` and `Ride` are all rides, `Bergwandern`
+  and `Trekking` are hikes, `Langlauf` is skiing and not — despite ending in
+  "lauf" — a run.
 - Auto-detected activities that overlap a workout you started yourself. The
   watch routinely "notices" a walk that is the first ten minutes of a ride it
   was already recording.

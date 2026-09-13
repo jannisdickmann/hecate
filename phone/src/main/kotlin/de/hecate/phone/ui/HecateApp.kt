@@ -73,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import de.hecate.core.model.ExerciseType
 import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
@@ -282,7 +283,7 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
                 // A matched route is the whole point of the app, so it gets a
                 // filled pill rather than another line of grey text.
                 s.routeName?.let { RoutePill(it) }
-                    ?: Quiet(if (Format.isImport(s.source)) "importiert" else "keine Route")
+                    ?: Quiet(if (s.source.isImport) "importiert" else "keine Route")
             }
         }
     }
@@ -351,7 +352,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         PolylineView(d.geometry)
         Spacer(Modifier.height(12.dp))
 
-        KeyValue("Art", Format.exerciseType(d.summary.exerciseType))
+        KeyValue("Art", d.summary.exerciseType.label)
         KeyValue("Dauer (aktiv)", Format.duration(d.summary.activeDurationMs))
         KeyValue("Distanz", Format.distance(d.summary.totalDistanceM))
         KeyValue("Ø Herzfrequenz", "${Format.hr(d.summary.avgHr)} bpm")
@@ -570,7 +571,7 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
         Spacer(Modifier.height(16.dp))
 
-        KeyValue("Art", Format.exerciseType(d.exerciseType))
+        KeyValue("Art", d.exerciseType.label)
         KeyValue("Länge", Format.distance(d.lengthM))
         KeyValue("Aufzeichnungen", d.memberCount.toString())
         KeyValue("Median-Zeit", d.medianDurationMs?.let { Format.duration(it) } ?: "–")
@@ -780,24 +781,29 @@ private fun ClusteringBanner() {
 // ----------------------------------------------------------------------- bits
 
 /**
- * The icon for an exercise type (US-8), or nothing at all for a type this build
- * does not know — a blank is better than confidently drawing the wrong activity.
+ * The icon for an exercise type (US-8).
+ *
+ * Over the enum, so a type added without a drawable is a compile error. It used
+ * to match on the name and fall through to drawing nothing, which was the right
+ * answer to the wrong question: a blank icon beats a confidently wrong one, but
+ * not noticing until the phone is in your hand beats both.
  */
 @Composable
 private fun ActivityIcon(
-    type: String,
+    type: ExerciseType,
     modifier: Modifier = Modifier,
     tint: Color = LocalContentColor.current,
 ) {
     val res = when (type) {
-        "RUNNING" -> R.drawable.ic_run
-        "WALKING" -> R.drawable.ic_walk
-        "BIKING" -> R.drawable.ic_bike
-        else -> return
+        ExerciseType.RUNNING -> R.drawable.ic_run
+        ExerciseType.WALKING -> R.drawable.ic_walk
+        ExerciseType.HIKING -> R.drawable.ic_hike
+        ExerciseType.BIKING -> R.drawable.ic_bike
+        ExerciseType.SKIING -> R.drawable.ic_ski
     }
     Icon(
         painter = painterResource(res),
-        contentDescription = Format.exerciseType(type),
+        contentDescription = type.label,
         modifier = modifier,
         tint = tint,
     )

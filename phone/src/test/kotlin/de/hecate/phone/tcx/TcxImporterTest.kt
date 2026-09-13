@@ -62,7 +62,7 @@ class TcxImporterTest {
         assertEquals(1, report.imported)
         assertEquals(0, report.failed, report.messages.toString())
         val row = db.sessions().all().single()
-        assertEquals(SessionSource.IMPORT_TCX.name, row.source)
+        assertEquals(SessionSource.IMPORT_TCX, row.source)
         // US-9: it came out of Health Connect, so it never goes back in.
         assertEquals(HcWriteState.SKIPPED, row.hcWriteState)
         assertTrue(db.sessions().samples(row.id).size >= 3)

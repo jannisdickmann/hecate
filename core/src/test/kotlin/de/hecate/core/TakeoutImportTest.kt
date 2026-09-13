@@ -72,15 +72,16 @@ class TakeoutImportTest {
     }
 
     @Test
-    fun `activity names map to the three types`() {
+    fun `activity names map to the recorded types`() {
         assertEquals(ExerciseType.BIKING, GoogleHealth.exerciseTypeOf("Outdoor Bike"))
         assertEquals(ExerciseType.BIKING, GoogleHealth.exerciseTypeOf("Radfahren im Freien"))
-        assertEquals(ExerciseType.WALKING, GoogleHealth.exerciseTypeOf("Hike"))
+        assertEquals(ExerciseType.HIKING, GoogleHealth.exerciseTypeOf("Hike"))
         assertEquals(ExerciseType.WALKING, GoogleHealth.exerciseTypeOf("Outdoor Walk"))
         assertEquals(ExerciseType.RUNNING, GoogleHealth.exerciseTypeOf("Outdoor Run"))
-        // Skiing is a real track this app has no type for. Refusing it is the
-        // point; filing it under "running" would poison the clusterer.
-        assertNull(GoogleHealth.exerciseTypeOf("Skiing"))
+        assertEquals(ExerciseType.SKIING, GoogleHealth.exerciseTypeOf("Skiing"))
+        // Rowing is a real outdoor track this app has no type for. Refusing it is
+        // the point; filing it under "running" would poison the clusterer.
+        assertNull(GoogleHealth.exerciseTypeOf("Rudern"))
         assertNull(GoogleHealth.exerciseTypeOf("Tennis"))
     }
 
@@ -164,14 +165,14 @@ class TakeoutImportTest {
 
     @Test
     fun `an unsupported sport is refused and said out loud`() {
-        val skip = read().skipped.single { it.activityName == "Skiing" }
+        val skip = read().skipped.single { it.activityName == "Rudern" }
         assertTrue(skip.notable, "a workout the user started is worth reporting")
         assertTrue(skip.reason.contains("--map"), "the report should say how to force it")
     }
 
     @Test
     fun `an unsupported sport can be forced onto a type`() {
-        val result = read(TakeoutImport.Options(typeOverrides = mapOf("skiing" to ExerciseType.WALKING)))
+        val result = read(TakeoutImport.Options(typeOverrides = mapOf("rudern" to ExerciseType.WALKING)))
         assertEquals(ExerciseType.WALKING, result.sessions.single { it.id == "gh-400" }.header.exerciseType)
     }
 
@@ -207,10 +208,10 @@ class TakeoutImportTest {
             id = "7f3c-not-a-google-id",
             startedAtUtc = iso("2026-02-14T14:00:00Z") + 30_000L,
             tzOffsetMinutes = 60,
-            exerciseType = "BIKING",
+            exerciseType = ExerciseType.BIKING,
             activeDurationMs = 4_000L,
             totalDistanceM = 1234.0,
-            source = SessionSource.WATCH.name,
+            source = SessionSource.WATCH,
             hcWriteState = 1,
         )
         val result = read(TakeoutImport.Options(existing = listOf(mine)))
@@ -221,7 +222,7 @@ class TakeoutImportTest {
     @Test
     fun `the row a restore reads says the session came from an export`() {
         val row = read().database.sessions.single { it.id == "gh-100" }
-        assertEquals(SessionSource.IMPORT_TAKEOUT.name, row.source)
+        assertEquals(SessionSource.IMPORT_TAKEOUT, row.source)
         // 3 is HcWriteState.SKIPPED. These workouts came out of Health Connect;
         // writing them back would duplicate every one of them there.
         assertEquals(3, row.hcWriteState)
@@ -314,7 +315,7 @@ class TakeoutImportTest {
         appendLine("100,2026-02-14T14:00:00Z,2026-02-14T14:00:04Z,+01:00,Bike,TRACKER,1234000,\"[Type: SPLIT, Steps: 1,2,3]\"")
         appendLine("200,2026-02-14T14:00:02Z,2026-02-14T14:20:00Z,+01:00,Outdoor Walk,AUTO_DETECTED,0,")
         appendLine("300,2026-07-14T09:00:00Z,2026-07-14T09:00:04Z,+02:00,Outdoor Run,TRACKER,,")
-        appendLine("400,2026-03-20T09:00:00Z,2026-03-20T09:00:04Z,+01:00,Skiing,TRACKER,5000000,")
+        appendLine("400,2026-03-20T09:00:00Z,2026-03-20T09:00:04Z,+01:00,Rudern,TRACKER,5000000,")
         appendLine("500,2026-09-01T09:00:00Z,2026-09-01T10:00:00Z,+02:00,Hike,TRACKER,3000000,")
     }
 

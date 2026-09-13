@@ -12,6 +12,7 @@ import de.hecate.core.geo.LatLon
 import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.phone.AppGraph
@@ -68,7 +69,7 @@ enum class HealthConnectState {
 data class RouteDetail(
     val id: Long,
     val name: String,
-    val exerciseType: String,
+    val exerciseType: ExerciseType,
     val lengthM: Double,
     val memberCount: Int,
     val geometry: List<LatLon>,

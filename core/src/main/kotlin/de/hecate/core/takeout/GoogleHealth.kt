@@ -1,5 +1,6 @@
 package de.hecate.core.takeout
 
+import de.hecate.core.model.ActivityNames
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.tcx.TcxParser
 import java.time.ZoneId
@@ -151,24 +152,11 @@ object GoogleHealth {
     }
 
     /**
-     * Google's activity names to the three types this app records.
+     * Google's activity names to the types this app records.
      *
-     * Keyword matching rather than a table of exact names: the same workout is
-     * "Bike" in one export and "Outdoor Bike" or "Ride" in another, and the
-     * exports are not consistent about it between the phone app and the watch.
-     * Anything that does not match is left for the caller to report — silently
-     * filing a ski descent under "running" would poison the clusterer with a
-     * route nobody can ever run.
+     * The table itself is [ActivityNames], shared with the TCX reader so that a
+     * name one importer understands cannot be a name the other silently gets
+     * wrong. Anything unmatched is null and left for the caller to report.
      */
-    fun exerciseTypeOf(activityName: String): ExerciseType? {
-        val n = activityName.lowercase()
-        return when {
-            n.contains("run") || n.contains("jog") || n.contains("lauf") -> ExerciseType.RUNNING
-            n.contains("bike") || n.contains("cycl") || n.contains("ride") ||
-                n.contains("rad") -> ExerciseType.BIKING
-            n.contains("walk") || n.contains("hike") || n.contains("hiking") ||
-                n.contains("geh") || n.contains("wander") -> ExerciseType.WALKING
-            else -> null
-        }
-    }
+    fun exerciseTypeOf(activityName: String): ExerciseType? = ActivityNames.typeOf(activityName)
 }

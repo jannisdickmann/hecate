@@ -1,5 +1,7 @@
 package de.hecate.core.archive
 
+import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionSource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -35,6 +37,14 @@ import java.time.format.DateTimeFormatter
  * The DTOs below are deliberately *not* the Room entities. A backup format that
  * changes silently whenever a column is renamed is not a backup format; these
  * are a separate, versioned thing that the repository maps to and from by hand.
+ *
+ * The two enum fields are the exception to that separation, and the exception is
+ * deliberate. They serialize as their own names, so the JSON is the same text it
+ * has always been, and an archive written by a build that knows a type this one
+ * does not now fails to parse instead of being quietly read as something else.
+ * That is the louder failure of the two available, and the better one: this is
+ * the file the user restores from after losing the phone, and a workout silently
+ * relabelled as a run cannot be told from one that always was.
  */
 object Archive {
 
@@ -99,10 +109,10 @@ object Archive {
         val startedAtUtc: Long,
         val endedAtUtc: Long? = null,
         val tzOffsetMinutes: Int,
-        val exerciseType: String,
+        val exerciseType: ExerciseType,
         val activeDurationMs: Long,
         val totalDistanceM: Double,
-        val source: String,
+        val source: SessionSource,
         val hcWriteState: Int,
         val hcError: String? = null,
         val matchedRouteId: Long? = null,
@@ -120,7 +130,7 @@ object Archive {
         val id: Long,
         val name: String,
         val nameIsCustom: Boolean,
-        val exerciseType: String,
+        val exerciseType: ExerciseType,
         val lengthM: Double,
         val memberCount: Int,
         val medoidSessionId: String,

@@ -51,18 +51,14 @@ object Format {
         else -> String.format(DE, "%d B", bytes)
     }
 
-    /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
-    /** True for a session read out of an export rather than recorded on the watch. */
-    fun isImport(source: String): Boolean =
-        runCatching { SessionSource.valueOf(source).isImport }.getOrDefault(false)
-
     /** The provenance line in the session detail view. */
-    fun source(source: String): String = when (runCatching { SessionSource.valueOf(source) }.getOrNull()) {
+    fun source(source: SessionSource): String = when (source) {
+        SessionSource.WATCH -> "Uhr"
         SessionSource.IMPORT_TCX -> "TCX-Import"
         SessionSource.IMPORT_TAKEOUT -> "Google-Health-Takeout"
-        else -> "Uhr"
     }
 
+    /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
     fun dateTime(utcMs: Long, tzOffsetMinutes: Int): String {
         val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
             timeInMillis = utcMs + tzOffsetMinutes * 60_000L
@@ -97,13 +93,6 @@ object Format {
     }
 
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
-
-    fun exerciseType(name: String): String = when (name) {
-        "RUNNING" -> "Laufen"
-        "WALKING" -> "Gehen"
-        "BIKING" -> "Radfahren"
-        else -> name
-    }
 
     fun hcState(state: Int): String = when (state) {
         0 -> "ausstehend"

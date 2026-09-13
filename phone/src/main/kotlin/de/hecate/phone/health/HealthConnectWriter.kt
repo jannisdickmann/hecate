@@ -130,7 +130,7 @@ class HealthConnectWriter(private val context: Context) {
                         endTime = end,
                         endZoneOffset = zone,
                         exerciseType = hcType(exerciseType),
-                        title = titleFor(exerciseType),
+                        title = exerciseType.sessionTitle,
                         exerciseRoute = if (routeLocations.size >= 2) ExerciseRoute(routeLocations) else null,
                         metadata = Metadata.activelyRecorded(device = watch, clientRecordId = sessionId),
                     ),
@@ -172,16 +172,19 @@ class HealthConnectWriter(private val context: Context) {
         }
     }
 
-    private fun titleFor(type: ExerciseType) = when (type) {
-        ExerciseType.RUNNING -> "Lauf"
-        ExerciseType.WALKING -> "Spaziergang"
-        ExerciseType.BIKING -> "Radfahrt"
-    }
-
+    /**
+     * The app's type to Health Connect's constant.
+     *
+     * One to one, in both directions, and that is the constraint on adding a
+     * type at all: [ExerciseType] admits nothing Health Connect cannot express,
+     * so nothing here has to collapse two of ours into one of theirs.
+     */
     private fun hcType(type: ExerciseType): Int = when (type) {
         ExerciseType.RUNNING -> ExerciseSessionRecord.EXERCISE_TYPE_RUNNING
         ExerciseType.WALKING -> ExerciseSessionRecord.EXERCISE_TYPE_WALKING
+        ExerciseType.HIKING -> ExerciseSessionRecord.EXERCISE_TYPE_HIKING
         ExerciseType.BIKING -> ExerciseSessionRecord.EXERCISE_TYPE_BIKING
+        ExerciseType.SKIING -> ExerciseSessionRecord.EXERCISE_TYPE_SKIING
     }
 
     companion object {

@@ -19,12 +19,6 @@ object RouteNamer {
         TimeBucket.EVENING -> "abends"
     }
 
-    private fun typeWord(t: ExerciseType): String = when (t) {
-        ExerciseType.RUNNING -> "Lauf"
-        ExerciseType.WALKING -> "Gehen"
-        ExerciseType.BIKING -> "Rad"
-    }
-
     /**
      * @param ordinal a number unique among existing routes
      * @param localHours the local hour of day of each member, used for the hint
@@ -33,9 +27,9 @@ object RouteNamer {
         val bucket = dominantBucket(localHours)
         val km = String.format(java.util.Locale.GERMANY, "%.1f", lengthM / 1000.0)
         return if (bucket == null) {
-            "Route $ordinal (${typeWord(type)}, $km km)"
+            "Route $ordinal (${type.routeWord}, $km km)"
         } else {
-            "Route $ordinal (${typeWord(type)} ${timeWord(bucket)}, $km km)"
+            "Route $ordinal (${type.routeWord} ${timeWord(bucket)}, $km km)"
         }
     }
 

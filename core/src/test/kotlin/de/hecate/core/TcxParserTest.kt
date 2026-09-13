@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TcxParserTest {
@@ -121,7 +122,30 @@ class TcxParserTest {
     fun `sport attribute maps to exercise type`() {
         assertEquals(ExerciseType.BIKING, TcxParser.exerciseTypeOf("Biking"))
         assertEquals(ExerciseType.WALKING, TcxParser.exerciseTypeOf("Walking"))
-        assertEquals(ExerciseType.RUNNING, TcxParser.exerciseTypeOf("Other"))
+        assertEquals(ExerciseType.HIKING, TcxParser.exerciseTypeOf("Hiking"))
+        assertEquals(ExerciseType.SKIING, TcxParser.exerciseTypeOf("Downhill Skiing"))
+        // "Other" used to come back as RUNNING, which is how a ski tour exported
+        // as TCX became a run nobody could ever repeat.
+        assertNull(TcxParser.exerciseTypeOf("Other"))
+        assertNull(TcxParser.exerciseTypeOf(null))
+    }
+
+    @Test
+    fun `a file holding only an unsupported sport says which one`() {
+        val xml = """
+            <TrainingCenterDatabase><Activities><Activity Sport="Rowing">
+              <Id>2024-03-04T07:30:00Z</Id><Lap><Track>
+                <Trackpoint><Time>2024-03-04T07:30:00Z</Time>
+                  <Position><LatitudeDegrees>50.1</LatitudeDegrees>
+                  <LongitudeDegrees>8.7</LongitudeDegrees></Position>
+                </Trackpoint>
+              </Track></Lap>
+            </Activity></Activities></TrainingCenterDatabase>
+        """.trimIndent()
+        val e = assertFailsWith<TcxParser.TcxException> {
+            TcxParser.parse(xml.byteInputStream()) { _, i -> "imp-$i" }
+        }
+        assertTrue(e.message!!.contains("Rowing"), e.message!!)
     }
 
     @Test

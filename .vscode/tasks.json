@@ -5,6 +5,24 @@
     },
     "inputs": [
         {
+            "id": "backupArchive",
+            "type": "promptString",
+            "description": "Backup ZIP to push into the phone emulator's Downloads (e.g. takeout/parsed/hecate-takeout-20260912-1539.zip)"
+        },
+        {
+            "id": "syntheticExercise",
+            "type": "pickString",
+            "description": "Which synthetic exercise Health Services should emit",
+            "options": ["RUNNING", "WALKING", "BIKING"],
+            "default": "RUNNING"
+        },
+        {
+            "id": "screenshotPrefix",
+            "type": "promptString",
+            "description": "Filename prefix for the two screenshots",
+            "default": "shot"
+        },
+        {
             "id": "phoneSerial",
             "type": "promptString",
             "description": "adb serial of the phone (see: adb devices -l)"
@@ -116,6 +134,79 @@
                 "env": { "ANDROID_SERIAL": "${input:wearSerial}" }
             },
             "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: up",
+            "detail": "Boots both AVDs — hecate_watch4 on emulator-5554, hecate_pixel8 on emulator-5556. Ports are pinned, so the serials are stable. Already-running emulators are left alone.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["up"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: install (debug, both)",
+            "detail": "Assembles and installs both debug APKs on the emulators only, then grants the runtime permissions. Never touches a real device: it passes -s explicitly, and a debug APK over the release install would cost an uninstall and any session not yet uploaded (§6.3).",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["install"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: push backup archive",
+            "detail": "Pushes a backup ZIP into the phone emulator's Downloads. Read it back in the app under Einstellungen → Sicherung einlesen → ☰ → Downloads.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["push", "${input:backupArchive}"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: start synthetic exercise",
+            "detail": "Switches Health Services to its synthetic providers and starts an exercise, so the watch's Live page has metrics to render. §6.5: one default route with identical values every run — plumbing and layout only, never the matcher.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["run", "${input:syntheticExercise}"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: auto-pause broadcast",
+            "detail": "Fires whs.AUTO_PAUSE_DETECTED, the event injection §6.5 names for exercising auto-pause handling.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["pause"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: stop synthetic exercise",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["stop"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: screenshot both",
+            "detail": "Writes <prefix>-watch.png and <prefix>-phone.png in the workspace root.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["shot", "${input:screenshotPrefix}"],
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: logcat (watch)",
+            "detail": "Tails the watch emulator for the app's own tag and uncaught exceptions.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["log"],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "emu: down",
+            "detail": "Shuts both emulators down.",
+            "type": "shell",
+            "command": "./tools/emu",
+            "args": ["down"],
             "problemMatcher": []
         },
         {

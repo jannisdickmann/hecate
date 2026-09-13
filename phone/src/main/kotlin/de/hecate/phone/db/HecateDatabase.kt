@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import java.time.Instant
@@ -29,6 +30,7 @@ import java.time.ZoneId
     version = 5,
     exportSchema = true,
 )
+@TypeConverters(Converters::class)
 abstract class HecateDatabase : RoomDatabase() {
     abstract fun sessions(): SessionDao
     abstract fun routes(): RouteDao

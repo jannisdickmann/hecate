@@ -376,7 +376,7 @@ object ReplayMain {
         return if (f.isDirectory || !arg.endsWith(".zip")) File(f, name) else f
     }
 
-    /** `--map "Skiing=WALKING,Tennis=RUNNING"`. */
+    /** `--map "Schwimmen=WALKING,Tennis=RUNNING"`. */
     private fun parseTypeMap(arg: String?): Map<String, ExerciseType> {
         if (arg == null) return emptyMap()
         return arg.split(',').filter { it.isNotBlank() }.associate { pair ->
@@ -384,9 +384,9 @@ object ReplayMain {
                 require(it.size == 2) { "--map wants Name=TYPE, got: $pair" }
                 it[0].trim() to it[1].trim().uppercase()
             }
-            val parsed = runCatching { ExerciseType.valueOf(type) }.getOrElse {
-                throw IllegalArgumentException("--map: no such type: $type (RUNNING, WALKING, BIKING)")
-            }
+            val parsed = ExerciseType.parse(type) ?: throw IllegalArgumentException(
+                "--map: no such type: $type (${ExerciseType.entries.joinToString(", ") { it.name }})",
+            )
             name.lowercase() to parsed
         }
     }

@@ -1,5 +1,6 @@
 package de.hecate.core.tcx
 
+import de.hecate.core.model.ActivityNames
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
@@ -78,21 +79,35 @@ object TcxParser {
 
         val activities = doc.getElementsByTagName("Activity")
         val out = ArrayList<RecordedSession>()
+        // Kept so that a file holding nothing but a sport this app does not
+        // record can say which one, rather than "keine Aktivität gefunden".
+        val unsupported = LinkedHashSet<String>()
         for (i in 0 until activities.length) {
             val a = activities.item(i) as? Element ?: continue
-            parseActivity(a, i, zone, idFor)?.let { out.add(it) }
+            val sport = a.getAttribute("Sport") ?: ""
+            val type = exerciseTypeOf(sport)
+            if (type == null) {
+                unsupported.add(sport.ifBlank { "ohne Angabe" })
+                continue
+            }
+            parseActivity(a, type, i, zone, idFor)?.let { out.add(it) }
         }
-        if (out.isEmpty()) throw TcxException("Keine Aktivität in der Datei gefunden")
+        if (out.isEmpty()) {
+            if (unsupported.isNotEmpty()) {
+                throw TcxException("Sportart wird nicht unterstützt: ${unsupported.joinToString(", ")}")
+            }
+            throw TcxException("Keine Aktivität in der Datei gefunden")
+        }
         return out
     }
 
     private fun parseActivity(
         activity: Element,
+        type: ExerciseType,
         index: Int,
         zone: ZoneId,
         idFor: (Long, Int) -> String,
     ): RecordedSession? {
-        val type = exerciseTypeOf(activity.getAttribute("Sport"))
         val trackpoints = activity.getElementsByTagName("Trackpoint")
         if (trackpoints.length == 0) return null
 
@@ -167,11 +182,18 @@ object TcxParser {
         return null
     }
 
-    internal fun exerciseTypeOf(sport: String?): ExerciseType = when (sport?.lowercase()) {
-        "biking", "cycling" -> ExerciseType.BIKING
-        "walking", "hiking" -> ExerciseType.WALKING
-        else -> ExerciseType.RUNNING
-    }
+    /**
+     * The TCX `Sport` attribute to a type, or null for one this app does not record.
+     *
+     * The TCX schema only ever promised `Running`, `Biking` and `Other`, and no
+     * exporter has felt bound by that for years, so this is [ActivityNames] —
+     * the same table the takeout importer uses — rather than a list of three.
+     *
+     * Null rather than falling back to [ExerciseType.RUNNING], which is what this
+     * used to do: a ski tour exported as TCX then imported as a run, silently,
+     * and the clusterer got a route nobody can ever run (Appendix A.18).
+     */
+    internal fun exerciseTypeOf(sport: String?): ExerciseType? = ActivityNames.typeOf(sport)
 
     /**
      * The zone offset, in minutes, in force at [utcMs] in [zone].

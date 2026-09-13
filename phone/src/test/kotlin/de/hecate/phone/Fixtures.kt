@@ -112,7 +112,7 @@ object Fixtures {
         id = id,
         name = name,
         nameIsCustom = nameIsCustom,
-        exerciseType = ExerciseType.RUNNING.name,
+        exerciseType = ExerciseType.RUNNING,
         lengthM = 5000.0,
         memberCount = 3,
         medoidSessionId = medoidSessionId,
