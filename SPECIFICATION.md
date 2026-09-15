@@ -1894,7 +1894,10 @@ to sit in memory behind a list.
 
 The caption differs between them and that is the point: on the card it can say
 "1 außerhalb des Ausschnitts", and on the full picture that number is zero by
-construction. `HEATMAP_EXTENT_REACH` is gone, along with the aspect *range* A.22
+construction. An install that has not re-clustered since the second row existed
+has only the first, and the dialog falls back to it rather than waiting for a
+raster nobody has computed: the smaller ground is what the user was already
+looking at, and the next clustering replaces it. `HEATMAP_EXTENT_REACH` is gone, along with the aspect *range* A.22
 introduced; `HEATMAP_ASPECT` is back to being one ratio for the one picture that
 needs one.
 

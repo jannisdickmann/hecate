@@ -302,7 +302,13 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openHeatmap() = viewModelScope.launch {
         _fullHeatmap.value = withContext(Dispatchers.Default) {
-            db.heatmap().get(HeatmapEntity.FULL)?.let { decodeHeatmap(it) }
+            // The card's raster stands in when there is no full one yet, which
+            // is every install that has not re-clustered since the second row
+            // existed (A.23). The picture is then the smaller ground, which is
+            // what the user was already looking at — the alternative is a
+            // spinner that never stops for a raster nobody has computed.
+            val row = db.heatmap().get(HeatmapEntity.FULL) ?: db.heatmap().get(HeatmapEntity.CARD)
+            row?.let { decodeHeatmap(it) }
         }
     }
 
