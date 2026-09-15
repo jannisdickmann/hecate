@@ -103,6 +103,26 @@ object Format {
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
 
     /**
+     * A route name short enough to sit in a list row: at most
+     * [MAX_ROUTE_NAME_CHARS] characters, then an ellipsis.
+     *
+     * Cut here rather than left to the text layout, because the pill it goes in
+     * is as wide as its content and a name a route inherited from a long file
+     * name pushed the row's date and figures off the screen. Twenty characters
+     * is about as much as a person reads to recognise a route they named
+     * themselves; the whole name is one tap away on the recording's own screen,
+     * which has a line to spare for it.
+     *
+     * The ellipsis is U+2026, one character rather than three dots, so the
+     * budget is spent on the name.
+     */
+    fun routeName(name: String): String =
+        if (name.length <= MAX_ROUTE_NAME_CHARS) name
+        else name.take(MAX_ROUTE_NAME_CHARS).trimEnd() + "…"
+
+    const val MAX_ROUTE_NAME_CHARS: Int = 20
+
+    /**
      * A route priority as the user sees it: "−1", "0", "+1".
      *
      * Signed on both sides, because the scale is centred and a bare "1" beside a
@@ -113,22 +133,6 @@ object Format {
         value > 0 -> "+$value"
         value < 0 -> "−${-value}"
         else -> "0"
-    }
-
-    /**
-     * The same, with the words for what it means — for the one place that has
-     * room for them, above the picker itself.
-     *
-     * They describe an *order among tied routes*, never a certainty: priority
-     * cannot make the watch believe you are somewhere you are not, so "ganz
-     * vorn" is as strong as this may honestly be phrased.
-     */
-    fun priorityLabel(value: Int): String = when (value) {
-        -2 -> "−2 · ganz hinten"
-        -1 -> "−1 · eher nicht"
-        0 -> "0 · keine Meinung"
-        1 -> "+1 · eher schon"
-        else -> "+2 · ganz vorn"
     }
 
     fun hcState(state: Int): String = when (state) {

@@ -1061,7 +1061,7 @@ different words: not installed, too old, or simply not granted yet. The state is
 re-read on every `onResume` and whenever the panel appears, since both the grant
 and its removal can happen outside this app.
 \n
-### A.14 A heatmap of everything, drawn inside the routes' own extent
+### A.14 A heatmap of everything, drawn around the routes' own extent
 
 Not in the specification. §4 rejected every maps SDK and §8.5 defers charts; this
 is neither. It is the app's own tracks drawn against an empty ground, with no
@@ -1078,16 +1078,20 @@ written whole, read whole, never queried, and a raster's worth of counts as rows
 would be a table nothing ever selects from. (A.21 made the raster a great deal
 larger and run-length encoded the blob; everything else here still holds.)
 
-**The extent comes from the routes, never from the recordings.** This is the
+**The extent is anchored on the routes, never on the recordings.** This is the
 whole reason the feature needed thinking about. One trip to another city is a
 recording, not a route, and if it got a vote on the bounding box then everything
 you actually run would be squashed into a corner of the picture by a thing you
-did once. So the box is the routes' box, padded by 8% and then *grown* — never
-cropped, never stretched — to 16:9. Recordings still contribute
-their heat wherever they cross that box; they simply do not get to move it. A
-sample outside the box is dropped rather than clamped, because clamping piles
-every distant point onto the border cells and draws a hot frame around a map
-with nothing at its edges.
+did once. So the box starts as the routes' box, padded, and is *grown* — never
+cropped, never stretched. A sample outside it is dropped rather than clamped,
+because clamping piles every distant point onto the border cells and draws a hot
+frame around a map with nothing at its edges.
+
+(A.22 amends two halves of that. Anchored turned out not to mean *bounded*: a
+box that stops at the routes cuts real tracks off at an invisible line, so a
+recording may now extend it by up to one route-span, and anything further away
+still gets no vote. And the fixed 16:9 became a range of allowed shapes, because
+forcing one ratio onto a corridor made the picture mostly surface.)
 
 **The radius filter is about believing coordinates.** Any route or recording
 with a point more than `HEATMAP_MAX_RADIUS_M` (100 km, configurable) from the
@@ -1700,7 +1704,9 @@ precision the mechanism cannot use, and choosing between a 6 and a 7 for a route
 is a question with no answer. Five values, centred on zero, each of which is a
 sentence a person can mean: ganz hinten, eher nicht, keine Meinung, eher schon,
 ganz vorn. A neutral value of 5 out of 10 also invited the user to spend the
-other nine; a neutral value of 0 does not.
+other nine; a neutral value of 0 does not. (Those five sentences were printed
+above the picker until A.22, which took them off: a centred row of five already
+reads as less to more.)
 
 Schema v7 rescales it, and **resets every route to 0** rather than mapping the
 old value on. The old default was 5, so all but a handful of routes hold a
@@ -1759,13 +1765,13 @@ because a real effort ramping up is a monotonic run and a median is the identity
 on those — the same property, and now literally the same function
 (`Series.rollingMedian`), that the altitude de-spiking in A.20 rests on. What it
 cannot do is settle a rate balanced exactly on a boundary: that case has no band,
-and no filter can invent it one. The profile draws its band three times at three strengths: full height
-behind the chart, so a hard stretch is legible where the ground is low and the
-curve leaves nothing to colour; under the curve, which is what makes a profile
-read as ground; and the line itself, the only one of the three that is exactly
-where the data is. A stretch with no reading gets no band at all rather than a
-grey one, so absence looks like absence rather than like a fifth band, and the
-legend appears only where there was something to colour.
+and no filter can invent it one. The profile draws its band twice: as the fill
+under the curve, which is what makes a profile read as ground, and as the line
+itself, which is exactly where the data is. (It was drawn a third time as a
+full-height band behind the chart; A.22 says what a real profile did to that
+argument.) A stretch with no reading gets no band at all rather than a grey one,
+so absence looks like absence rather than like a fifth band, and the legend
+appears only where there was something to colour.
 
 **The kilometre splits are gone from the route screen.** Removed on request, and
 with them the reconstruction behind them: every member of the route was
@@ -1775,3 +1781,82 @@ profile still holds the per-bin median times — it is what the matcher compares
 against live (§5.7) — so nothing the watch does changed. `Format.speedOverKm`
 went with the table; A.19 is the record of the day that table spent contradicting
 itself.
+
+### A.22 Six notes from the first hour with a real history on a screen
+
+A.21 was written against synthetic data and rasterised PNGs. This is what the
+same six screens looked like with 66 real recordings behind them on a phone
+emulator, and it is mostly about the difference between *correct* and *legible*.
+
+**The activity filter is ordered by frequency, commonest first.** It was in the
+enum's order, which is the order the five sports were added to the app — so on a
+history of 46 rides, 13 walks, 6 ski tours and one walk to the shops, the first
+chip after "Alle" was whichever sport happened to come first in a list in the
+source. The row now counts the history and sorts by it, ties keeping the enum's
+order so that two equally common activities do not swap places on every ingest.
+Nothing else about the filter changed; the derivation that hides an activity
+which has stopped occurring is still what decides *which* chips exist.
+
+**A matched route's name is cut to twenty characters.** The pill on a recording
+row is as wide as what is in it, and routes are named automatically — "Route 1
+(Rad früh, 16,9 km)" — so the pill grew until it pushed the distance off the
+row. `Format.routeName` cuts at 20 and adds one ellipsis character, trimming a
+trailing space first so the cut does not read as a typo. Twenty is about as much
+as anyone reads to recognise a route they named themselves, and the whole name
+is one tap away on a screen with a line to spare for it.
+
+**The heatmap was cut off, and it was cut off by its own extent.** The box came
+from the routes and stopped there (A.14), which is right about *where* the
+picture is and wrong about *how big*: on the history above, a fifth of all
+sample points lay outside it and were dropped, so tracks ended in mid-air at an
+invisible line. The rule is now that the routes anchor the extent and the
+recordings may extend it, out to `HEATMAP_EXTENT_REACH` — one route-span — past
+them. Beyond that a recording gets no vote at all, not even the edge it would
+have been clamped to: the 17 km-away ride in that history is a place, not a
+neighbourhood, and stretching the picture to reach it would squash the ground
+the picture is about. What that ride gets instead is a mention: the caption now
+says how many recordings are inside the radius but outside the picture, because
+a recording that is not drawn looks exactly like one that was never made.
+
+The extent also stopped being forced to 16:9. Growing a 4 × 14 km corridor to
+one fixed shape made it 25 km wide, nine tenths surface, and then cost a
+doubling of the cell size to stay under the cap — so the fixed ratio became a
+range, `HEATMAP_MIN_ASPECT`..`HEATMAP_MAX_ASPECT`, and inside it the picture is
+whatever shape the ground is. The bounds are what the two views can show:
+squarer than 1:1 is a card taller than it is wide, which pushes the routes list
+off its own screen, and wider than 16:9 is a letterbox. The same history that
+came out 29 × 16 km at 16:9 is 20 × 20 km now, covering more ground in fewer
+cells, still at 15 m.
+
+**The low end of the colour ramp was invisible.** Nearly everything on a heatmap
+is down there — the lane crossed twice is most of the picture by area, and the
+commute is a handful of cells — and the lowest step was 27 % alpha of a very
+pale blue on a near-white surface. Two things were wrong. The step itself is now
+a shade darker and half again as opaque, in both ramps, with the top of each
+ramp taken down by as much so the range between a lane and a commute is no
+smaller. And `LOW_FADE`, the share of the scale over which the lowest step fades
+in from nothing, came down from 0.18 to 0.06: it exists to keep the outermost
+ring of the blur from drawing a hard edge, and at 0.18 it was also halving the
+opacity of every lane on the picture. A cell crossed once lands at about t = 0.10
+on a history whose busiest cell has been crossed forty times, which is exactly
+the range that was being faded out.
+
+**The effort band on the altitude profile is under the line only.** It used to
+be drawn a third time as a 10 % band running the full height of the chart, on
+the argument that a hard stretch on flat ground leaves the curve too little to
+colour. Seen on a real profile, that argument loses: a band above the line
+colours sky, the sky is the one part of the picture where nobody was, and the
+eye — which reads a tint as the area under something — finds the curve in the
+middle of its own colour and stops reading the chart as ground. The fill under
+the curve went from 34 % to 42 % at its top to carry the band on its own, which
+is where the reader is looking anyway.
+
+**The priority picker lost its captions.** "0 · keine Meinung", "+1 · eher
+schon" — five buttons on a centred scale do not need naming twice, since the row
+already reads left to right as less to more and the line under it says what the
+scale decides. The second sentence of that line went too: it said that a tie
+leaves the watch on "Suche…", which is a description of what happens when the
+user does nothing, written above a control they are looking at *because* they
+are about to do something. The words themselves are not lost — §A.4b and the
+README still say what the five positions mean, which is where a sentence about
+the mechanism belongs.

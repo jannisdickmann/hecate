@@ -38,12 +38,14 @@ import kotlin.math.max
  * decoration — without them the reader has no way to know whether a dramatic
  * peak is 30 m or 800.
  *
- * The effort is drawn three times over, at three strengths, and each one earns
- * its place: the full-height band behind the chart, so a hard stretch is legible
- * where the ground is low and the curve leaves nothing to colour; the fill under
- * the curve, which is what makes the profile read as ground rather than as a
- * line chart; and the line itself, which is the only one of the three that is
- * exactly where the data is.
+ * The effort is the colour of the line and the ground under it, and nothing
+ * above it. It used to be drawn a third time as a full-height band behind the
+ * whole chart, on the argument that a hard stretch on flat ground leaves the
+ * curve too little to colour — but a band that runs above the line colours sky,
+ * and the sky is the one part of this picture where nobody was: the eye reads
+ * the tint as area under something, finds the curve in the middle of it, and the
+ * chart stops saying where the ground is. Under the line the same colour says
+ * the same thing about the same stretch, and says it where the data is.
  */
 @Composable
 fun ElevationView(
@@ -103,13 +105,8 @@ fun ElevationView(
 }
 
 /**
- * One stretch of the profile in one colour: the backdrop behind it, the ground
- * under it, and the line itself.
- *
- * The backdrop runs the full height of the chart rather than stopping at the
- * curve, which is the whole reason it exists — on a flat valley stretch the
- * curve sits near the floor and colouring only underneath it leaves the effort
- * invisible exactly where there is most room to show it.
+ * One stretch of the profile in one colour: the ground under it, and the line
+ * itself.
  */
 private fun DrawScope.drawSection(
     points: List<Elevation.Point>,
@@ -126,17 +123,6 @@ private fun DrawScope.drawSection(
     val left = toCanvas(points[from]).x
     val right = toCanvas(points[to]).x
 
-    // Only where there is something to say: an uncoloured stretch gets no
-    // backdrop at all rather than a grey one, so "no heart rate here" looks like
-    // absence instead of like a fifth band.
-    if (band != null) {
-        drawRect(
-            color = color.copy(alpha = 0.10f),
-            topLeft = Offset(left, 0f),
-            size = androidx.compose.ui.geometry.Size(right - left, size.height),
-        )
-    }
-
     val line = Path().apply {
         val first = toCanvas(points[from])
         moveTo(first.x, first.y)
@@ -147,7 +133,10 @@ private fun DrawScope.drawSection(
     }
 
     // Filled underneath, fading out: the area is what makes a profile read as
-    // ground at a glance rather than as an arbitrary line chart.
+    // ground at a glance rather than as an arbitrary line chart, and with no
+    // band behind the chart it is also the only place the effort has to show.
+    // Stronger at the top for that reason — it is the colour beside the line,
+    // where the reader is already looking, that has to carry the band.
     val area = Path().apply {
         addPath(line)
         lineTo(right, floor)
@@ -157,7 +146,7 @@ private fun DrawScope.drawSection(
     drawPath(
         area,
         brush = Brush.verticalGradient(
-            listOf(color.copy(alpha = 0.34f), color.copy(alpha = 0.04f)),
+            listOf(color.copy(alpha = 0.42f), color.copy(alpha = 0.06f)),
         ),
     )
     drawPath(

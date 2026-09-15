@@ -310,9 +310,44 @@ object Tuning {
      */
     const val HEATMAP_CELL_M: Double = 15.0
 
-    /** The shape the extent is grown to, wide:high. A picture on a phone, and
-     *  the same 16:9 the fixed raster used to impose. */
-    const val HEATMAP_ASPECT: Double = 16.0 / 9.0
+    /**
+     * The shapes the extent is allowed to have, wide:high, and it keeps its own
+     * inside them.
+     *
+     * A range rather than the single 16:9 the fixed raster used to impose,
+     * because forcing one shape onto the ground is what made the picture mostly
+     * empty: a corridor 4 km wide and 14 km long came out 25 km across, nine
+     * tenths of it surface, and then cost a doubling of the cell size to stay
+     * under [HEATMAP_MAX_CELLS]. Growing only as far as the nearest bound keeps
+     * the same ground at half the area.
+     *
+     * The bounds are what the two views can show. Squarer than 1:1 is a card
+     * taller than it is wide, which pushes the routes list off its own screen;
+     * wider than 16:9 is a letterbox with nothing in the middle of it. Inside
+     * that range the picture is whatever shape the ground is, which on a phone
+     * held upright is also the shape that fills the full-screen view.
+     */
+    const val HEATMAP_MIN_ASPECT: Double = 1.0
+    const val HEATMAP_MAX_ASPECT: Double = 16.0 / 9.0
+
+    /**
+     * How far past the routes a recording may push the edge of the picture, as
+     * a fraction of the routes' own larger side.
+     *
+     * The extent is anchored on the routes (A.14) — one trip to another city
+     * must not squash everything you actually run into a corner — but anchored
+     * is not the same as bounded by them, and bounding it by them was drawing
+     * tracks that stopped dead at an invisible line: a fifth of one real
+     * history's sample points lay outside the box and were dropped, which looks
+     * exactly like a heatmap that has been cut off, because it is one.
+     *
+     * So ground a recording actually covered is included, out to as much again
+     * as the routes themselves span; past that it is a trip rather than a
+     * neighbourhood, and the picture stays about the ground you know. The
+     * radius filter ([HEATMAP_MAX_RADIUS_M]) still applies first and still
+     * decides what is drawn at all.
+     */
+    const val HEATMAP_EXTENT_REACH: Double = 1.0
 
     /**
      * Ceiling on the number of cells, whatever [HEATMAP_CELL_M] would ask for.
@@ -346,8 +381,8 @@ object Tuning {
      */
     const val HEATMAP_BLUR_SIGMA_CELLS: Double = 1.5
 
-    /** Breathing room around the routes' own bounding box, as a fraction of its
-     *  larger side. */
+    /** Breathing room around the ground the picture covers, as a fraction of
+     *  its larger side. Without it the outermost track is the frame. */
     const val HEATMAP_PADDING_FRACTION: Double = 0.08
 
     /** Smallest extent the heatmap will draw [m]. Stops a single route, or one

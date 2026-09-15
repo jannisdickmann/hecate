@@ -83,7 +83,8 @@ fun HeatmapView(
     val strokePx = with(androidx.compose.ui.platform.LocalDensity.current) { 1.2.dp.toPx() }
 
     // The aspect ratio is the grid's own, so the picture is never stretched: the
-    // extent was already grown to match it.
+    // extent is the shape of the ground it covers, within the range the two
+    // views can show (Tuning.HEATMAP_MIN_ASPECT/MAX_ASPECT).
     Canvas(modifier.aspectRatio(grid.width.toFloat() / grid.height.toFloat())) {
         drawRect(surface)
         raster?.let {
@@ -163,9 +164,9 @@ fun HeatmapFullScreen(
                                 // How far the scaled picture may travel before
                                 // its own edge comes inside the screen. Measured
                                 // against the *drawn* picture rather than the
-                                // window: the picture is 16:9 inside a taller
-                                // screen, so its vertical slack is not the
-                                // window's.
+                                // window: the picture is wider than it is tall
+                                // inside a taller screen, so its vertical slack
+                                // is not the window's.
                                 val drawnH = widthPx * grid.height / grid.width
                                 val slackX = maxOf(0f, (widthPx * scale - widthPx) / 2f)
                                 val slackY = maxOf(0f, (drawnH * scale - heightPx) / 2f)
@@ -302,8 +303,16 @@ private fun rasterOf(grid: HeatmapGrid, dark: Boolean): ImageBitmap? {
 /** Below this, a cell is the tail of somebody else's blur and is not drawn. */
 private const val FADE_FLOOR = 0.02f
 
-/** The share of the scale over which the lowest step fades in from nothing. */
-private const val LOW_FADE = 0.18
+/**
+ * The share of the scale over which the lowest step fades in from nothing.
+ *
+ * Narrow on purpose. It exists to stop the outermost ring of a blur drawing a
+ * hard edge, and nothing else — at 0.18 it was also fading out the lanes
+ * themselves: a cell crossed once lands at about t = 0.10 on a history whose
+ * busiest cell has been crossed forty times, so a lane came out at little
+ * more than half of an already faint step and was, in practice, invisible.
+ */
+private const val LOW_FADE = 0.06
 
 /** How far the full-screen view zooms in. Past about eight the cells are visible
  *  as cells and there is nothing more to see. */
@@ -336,29 +345,41 @@ private fun argb(alpha: Int, hex: Long): Int =
     Color(hex.toInt() or 0xFF000000.toInt()).copy(alpha = alpha / 255f).toArgb()
 
 /**
- * Light surface: the blue ramp's steps 150 → 700, lightest first.
+ * Light surface: the blue ramp's steps 200 → 800, lightest first.
  *
- * The first step is also the most transparent, so a cell crossed once recedes
- * toward the surface instead of stamping a hard dot on it.
+ * The bottom of the ramp is where a heatmap is won or lost, because almost
+ * everything on it is down there: the lane you crossed twice is most of the
+ * picture by area, and the commute is a handful of cells. The first version put
+ * the lowest step at 27 % alpha of a very pale blue, which on a near-white
+ * surface is a colour you have to be told is there. It is now a step darker and
+ * half again as opaque — still the quietest thing on the picture, and now
+ * quietly visible, which is the difference between a scale and a decoration.
+ *
+ * The top of the ramp went darker by the same amount, so the range between a
+ * lane and a commute is no smaller for the bottom having come up.
  */
 private val LIGHT_RAMP = intArrayOf(
-    argb(70, 0xb7d3f6),
-    argb(140, 0x86b6ef),
-    argb(200, 0x3987e5),
-    argb(235, 0x256abf),
-    argb(255, 0x184f95),
-    argb(255, 0x0d366b),
+    argb(115, 0x9ec5f4),
+    argb(170, 0x6da7ec),
+    argb(215, 0x3987e5),
+    argb(240, 0x1f5fb0),
+    argb(255, 0x144684),
+    argb(255, 0x0a2a55),
 )
 
 /**
- * Dark surface: the same hue, run the other way — dark and nearly transparent
- * at the bottom so low density sinks into the ground, bright at the top.
+ * Dark surface: the same hue, run the other way — dimmest at the bottom so low
+ * density sinks into the ground, bright at the top.
+ *
+ * Lifted at the bottom for the reason the light ramp is, and further: a dark
+ * blue at low alpha over a dark surface is nearly the surface, so the lowest
+ * step is a mid blue rather than the darkest one on the scale.
  */
 private val DARK_RAMP = intArrayOf(
-    argb(70, 0x184f95),
-    argb(140, 0x256abf),
-    argb(200, 0x3987e5),
-    argb(235, 0x6da7ec),
-    argb(255, 0x9ec5f4),
+    argb(120, 0x2f6fc4),
+    argb(175, 0x3987e5),
+    argb(215, 0x6da7ec),
+    argb(240, 0x9ec5f4),
     argb(255, 0xcde2fb),
+    argb(255, 0xeef4ff),
 )

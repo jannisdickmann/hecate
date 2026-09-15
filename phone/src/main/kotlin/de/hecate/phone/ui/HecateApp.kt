@@ -434,7 +434,12 @@ private fun Quiet(text: String) {
     )
 }
 
-/** The name of the route a recording was matched to. */
+/**
+ * The name of the route a recording was matched to.
+ *
+ * Shortened to [Format.MAX_ROUTE_NAME_CHARS]: the pill is as wide as what is in
+ * it, and a route carrying a long name pushed the figures beside it off the row.
+ */
 @Composable
 private fun RoutePill(name: String) {
     Surface(
@@ -443,7 +448,7 @@ private fun RoutePill(name: String) {
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
-            name,
+            Format.routeName(name),
             style = MaterialTheme.typography.labelMedium,
             maxLines = 1,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -650,7 +655,12 @@ private fun HeatmapCard(
 }
 
 /** What the picture is made of, in one line — under the card and again under the
- *  full-screen view, which has no room for a second one. */
+ *  full-screen view, which has no room for a second one.
+ *
+ *  Both ways of not being in the picture are named, because they are different
+ *  and because neither is visible: too far from home to be believed, and inside
+ *  the radius but off the ground this picture covers. An undrawn recording looks
+ *  exactly like one that was never made. */
 private fun heatmapCaption(state: HeatmapState): String = buildString {
     append("${state.grid.sessionsUsed} Aufzeichnungen")
     append(" · ${state.routes.size} Routen")
@@ -662,6 +672,8 @@ private fun heatmapCaption(state: HeatmapState): String = buildString {
                 "${(Tuning.HEATMAP_MAX_RADIUS_M / 1000).toInt()} km",
         )
     }
+    val offPicture = state.grid.sessionsOutsideExtent
+    if (offPicture > 0) append(" · $offPicture außerhalb des Ausschnitts")
 }
 
 @Composable
@@ -1101,21 +1113,25 @@ private fun ConfirmDialog(
  * the numbers has ever mattered — nothing multiplies by a priority — so the old
  * range asked for a precision it could not use, and asking someone to choose
  * between a 6 and a 7 for a route is asking a question with no answer. Five
- * options fit one row at a comfortable touch target, and each one is a sentence
- * a person can actually mean.
+ * options fit one row at a comfortable touch target.
+ *
+ * The numbers stand on their own. Each used to carry a phrase above the row —
+ * "0 · keine Meinung", "+1 · eher schon" — and five buttons on a centred scale
+ * do not need naming twice: the row already reads left to right as less to
+ * more, and the caption under it says what the scale is for. Nor did the
+ * caption's second sentence, about a tie leaving the watch on "Suche…", earn
+ * its line: it described what happens when the user does nothing, which is what
+ * they are already looking at.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                "Priorität",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(Format.priorityLabel(current), style = MaterialTheme.typography.labelLarge)
-        }
+        Text(
+            "Priorität",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(6.dp))
         val values = (Tuning.MIN_ROUTE_PRIORITY..Tuning.MAX_ROUTE_PRIORITY).toList()
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -1128,10 +1144,7 @@ private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
             }
         }
         Spacer(Modifier.height(6.dp))
-        Quiet(
-            "Entscheidet nur zwischen Routen, die sich denselben Weg teilen. " +
-                "Bei Gleichstand bleibt die Anzeige auf „Suche…“.",
-        )
+        Quiet("Entscheidet nur zwischen Routen, die sich denselben Weg teilen.")
     }
 }
 

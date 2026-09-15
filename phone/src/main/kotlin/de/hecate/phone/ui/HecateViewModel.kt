@@ -173,16 +173,28 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
-     * The activities the filter offers: the ones that actually occur, in the
-     * enum's own order.
+     * The activities the filter offers: the ones that actually occur, commonest
+     * first.
      *
      * Derived from the history rather than from [ExerciseType.entries], because
      * a filter chip for a sport the user has never recorded is a chip that can
      * only ever produce an empty list. Someone who has never skied should not
      * have to read the word.
+     *
+     * Ordered by how often each occurs rather than by the enum, so the chip the
+     * user reaches for most is the one nearest the edge of the screen they can
+     * reach, and a sport ridden twice does not sit ahead of the one ridden two
+     * hundred times because of where it happens to fall in a list in the source.
+     * Ties keep the enum's order, so the row does not reshuffle itself between
+     * two equally common activities on every ingest.
      */
     val activityTypes: StateFlow<List<ExerciseType>> = sessions
-        .map { list -> ExerciseType.entries.filter { type -> list.any { it.exerciseType == type } } }
+        .map { list ->
+            val counts = list.groupingBy { it.exerciseType }.eachCount()
+            ExerciseType.entries
+                .filter { counts.containsKey(it) }
+                .sortedByDescending { counts.getValue(it) }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**

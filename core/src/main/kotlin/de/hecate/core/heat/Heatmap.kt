@@ -60,6 +60,11 @@ data class HeatmapGrid(
     val sessionsUsed: Int,
     val sessionsDiscarded: Int,
     val routesDiscarded: Int,
+    /** Of [sessionsUsed], how many left no mark at all: inside the radius, and
+     *  outside the ground the picture covers. Nothing else on the screen can
+     *  say that a recording is missing, because a recording that is not drawn
+     *  looks exactly like one that was never made. */
+    val sessionsOutsideExtent: Int = 0,
 ) {
     val isEmpty: Boolean get() = maxCount == 0
 
@@ -77,6 +82,7 @@ data class HeatmapGrid(
             other.sessionsUsed == sessionsUsed &&
             other.sessionsDiscarded == sessionsDiscarded &&
             other.routesDiscarded == routesDiscarded &&
+            other.sessionsOutsideExtent == sessionsOutsideExtent &&
             other.cells.contentEquals(cells)
 
     override fun hashCode(): Int = 31 * cells.contentHashCode() + width
@@ -91,11 +97,13 @@ data class HeatmapGrid(
  *
  * Five decisions shape the whole thing:
  *
- * - **The extent comes from the routes, not the recordings.** A recording that
- *   never became a route — one trip to another city — would otherwise set the
- *   bounding box and squash everything you actually run into a corner. Such a
- *   recording still contributes its heat wherever it crosses the extent; it just
- *   does not get a vote on where the extent is.
+ * - **The routes anchor the extent; the recordings may extend it, but only so
+ *   far.** A recording that never became a route — one trip to another city —
+ *   must not set the bounding box and squash everything you actually run into a
+ *   corner. But a box that stops at the routes cuts real tracks off at an
+ *   invisible line, so ground a recording covered is included out to
+ *   [Tuning.HEATMAP_EXTENT_REACH] times the routes' own larger side, and
+ *   anything past that gets no vote at all.
  * - **The radius filter is about believing coordinates, not about tidiness.** It
  *   is measured from the median start of all routes, so it takes half your
  *   routes moving abroad to move it, and it throws out the fix that landed in
@@ -145,10 +153,11 @@ object Heatmap {
             s.points.isNotEmpty() && s.points.all { Geo.haversine(centre, it) <= maxRadiusM }
         }
 
-        val extent = extentOf(keptRoutes, centre, cellM, maxCells)
+        val extent = extentOf(keptRoutes, keptSessions, centre, cellM, maxCells)
 
         val cells = IntArray(extent.width * extent.height)
-        for (s in keptSessions) drawTrack(s.points, centre, extent, cells)
+        var outside = 0
+        for (s in keptSessions) if (!drawTrack(s.points, centre, extent, cells)) outside++
         val max = cells.maxOrNull() ?: 0
 
         return HeatmapGrid(
@@ -167,6 +176,7 @@ object Heatmap {
             sessionsUsed = keptSessions.size,
             sessionsDiscarded = sessions.size - keptSessions.size,
             routesDiscarded = routes.size - keptRoutes.size,
+            sessionsOutsideExtent = outside,
         )
     }
 
@@ -196,10 +206,13 @@ object Heatmap {
      * straight line through unknown terrain — the same rule, and the same
      * constant, that resampling a track uses. Its endpoints are still counted;
      * only the line between them is not drawn.
+     *
+     * @return whether any of it landed inside the picture at all.
      */
-    private fun drawTrack(points: List<LatLon>, centre: LatLon, extent: Extent, cells: IntArray) {
+    private fun drawTrack(points: List<LatLon>, centre: LatLon, extent: Extent, cells: IntArray): Boolean {
         var previous: DoubleArray? = null
         var lastIndex = -1
+        var drew = false
 
         fun touch(x: Double, y: Double) {
             val col = ((x - extent.minX) / extent.cellM).toInt()
@@ -212,6 +225,7 @@ object Heatmap {
                 return
             }
             val i = row * extent.width + col
+            drew = true
             if (i == lastIndex) return
             cells[i]++
             lastIndex = i
@@ -237,15 +251,26 @@ object Heatmap {
             touch(here[0], here[1])
             previous = here
         }
+        return drew
     }
 
     /**
-     * The routes' bounding box, padded, grown to the picture's aspect ratio, and
-     * then rounded outwards to whole cells.
+     * The ground the picture covers, padded, brought inside the allowed range of
+     * shapes, and then rounded outwards to whole cells.
      *
      * Grown, never cropped, and grown symmetrically: the alternative is either
      * losing part of a route off the edge or stretching the geography, and a
      * route drawn with the wrong proportions is a route you no longer recognise.
+     *
+     * The routes anchor it and the recordings may extend it, out to
+     * [Tuning.HEATMAP_EXTENT_REACH] times the routes' larger side. Anchoring it
+     * on the routes is what stops one trip to another city from deciding where
+     * the picture is (A.14); bounding it *by* the routes was cutting real
+     * tracks off at an invisible line, which is a different failure and a worse
+     * one, because nothing on the screen says it happened. A recording beyond
+     * the reach contributes no part of the extent at all — not even the edge it
+     * would have been clamped to, which would stretch the picture to the limit
+     * for something not drawn inside it.
      *
      * The cell size doubles until the raster fits in [maxCells]. Doubling rather
      * than scaling to fit exactly, so that the cell stays a round multiple of the
@@ -254,6 +279,7 @@ object Heatmap {
      */
     private fun extentOf(
         routes: List<RouteTrack>,
+        sessions: List<SessionTrack>,
         centre: LatLon,
         cellM: Double,
         maxCells: Int,
@@ -272,6 +298,23 @@ object Heatmap {
             }
         }
 
+        // How far a recording may reach past the routes, in each direction.
+        val reach = maxOf(maxX - minX, maxY - minY) * Tuning.HEATMAP_EXTENT_REACH
+        val reachMinX = minX - reach
+        val reachMaxX = maxX + reach
+        val reachMinY = minY - reach
+        val reachMaxY = maxY + reach
+        for (s in sessions) {
+            for (p in s.points) {
+                val l = Geo.toLocal(centre, p)
+                if (l[0] < reachMinX || l[0] > reachMaxX || l[1] < reachMinY || l[1] > reachMaxY) continue
+                if (l[0] < minX) minX = l[0]
+                if (l[0] > maxX) maxX = l[0]
+                if (l[1] < minY) minY = l[1]
+                if (l[1] > maxY) maxY = l[1]
+            }
+        }
+
         var spanX = (maxX - minX).coerceAtLeast(Tuning.HEATMAP_MIN_SPAN_M)
         var spanY = (maxY - minY).coerceAtLeast(Tuning.HEATMAP_MIN_SPAN_M)
         val cx = (minX + maxX) / 2
@@ -281,10 +324,12 @@ object Heatmap {
         spanX += 2 * pad
         spanY += 2 * pad
 
-        // One scale for both axes. Whichever side is short of the target ratio
-        // grows around the same centre.
-        val target = Tuning.HEATMAP_ASPECT
-        if (spanX / spanY < target) spanX = spanY * target else spanY = spanX / target
+        // One scale for both axes, and only as far as the nearest allowed shape:
+        // a picture grown to one fixed ratio is mostly surface, and the empty
+        // half of it costs cells that the ground could have had instead.
+        val aspect = spanX / spanY
+        if (aspect < Tuning.HEATMAP_MIN_ASPECT) spanX = spanY * Tuning.HEATMAP_MIN_ASPECT
+        else if (aspect > Tuning.HEATMAP_MAX_ASPECT) spanY = spanX / Tuning.HEATMAP_MAX_ASPECT
 
         var cell = cellM
         var cols = ceil(spanX / cell).toInt().coerceAtLeast(1)
@@ -454,6 +499,9 @@ object HeatmapCodec {
         val sessionsUsed: Int,
         val sessionsDiscarded: Int,
         val routesDiscarded: Int,
+        /** Defaulted, like [cellM]: a raster written before the count existed is
+         *  a raster whose author did not know, which is what 0 says here. */
+        val sessionsOutsideExtent: Int = 0,
         val cellM: Double = 0.0,
         /** Every cell, as written before the run-length encoding existed. */
         val cells: IntArray? = null,
@@ -476,6 +524,7 @@ object HeatmapCodec {
             sessionsUsed = grid.sessionsUsed,
             sessionsDiscarded = grid.sessionsDiscarded,
             routesDiscarded = grid.routesDiscarded,
+            sessionsOutsideExtent = grid.sessionsOutsideExtent,
         ),
     )
 
@@ -502,6 +551,7 @@ object HeatmapCodec {
             sessionsUsed = s.sessionsUsed,
             sessionsDiscarded = s.sessionsDiscarded,
             routesDiscarded = s.routesDiscarded,
+            sessionsOutsideExtent = s.sessionsOutsideExtent,
         )
     }
 

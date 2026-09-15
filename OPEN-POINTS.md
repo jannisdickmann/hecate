@@ -470,35 +470,46 @@ come from the wallpaper under dynamic theming. The arrow is the same on both, so
 a wallpaper whose primary and tertiary land close together would leave weight
 and the unit suffix doing all the work of telling them apart.
 
-### 3.8 The heatmap has been rendered, but not on a phone
+### 3.8 The heatmap has been seen on an emulator, not on a phone
 
-The picture above the routes list (Appendix A.14, rebuilt in A.21) was checked
-by rasterising it off-device — `Heatmap.build` and `Heatmap.blur` are pure JVM —
-against synthetic data with a commute ridden sixty times, a loop ridden twelve,
-a ride done four times and wanderings that never became routes; the tests pin
-the extent, the radius filter, the cell size, the line drawing, the blur and
-which way up the raster is. None of that is the same as looking at it on a phone
-with a real history behind it, and after A.21 there is more to look at.
+The picture above the routes list (Appendix A.14, rebuilt in A.21, corrected in
+A.22) was first checked by rasterising it off-device — `Heatmap.build` and
+`Heatmap.blur` are pure JVM — against synthetic data; the tests pin the extent,
+the radius filter, the cell size, the line drawing, the blur and which way up the
+raster is. It has since been looked at on a phone emulator with 66 real
+recordings and four real routes behind it, in both themes, which is what found
+the two faults A.22 fixes: an extent that cut a fifth of the sample points off at
+an invisible line, and a bottom step of the colour ramp that could not be seen.
 
-Four things to judge there.
+What that leaves.
 
-- **Whether the log scale separates the right things.** It is tuned so that a
-  route ridden twice is visible at all next to one ridden two hundred times. If
-  everything looks equally hot, the scale is too compressive; if the rare stuff
-  vanishes, not compressive enough. Both are one line in `rasterOf`. Note that
-  the counts are now passes rather than samples, so the range they span is
-  narrower than it used to be and this may want retuning in the other direction.
+- **Whether the log scale separates the right things** now that the bottom of
+  the ramp is legible. On the history above, a lane crossed once and a commute
+  ridden forty times are both visible and plainly different, which is the whole
+  requirement; on a history with two orders of magnitude between them it may
+  want the other direction. It is one line in `rasterOf`.
 - **Whether 15 m cells and σ = 1.5 are the right pair.** They are meant to make
   a track as wide as the uncertainty about where it was, roughly 22 m of ground.
   Too wide and two streets a block apart merge; too narrow and the picture goes
-  back to being a line drawing. They are two constants in `Tuning` and a redraw,
-  not a re-clustering.
+  back to being a line drawing. On the emulator at 20 × 20 km of extent they hold
+  up; a denser town is the case that would break them. They are two constants in
+  `Tuning` and a redraw, not a re-clustering.
+- **Whether the reach is the right bound.** `HEATMAP_EXTENT_REACH` is one
+  route-span, which on the history above puts a ride 17 km from home outside the
+  picture and says so in the caption. Whether that is the right place to stop is
+  a judgement only more histories can settle: the failure in one direction is a
+  picture that squashes what you do daily to fit in something you did once, and
+  in the other a caption that keeps mentioning recordings nobody can find.
 - **What the cap costs in practice.** Past about 35 × 20 km of extent the cell
   doubles, and nothing here has been looked at in that state. A history with two
   homes in it is the case: it is also the case where the picture is of two towns
   rather than of a street, so coarser cells may be exactly right.
 - **Whether the full-screen view is usable one-handed.** Pinch to 8×, drag to
-  pan, tap to close; the pan clamp has only been reasoned about, never felt.
+  pan, tap to close. It opens showing the whole picture fitted to the width,
+  which on a phone held upright leaves a margin above and below whenever the
+  ground is wider than it is tall — correct, and possibly not what a person
+  wants from a button labelled "Vollbild". The pan clamp has been reasoned about
+  and the dialog has been opened; neither has been felt on a real screen.
 
 Also worth timing on a device: the bitmap is built on `Dispatchers.Default` and
 the blur alone is about 300 ms on a laptop at the cap, so the card may show its
@@ -512,13 +523,15 @@ them. A cycling route of 60 km and a running loop of 5 km in one picture means
 the running loop is a smudge. The recordings list has an activity filter now
 (A.21); the routes list has none, and this is the reason it might want one.
 
-### 3.9 The intensity colours have never been seen against a real heart rate
+### 3.9 The intensity colours have been seen on an emulator, not on a wrist-worn history
 
 Both drawings on both detail screens are coloured by effort (A.21), and every
 part of that is arithmetic that produces a picture rather than an error: a wrong
 boundary still colours something. `IntensityTest` pins the boundaries, the
 saturation above the peak and the difference between "no reading" and "an easy
-one"; what it cannot say is whether the result is legible.
+one"; what it cannot say is whether the result is legible. A phone emulator
+carrying 66 real recordings answered one of the three questions below and left
+the other two open.
 
 - **Whether the 15 s median is enough at a boundary.** An effort sitting a few
   beats under 80 % settles to one colour after smoothing; one balanced exactly on
@@ -526,9 +539,9 @@ one"; what it cannot say is whether the result is legible.
   noise on a real ride, the answer is hysteresis — remember the previous band and
   require a margin to leave it — which is a change to `Intensity` and its tests
   and to nothing else.
-- **Whether the full-height backdrop is too much.** It is drawn at 10 % alpha
-  behind the profile so that a hard stretch is legible where the ground is low.
-  On a chart that changes band every few hundred metres it may read as stripes.
+- ~~Whether the full-height backdrop is too much.~~ Answered on the emulator:
+  yes, and worse than stripes — it coloured the sky above the line, where nobody
+  was. A.22 removed it, and the effort is now the line and the fill under it.
 - **Whether 180 bpm is a reasonable place to start.** It is a plausible figure
   for a fit adult in their thirties and nothing more; the setting is under
   Einstellungen → Belastung, and the bands are listed there in bpm precisely so

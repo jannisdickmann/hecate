@@ -570,8 +570,9 @@ Shortcuts and variants are independent routes that happen to share a prefix
 between them — it shows `Suche…`, with no ETA, until the paths part. On a route
 family that shares most of its length, that is most of the run.
 
-Each route therefore carries a priority from −2 to +2, set on its detail screen:
-ganz hinten, eher nicht, keine Meinung, eher schon, ganz vorn. Where several
+Each route therefore carries a priority from −2 to +2, set on its detail screen
+as a row of five buttons — read them as ganz hinten, eher nicht, keine Meinung,
+eher schon, ganz vorn, though the app shows only the numbers. Where several
 routes currently coincide and exactly one outranks the rest, the watch assumes
 that one and gives you its name, remaining distance and ETA from the start. A
 tie decides nothing, so leaving everything at the default 0 keeps the cautious
