@@ -2045,3 +2045,48 @@ carry no altitude at all, so a watch recording has no elevation profile while a
 takeout import of the same route does. That is a separate question about what
 Health Services offers on this watch, and §3.11 of the open points is where it
 now waits.
+
+### A.25 A chart of a seven-hour walk
+
+A.24 fixed the clock underneath the speed chart, and the chart was still wrong —
+on a takeout import this time, which ruled out everything A.24 had just done. A
+25 km hike over seven and a half hours drew as two hundred disconnected bars,
+with a range that began "−−".
+
+**The thinning was eating the gaps.** `Series.thin` reduces a series to what a
+chart can draw, and the chart decided where the line stopped by asking how far
+apart two points were in time: more than a dropout's worth, and the line broke.
+Both rules are right and together they are nonsense. Twenty-seven thousand
+samples thinned to four hundred points leaves *two minutes* between neighbours
+on an ordinary continuous walk — so every step was a gap, and every pair of kept
+points became its own little bar. On a 45-minute ride the same arithmetic leaves
+twelve seconds between points and nothing showed.
+
+A hole is known while the whole series is in hand and cannot be recovered
+afterwards, so it is written down there: `Timeline.simplify` cuts the series at
+its holes, thins each piece in proportion to its own length, and marks the first
+point of each piece. The chart breaks where a point says to, not where it
+guesses. The gap threshold is gone from the drawing code entirely.
+
+**And the thinning was drawing noise it could not resolve.** Every bucket keeps
+its highest and lowest sample, which is exactly right for an altitude profile —
+the peaks are the ground — and exactly wrong for a rate at this scale: a hundred
+and forty samples per drawn point, of a walk that stops at every junction, is a
+solid band between standing still and nine kilometres an hour. True, and it says
+nothing about the walk. So a time series is now smoothed to the scale it will be
+*drawn* at, with a median as wide as the number of samples behind one point. A
+sustained effort is a monotonic run and passes through a median untouched, so
+what survives is what lasted long enough to be visible at all; a one-second GNSS
+excursion does not, and should not. Elevation keeps its peaks, and the asymmetry
+is the point: a position's extremes are the ground, a rate's extremes at an
+invisible scale are noise.
+
+The range under the chart now comes from the *drawn* series rather than the raw
+one. A caption naming a peak that is nowhere on the picture above it is a caption
+about a different chart.
+
+**"−−9,0 km/h"** was the third thing, and the smallest: `Format.speed` renders
+anything at or below zero as "–", which is right for an average nobody could
+compute and wrong for the slowest moment of a walk. Standing at a junction is a
+speed, and on a hike it is most of the interesting part of the range.
+`Format.speedRange` writes it as 0,0.

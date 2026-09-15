@@ -28,12 +28,11 @@ fun SpeedView(
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
 ) {
     BandedChart(
-        points = points.map { ChartPoint(it.tMs.toDouble(), it.value, it.hrBpm) },
+        points = points.map { ChartPoint(it.tMs.toDouble(), it.value, it.hrBpm, it.startsRun) },
         modifier = modifier,
         height = height,
         peakHrBpm = peakHrBpm,
         minSpanY = FLAT_SPAN_KMH,
-        gapX = GAP_MS,
     )
 }
 
@@ -53,12 +52,11 @@ fun HeartRateView(
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
 ) {
     BandedChart(
-        points = points.map { ChartPoint(it.tMs.toDouble(), it.value, it.hrBpm) },
+        points = points.map { ChartPoint(it.tMs.toDouble(), it.value, it.hrBpm, it.startsRun) },
         modifier = modifier,
         height = height,
         peakHrBpm = peakHrBpm,
         minSpanY = FLAT_SPAN_BPM,
-        gapX = GAP_MS,
     )
 }
 
@@ -69,8 +67,3 @@ private const val FLAT_SPAN_KMH = 5.0
 /** The least heart-rate range [bpm] a chart is drawn across. A flat hour at 140
  *  is a flat hour, not a ragged line across the full height of a card. */
 private const val FLAT_SPAN_BPM = 20.0
-
-/** How long a hole in a series [ms] before the line stops rather than being
- *  drawn across it: the same constant that decides a dropout everywhere else,
- *  so a gap is a gap by one definition rather than by three. */
-private const val GAP_MS = Tuning.MAX_INTERPOLATION_GAP_MS.toDouble()

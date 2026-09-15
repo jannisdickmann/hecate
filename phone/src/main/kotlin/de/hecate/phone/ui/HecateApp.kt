@@ -1187,7 +1187,7 @@ private fun SpeedSection(
     Spacer(Modifier.height(4.dp))
     SectionHeader(title)
     SpeedView(points, peakHrBpm = peakHrBpm)
-    Quiet("${Format.speed(stats.min)}–${Format.speed(stats.max)} km/h")
+    Quiet(Format.speedRange(stats.min, stats.max))
 }
 
 /**

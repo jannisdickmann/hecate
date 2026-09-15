@@ -570,6 +570,13 @@ A.23 added speed and heart rate against time to both detail screens. The heart
 rate is a column being drawn. The speed is not: it is a derivative of the
 positions, and every decision behind it is visible only as a shape.
 
+- **Whether smoothing to the drawn scale hides something worth seeing.** A long
+  recording is now median-filtered at the width of one drawn point before it is
+  thinned (A.25), so a seven-hour walk is a line rather than a solid band. A
+  sustained effort survives a median and a one-second excursion does not, which
+  is the intent — but the width follows the *duration*, so the same sprint is
+  drawn on a 40-minute ride and smoothed away on a six-hour one. Whether that
+  ever matters is a question for a long ride with something real in it.
 - **Whether 15 s of rolling median is the right width for a recording.**
   Narrower and a single wandering fix becomes a sprint; wider and a real sprint
   becomes the average of what surrounds it. `Tuning.SPEED_MEDIAN_WINDOW`, and a

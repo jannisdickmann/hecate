@@ -29,7 +29,15 @@ import kotlin.math.max
  * The mapping between them is one line at each call site and is the only place
  * that knows whether the x axis is metres or milliseconds.
  */
-data class ChartPoint(val x: Double, val y: Double, val hrBpm: Double? = null)
+data class ChartPoint(
+    val x: Double,
+    val y: Double,
+    val hrBpm: Double? = null,
+    /** Whether the line starts again here. See [de.hecate.core.profile.Timeline.Point]:
+     *  a hole is known where the full series is, not here, where the points may
+     *  legitimately be minutes apart. */
+    val startsRun: Boolean = false,
+)
 
 /**
  * Every chart in this app, drawn once.
@@ -59,10 +67,12 @@ data class ChartPoint(val x: Double, val y: Double, val hrBpm: Double? = null)
  * the fill under it, which is what makes a chart read as ground rather than as
  * an arbitrary line drawing. Never above the line — see A.22.
  *
- * [gapX] is how far apart two points may be on the x axis before the line stops
- * rather than being drawn across: a dropout is not a straight line through
- * unknown terrain, and on a heart-rate chart the strap losing contact for two
- * minutes must not read as two minutes of smooth effort.
+ * A hole in the series — a dropout, a pause, a strap that lost contact — breaks
+ * the line rather than being drawn across, because a straight line through
+ * unknown terrain is not a measurement. Which points begin a new stretch is
+ * decided where the whole series is still in hand and arrives on the point
+ * itself: after thinning, two kept points on a seven-hour walk are two minutes
+ * apart whether anything happened between them or not.
  */
 @Composable
 fun BandedChart(
@@ -71,7 +81,6 @@ fun BandedChart(
     height: Dp = 110.dp,
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
     minSpanY: Double = 0.0,
-    gapX: Double = Double.MAX_VALUE,
 ) {
     val plain = routeLineColor
     val bandColors = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
@@ -113,7 +122,7 @@ fun BandedChart(
             var runStart = 0
             var runBand = bandOf(points, 1, peakHrBpm)
             for (i in 1 until points.size) {
-                if (points[i].x - points[i - 1].x > gapX) {
+                if (points[i].startsRun) {
                     drawSection(points, runStart, i - 1, ::toCanvas, floor, runBand, bandColors, plain)
                     runStart = i
                     runBand = if (i + 1 < points.size) bandOf(points, i + 1, peakHrBpm) else null

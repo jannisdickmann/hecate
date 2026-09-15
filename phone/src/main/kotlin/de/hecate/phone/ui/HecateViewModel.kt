@@ -582,8 +582,10 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         // say how long a typical ride takes to reach each of them, and a fixed
         // distance over that is the speed this route is usually done at.
         val medianTimes = profileRows.map { it.medianCumTimeS }
-        val routeSpeed = Timeline.speedOfBins(medianTimes, Tuning.RESAMPLE_M, medianHr)
-        val routeHeartRate = Timeline.heartRateOfBins(medianTimes, medianHr)
+        val chartedRouteSpeed =
+            Timeline.simplify(Timeline.speedOfBins(medianTimes, Tuning.RESAMPLE_M, medianHr), CHART_POINTS)
+        val chartedRouteHeartRate =
+            Timeline.simplify(Timeline.heartRateOfBins(medianTimes, medianHr), CHART_POINTS)
 
         _routeDetail.value = RouteDetail(
             id = route.id,
@@ -607,10 +609,10 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             worstDurationMs = durations.maxOrNull(),
             elevation = Elevation.simplify(routeElevation, CHART_POINTS),
             elevationStats = Elevation.stats(routeElevation),
-            speed = Timeline.simplify(routeSpeed, CHART_POINTS),
-            speedStats = Timeline.stats(routeSpeed),
-            heartRate = Timeline.simplify(routeHeartRate, CHART_POINTS),
-            heartRateStats = Timeline.stats(routeHeartRate),
+            speed = chartedRouteSpeed,
+            speedStats = Timeline.stats(chartedRouteSpeed),
+            heartRate = chartedRouteHeartRate,
+            heartRateStats = Timeline.stats(chartedRouteHeartRate),
             sessions = members,
         )
     }
@@ -678,8 +680,8 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
         val sessionElevation = Elevation.of(charted)
-        val sessionSpeed = Timeline.speedOfSamples(charted)
-        val sessionHeartRate = Timeline.heartRateOfSamples(charted)
+        val chartedSpeed = Timeline.simplify(Timeline.speedOfSamples(charted), CHART_POINTS)
+        val chartedHeartRate = Timeline.simplify(Timeline.heartRateOfSamples(charted), CHART_POINTS)
 
         _sessionDetail.value = SessionDetail(
             summary = SessionSummary(
@@ -713,10 +715,15 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             sessionEvents = events,
             elevation = Elevation.simplify(sessionElevation, CHART_POINTS),
             elevationStats = Elevation.stats(sessionElevation),
-            speed = Timeline.simplify(sessionSpeed, CHART_POINTS),
-            speedStats = Timeline.stats(sessionSpeed),
-            heartRate = Timeline.simplify(sessionHeartRate, CHART_POINTS),
-            heartRateStats = Timeline.stats(sessionHeartRate),
+            // Stats off the *drawn* series, not the raw one: the line under a
+            // chart says what that chart covers, and on a long recording the
+            // drawn series is smoothed to the scale it can show (`simplify`).
+            // A caption naming a peak that is nowhere on the picture above it
+            // is a caption about a different chart.
+            speed = chartedSpeed,
+            speedStats = Timeline.stats(chartedSpeed),
+            heartRate = chartedHeartRate,
+            heartRateStats = Timeline.stats(chartedHeartRate),
         )
     }
 

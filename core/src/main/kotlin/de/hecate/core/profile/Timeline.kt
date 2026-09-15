@@ -33,7 +33,21 @@ object Timeline {
      * same reason: the chart is coloured by it, and a parallel list would have
      * to be thinned in lock-step by every caller.
      */
-    data class Point(val tMs: Long, val value: Double, val hrBpm: Double? = null)
+    data class Point(
+        val tMs: Long,
+        val value: Double,
+        val hrBpm: Double? = null,
+        /**
+         * Whether the line starts again here rather than continuing.
+         *
+         * Carried on the point because it cannot be recovered from the points:
+         * [simplify] leaves them minutes apart on a long walk, and a chart that
+         * decided "far apart in time means a gap" would then break a seven-hour
+         * hike into two hundred bars. Where the series actually stopped is known
+         * while the full one is still in hand, so it is written down there.
+         */
+        val startsRun: Boolean = false,
+    )
 
     /** What the line under a chart says: the range the series covers.
      *
@@ -199,7 +213,69 @@ object Timeline {
         return out
     }
 
-    /** As [Elevation.simplify], for a series against time. */
-    fun simplify(points: List<Point>, max: Int): List<Point> =
-        Series.thin(points, max, { it.value }, { it.tMs.toDouble() })
+    /**
+     * Thin for drawing, keeping the holes as holes.
+     *
+     * [Series.thin] does the thinning, but not blindly across the whole series:
+     * a hole longer than [gapMs] is where the recording stopped — a pause, a
+     * dropout, a strap that lost contact — and it must survive being thinned,
+     * because after thinning nothing can tell it from the ordinary distance
+     * between two kept points. On a seven-hour walk that distance is two
+     * minutes, which is how a chart of a single continuous hike came out as two
+     * hundred separate bars.
+     *
+     * So the series is cut at its holes, each piece is thinned in proportion to
+     * its own length, and the first point of each piece says that it is one.
+     *
+     * Each piece is also smoothed to the scale it will be *drawn* at, with a
+     * median as wide as the number of samples behind one drawn point. Without
+     * that, a seven-hour walk puts a hundred and forty samples into every point
+     * of the chart and then draws the highest and the lowest of them — a solid
+     * band between standing still and nine kilometres an hour, which is a true
+     * statement about the walk and tells the reader nothing about it. A rate's
+     * extremes at a scale the chart cannot resolve are noise; a *position's* are
+     * the ground, which is why [Elevation.simplify] keeps its peaks and this
+     * does not. A sustained effort is a monotonic run and passes through the
+     * median untouched, so what survives is what lasted long enough to be
+     * visible at all.
+     */
+    fun simplify(
+        points: List<Point>,
+        max: Int,
+        gapMs: Long = Tuning.MAX_INTERPOLATION_GAP_MS,
+    ): List<Point> {
+        if (points.isEmpty()) return points
+        val cuts = ArrayList<Int>()
+        cuts.add(0)
+        for (i in 1 until points.size) {
+            if (points[i].tMs - points[i - 1].tMs > gapMs) cuts.add(i)
+        }
+        cuts.add(points.size)
+
+        // How many samples stand behind one drawn point, which is the finest
+        // detail the chart can show and therefore the width to smooth at.
+        val perPoint = points.size / max.coerceAtLeast(1)
+
+        val out = ArrayList<Point>(points.size.coerceAtMost(max + cuts.size))
+        for (c in 0 until cuts.size - 1) {
+            val run = points.subList(cuts[c], cuts[c + 1])
+            if (run.isEmpty()) continue
+            val smoothed = if (perPoint >= 3) {
+                val values = Series.rollingMedian(DoubleArray(run.size) { run[it].value }, perPoint)
+                run.mapIndexed { i, p -> p.copy(value = values[i]) }
+            } else {
+                run
+            }
+            // In proportion to its length, so a long stretch is not thinned to
+            // the same handful of points as the two-sample fragment beside it.
+            val budget = (max.toDouble() * run.size / points.size).toInt().coerceAtLeast(MIN_RUN_POINTS)
+            val thinned = Series.thin(smoothed, budget, { it.value }, { it.tMs.toDouble() })
+            for ((i, p) in thinned.withIndex()) out.add(if (i == 0) p.copy(startsRun = true) else p)
+        }
+        return out
+    }
+
+    /** Fewer than this and [Series.thin] leaves a run alone anyway, which is the
+     *  right answer for a fragment of two or three samples. */
+    private const val MIN_RUN_POINTS = 4
 }

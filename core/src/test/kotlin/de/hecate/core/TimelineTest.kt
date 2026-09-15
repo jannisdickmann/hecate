@@ -144,6 +144,43 @@ class TimelineTest {
     }
 
     @Test
+    fun `thinning a long series keeps its holes and does not invent any`() {
+        // The regression: a seven-hour walk thinned to 400 points leaves two
+        // minutes between neighbours, so a chart that called distance-in-time a
+        // gap drew two hundred separate bars instead of one hike.
+        val long = List(27_000) { Timeline.Point(it * 1000L, 4.0 + (it % 7)) }
+        val thinned = Timeline.simplify(long, 400)
+        assertTrue(thinned.size <= 420, "thinned to ${thinned.size}")
+        assertEquals(1, thinned.count { it.startsRun }, "one continuous walk is one run")
+    }
+
+    @Test
+    fun `a hole in the series survives being thinned`() {
+        val before = List(2_000) { Timeline.Point(it * 1000L, 20.0) }
+        // Ten minutes after the first half stopped, not ten minutes after it
+        // started: the hole is what is between them.
+        val after = List(2_000) { Timeline.Point(2_000_000L + 600_000L + it * 1000L, 20.0) }
+        val thinned = Timeline.simplify(before + after, 400)
+        assertEquals(2, thinned.count { it.startsRun }, "the ten-minute hole is still a hole")
+        // Each side gets points in proportion to its own length, so neither is
+        // thinned away to make room for the other.
+        val second = thinned.indexOfLast { it.startsRun }
+        assertTrue(second > 100 && second < thinned.size - 100, "lopsided at $second of ${thinned.size}")
+    }
+
+    @Test
+    fun `a two-sample fragment beside a long run is not thinned to nothing`() {
+        val run = List(5_000) { Timeline.Point(it * 1000L, 20.0) }
+        val fragment = listOf(
+            Timeline.Point(5_600_000L, 12.0),
+            Timeline.Point(5_601_000L, 13.0),
+        )
+        val thinned = Timeline.simplify(run + fragment, 400)
+        assertEquals(2, thinned.count { it.startsRun })
+        assertEquals(13.0, thinned.last().value, 1e-9, "the fragment's own points")
+    }
+
+    @Test
     fun `nothing measured is null rather than a chart of zero`() {
         assertNull(Timeline.stats(emptyList()))
         assertTrue(Timeline.speedOfSamples(emptyList()).isEmpty())

@@ -32,6 +32,19 @@ object Format {
         return String.format(DE, "%.1f", kmh)
     }
 
+    /**
+     * "0,0–9,0 km/h", the range a chart covers.
+     *
+     * Not [speed] twice: that renders anything at or below zero as "–", which is
+     * right for an average nobody could compute and wrong for the slowest moment
+     * of a walk. Standing at a junction is a speed, and on a seven-hour hike it
+     * is most of the interesting part of the range.
+     */
+    fun speedRange(minKmh: Double, maxKmh: Double): String {
+        if (!minKmh.isFinite() || !maxKmh.isFinite()) return "–"
+        return String.format(DE, "%.1f–%.1f km/h", minKmh.coerceAtLeast(0.0), maxKmh.coerceAtLeast(0.0))
+    }
+
     /** km/h from a distance and the active time taken over it. */
     fun speedFrom(meters: Double, activeMs: Long): Double? {
         if (meters <= 0 || activeMs <= 0) return null
