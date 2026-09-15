@@ -562,6 +562,10 @@ such a recording does.
 
 ### 3.10 The speed chart is an inference, not a measurement
 
+(A.24 found the first thing this predicted: the chart was fine on imports and
+nonsense on watch recordings, because the clock underneath it was. What follows
+is what is left after that.)
+
 A.23 added speed and heart rate against time to both detail screens. The heart
 rate is a column being drawn. The speed is not: it is a derivative of the
 positions, and every decision behind it is visible only as a shape.
@@ -580,6 +584,27 @@ positions, and every decision behind it is visible only as a shape.
   is the median of every ride there, so it is nobody's ride. It may turn out to
   be the most useful chart on the screen — it is the one that says where this
   route is slow — or it may turn out to be a shape with no reader.
+
+### 3.11 A watch recording has no altitude
+
+Both rides in the first real backup carry no altitude on any sample, while a
+takeout import of the same commute carries one on every sample. So the elevation
+profile, the ascent and descent figures and the height band — everything A.20
+built — are simply absent from a recording made on the wrist, and present on the
+same ground imported from Google Health.
+
+The recorder rejects an altitude that is not finite or that falls outside
+`MIN_ALTITUDE_M..MAX_ALTITUDE_M`, which was written for the emulator's synthetic
+provider sending `Double.MAX_VALUE` (A.18). Whether the watch is sending such a
+sentinel, sending nothing at all, or needs `DataType.ELEVATION_GAIN` requested
+alongside `LOCATION`, is not answerable from the data: a rejected value and an
+absent one look identical once written. The next thing to do is to log what
+`LocationData.altitude` actually contains on a real recording — one line, one
+ride — and then decide.
+
+Worth knowing before anyone spends time on it: a barometric altitude is what
+makes a profile worth having, and whether this watch exposes one through Health
+Services at all is the first question, not the last.
 
 ---
 

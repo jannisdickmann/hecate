@@ -16,6 +16,7 @@ import androidx.health.services.client.data.LocationAccuracy
 import androidx.health.services.client.data.LocationAvailability
 import androidx.health.services.client.data.LocationData
 import androidx.health.services.client.data.SampleDataPoint
+import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
@@ -65,6 +66,47 @@ class RecorderService : Service() {
     private var lastNotificationUpdateMs = 0L
     private var sawFirstLocation = false
     private var samplesWritten = 0
+
+    /**
+     * How much of this session has been spent paused, and since when, both in
+     * the session's own monotonic offset.
+     *
+     * The active duration Health Services reports is a *checkpoint* — a value
+     * that was true at some instant — and it does not arrive with every batch.
+     * Stamping it on a sample therefore stamped hundreds of consecutive samples
+     * with the same number, and after an auto-pause with a smaller one than
+     * before: four fifths of the intervals in a real ride had no time in them,
+     * and the clock stepped backwards three times. The total was always right,
+     * because the footer is written at the end from a checkpoint that is current
+     * by then; the *series* never was, and the series is what a speed chart and
+     * a route's per-bin median times are made of.
+     *
+     * So each sample's active time is now derived here from the sample's own
+     * offset, which comes from the monotonic clock and cannot jump, minus what
+     * these two fields know about pauses. The phone repairs older recordings the
+     * same way on the way out (`ActiveClock`); this is so that new ones do not
+     * need repairing.
+     */
+    private var pausedTotalMs = 0L
+    private var pausedSinceMs: Long? = null
+
+    /**
+     * The last heart rate Health Services delivered, and when.
+     *
+     * A sample is written per *position*, and the rate stamped on it used to be
+     * whatever rate happened to arrive in the same batch — so on two real rides
+     * only 28 % and 36 % of samples carried one, and the phone drew a ride whose
+     * effort looked unmeasured for two thirds of its length. The sensor had not
+     * stopped; the batches simply do not line up.
+     *
+     * A rate is therefore carried forward onto later samples for as long as it
+     * is still a fair description of the effort
+     * ([de.hecate.core.Tuning.HR_HOLD_MS]), and no longer: past that the strap
+     * really has lost contact, and a sample with no rate is the honest record of
+     * it. The phone holds older recordings the same way on the way out.
+     */
+    private var lastHrBpm: Int? = null
+    private var lastHrAtMs = 0L
 
     private val bus get() = AppGraph.recorder
 
@@ -130,6 +172,10 @@ class RecorderService : Service() {
         // NFR-6: the monotonic clock times the session; the wall clock is sampled
         // exactly once, here, for display and for Health Connect.
         startedElapsedNs = SystemClock.elapsedRealtimeNanos()
+        pausedTotalMs = 0L
+        pausedSinceMs = null
+        lastHrBpm = null
+        lastHrAtMs = 0L
         val startedAtUtcMs = System.currentTimeMillis()
         val tzOffsetMinutes = TimeZone.getDefault().getOffset(startedAtUtcMs) / 60_000
 
@@ -275,6 +321,14 @@ class RecorderService : Service() {
     private fun nowOffsetMs(): Long =
         (SystemClock.elapsedRealtimeNanos() - startedElapsedNs) / 1_000_000
 
+    /** Active time at a sample taken [tOffsetMs] into the session. A batch can
+     *  arrive after a pause began, so the pause in progress counts only from
+     *  where it started — and never to less than zero. */
+    private fun activeAt(tOffsetMs: Long): Long {
+        val inProgress = pausedSinceMs?.let { (tOffsetMs - it).coerceAtLeast(0) } ?: 0L
+        return (tOffsetMs - pausedTotalMs - inProgress).coerceAtLeast(0)
+    }
+
     // ----------------------------------------------------------------- callback
 
     private val callback = object : ExerciseSource.Callback {
@@ -334,6 +388,7 @@ class RecorderService : Service() {
                     exerciseState == ExerciseState.AUTO_PAUSING
                 if (bus.state.value.phase != RecorderPhase.PAUSED) {
                     recordEvent(if (auto) SessionEventType.PAUSE_AUTO else SessionEventType.PAUSE_MANUAL)
+                    pausedSinceMs = nowOffsetMs()
                 }
                 bus.update { it.copy(phase = RecorderPhase.PAUSED, autoPaused = auto) }
             }
@@ -343,6 +398,8 @@ class RecorderService : Service() {
                         if (bus.state.value.autoPaused) SessionEventType.RESUME_AUTO
                         else SessionEventType.RESUME_MANUAL,
                     )
+                    pausedSinceMs?.let { pausedTotalMs += (nowOffsetMs() - it).coerceAtLeast(0) }
+                    pausedSinceMs = null
                 }
                 bus.update { it.copy(phase = RecorderPhase.ACTIVE, autoPaused = false) }
             }
@@ -392,7 +449,13 @@ class RecorderService : Service() {
         val hrPoints = runCatching { metrics.getData(DataType.HEART_RATE_BPM) }.getOrDefault(emptyList())
         val distance = runCatching { metrics.getData(DataType.DISTANCE_TOTAL)?.total }.getOrNull()
 
-        val hr = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
+        val measured = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
+        if (measured != null) {
+            lastHrBpm = measured
+            lastHrAtMs = nowOffsetMs()
+        }
+        val hr = measured
+            ?: lastHrBpm?.takeIf { nowOffsetMs() - lastHrAtMs <= Tuning.HR_HOLD_MS }
         if (hr != null || distance != null) {
             bus.update {
                 it.copy(
@@ -410,7 +473,7 @@ class RecorderService : Service() {
 
         val paused = bus.state.value.phase == RecorderPhase.PAUSED
         for (point in locations.sortedBy { it.timeDurationFromBoot.toMillis() }) {
-            val sample = toSample(point, activeMs, hr, distance, paused) ?: continue
+            val sample = toSample(point, hr, distance, paused) ?: continue
             onSample(sample)
         }
         maybeUpdateNotification()
@@ -418,7 +481,6 @@ class RecorderService : Service() {
 
     private fun toSample(
         point: SampleDataPoint<LocationData>,
-        activeMs: Long,
         hr: Int?,
         distance: Double?,
         paused: Boolean,
@@ -431,7 +493,9 @@ class RecorderService : Service() {
         sawFirstLocation = true
         return Sample(
             tOffsetMs = tOffsetMs,
-            activeMs = activeMs,
+            // This sample's own offset, less every pause before it — not the
+            // checkpoint the live display uses. See [pausedTotalMs].
+            activeMs = activeAt(tOffsetMs),
             lat = d.latitude,
             lon = d.longitude,
             // LocationData.ALTITUDE_UNAVAILABLE is documented as NaN, which

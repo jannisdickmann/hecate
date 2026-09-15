@@ -50,6 +50,42 @@ object Series {
     }
 
     /**
+     * Carry the last reading forward across holes shorter than [maxGapMs].
+     *
+     * A heart rate is not a per-second measurement that sometimes fails: it is a
+     * quantity that is sampled when the sensor has something to say, and on a
+     * watch recording that turns out to be about a third of the samples — the
+     * rate rides along on whichever position sample shared its batch. Read as a
+     * series with holes, that produced a chart of forty disconnected bars and a
+     * track drawn mostly in the no-reading colour, both of which say "no data"
+     * about a ride that was measured throughout.
+     *
+     * Holding is bounded, and the bound is the whole honesty of it: within
+     * [maxGapMs] the previous reading is still a fair description of the effort,
+     * and beyond it the strap really has stopped reporting and the gap is the
+     * fact worth drawing. See [de.hecate.core.Tuning.HR_HOLD_MS].
+     *
+     * [tMs] is each value's own time, so the bound is in seconds of riding
+     * rather than in samples — the two differ by an order of magnitude between a
+     * 1 Hz recording and a batched one.
+     */
+    fun hold(values: DoubleArray, tMs: LongArray, maxGapMs: Long): DoubleArray {
+        require(values.size == tMs.size) { "a value per time, ${values.size} vs ${tMs.size}" }
+        val out = values.copyOf()
+        var last = Double.NaN
+        var lastAt = 0L
+        for (i in values.indices) {
+            if (!values[i].isNaN()) {
+                last = values[i]
+                lastAt = tMs[i]
+            } else if (!last.isNaN() && tMs[i] - lastAt <= maxGapMs) {
+                out[i] = last
+            }
+        }
+        return out
+    }
+
+    /**
      * Thin a series down to at most [max] points for drawing, keeping its shape.
      *
      * An hour-long ride is 3600 samples and a phone chart is a few hundred

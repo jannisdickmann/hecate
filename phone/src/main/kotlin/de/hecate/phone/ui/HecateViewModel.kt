@@ -9,9 +9,11 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import de.hecate.core.Tuning
 import de.hecate.core.geo.LatLon
+import de.hecate.core.heat.Heatmap
 import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -279,6 +282,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      */
     val heatmap: StateFlow<HeatmapState?> = db.heatmap().watch(HeatmapEntity.CARD)
         .map { row -> row?.let { decodeHeatmap(it) } }
+        .onEach { state -> if (state != null) rebuildIfStale(state.grid) }
         // After the map, not before it: `flowOn` moves what is *upstream* of it,
         // and the work worth moving is the decoding. At a fixed cell size the
         // stored raster is millions of cells, and inflating and parsing it is
@@ -314,6 +318,30 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeHeatmap() {
         _fullHeatmap.value = null
+    }
+
+    /** Set once a re-clustering has been asked for on a raster's account, so a
+     *  screen that recomposes does not ask again. */
+    private var heatmapRebuildRequested = false
+
+    /**
+     * Ask for a re-clustering when the stored card is a picture of the wrong
+     * ground.
+     *
+     * An install upgrading into A.23 has one raster, built when the extent
+     * followed the recordings as well as the routes (A.22) — so the card shows
+     * ground the card is no longer supposed to show, and nothing on the phone
+     * would have replaced it until the next workout arrived. The raster says
+     * which question it answers, so this can tell, and the clustering that
+     * answers it is the same one the settings panel offers by hand.
+     *
+     * Once per process, and only when the picture is actually wrong: a re-cluster
+     * is O(n²) over the history (§2.6) and is not something to do on a timer.
+     */
+    private fun rebuildIfStale(grid: HeatmapGrid) {
+        if (heatmapRebuildRequested || grid.extent == Heatmap.Extent.ROUTES) return
+        heatmapRebuildRequested = true
+        Jobs.enqueueClustering(getApplication())
     }
 
     /** A stored raster and the routes that belong on top of it. */
@@ -610,10 +638,20 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         // into four bands, so a steady effort sitting on a boundary would cross
         // it every few seconds and the drawing would alternate between two
         // colours every few pixels. See Tuning.HR_MEDIAN_WINDOW.
+        //
+        // Held across short holes before anything else touches it: a watch
+        // stamps a rate only on the samples whose batch happened to carry one,
+        // which is about a third of them, and read literally that is a ride
+        // whose effort looks unmeasured for two thirds of its length. See
+        // Tuning.HR_HOLD_MS.
         val heartRate = Series.rollingMedian(
-            DoubleArray(moving.size) { i ->
-                moving[i].hrBpm?.takeIf { it > 0 }?.toDouble() ?: Double.NaN
-            },
+            Series.hold(
+                DoubleArray(moving.size) { i ->
+                    moving[i].hrBpm?.takeIf { it > 0 }?.toDouble() ?: Double.NaN
+                },
+                LongArray(moving.size) { moving[it].tOffsetMs },
+                Tuning.HR_HOLD_MS,
+            ),
             Tuning.HR_MEDIAN_WINDOW,
         )
         fun hrAt(i: Int): Double? = heartRate[i].takeIf { !it.isNaN() }
@@ -621,17 +659,24 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         // One list of samples for all three charts, carrying the *smoothed* heart
         // rate: they must colour the same second the same way, and three
         // conversions of the same rows would be three chances for them not to.
-        val charted = moving.mapIndexed { i, it ->
-            de.hecate.core.model.Sample(
-                tOffsetMs = it.tOffsetMs,
-                activeMs = it.activeMs,
-                lat = it.lat,
-                lon = it.lon,
-                altM = it.altM,
-                hrBpm = hrAt(i)?.roundToInt(),
-                paused = it.paused,
-            )
-        }
+        //
+        // On the repaired clock, because two of the three are drawn against
+        // time: as recorded, a watch session's active clock stands still for
+        // minutes and then steps backwards, and the speed chart it produced was
+        // the fault that found it (`ActiveClock`).
+        val charted = ActiveClock.repair(
+            moving.mapIndexed { i, it ->
+                de.hecate.core.model.Sample(
+                    tOffsetMs = it.tOffsetMs,
+                    activeMs = it.activeMs,
+                    lat = it.lat,
+                    lon = it.lon,
+                    altM = it.altM,
+                    hrBpm = hrAt(i)?.roundToInt(),
+                    paused = it.paused,
+                )
+            },
+        )
         val sessionElevation = Elevation.of(charted)
         val sessionSpeed = Timeline.speedOfSamples(charted)
         val sessionHeartRate = Timeline.heartRateOfSamples(charted)

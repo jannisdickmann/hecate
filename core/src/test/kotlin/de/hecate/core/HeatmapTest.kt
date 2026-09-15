@@ -172,6 +172,18 @@ class HeatmapTest {
     }
 
     @Test
+    fun `a raster says which ground it was built for`() {
+        // So that a build which changed what "the card" means can tell that the
+        // stored one answers the old question — see the codec test for what a
+        // raster written before this field reads as.
+        assertEquals(Heatmap.Extent.ROUTES, Heatmap.build(listOf(squareRoute()), emptyList())!!.extent)
+        assertEquals(
+            Heatmap.Extent.EVERYTHING,
+            Heatmap.build(listOf(squareRoute()), emptyList(), extent = Heatmap.Extent.EVERYTHING)!!.extent,
+        )
+    }
+
+    @Test
     fun `the card is grown to its ratio and the full picture is not`() {
         // A tall route and a wide one: on the card both come out 16:9, because a
         // card is a fixed shape in a list. The same ground drawn for the view

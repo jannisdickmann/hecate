@@ -1968,3 +1968,80 @@ its active time, a route's median duration — and a second "Ø", computed
 differently and disagreeing by a tenth, would be worse than no number at all. So
 the line under each chart is the range, which is the fact the chart's own
 exaggerated axis is hiding.
+
+### A.24 The watch was writing a clock that stood still
+
+A.23's speed chart was right on every takeout import and nonsense on everything
+the watch had recorded, which is the most useful shape a bug can have: the two
+differ in exactly one thing, and it was not the chart.
+
+**`Sample.activeMs` from the watch is not a series.** Health Services reports the
+active duration as a *checkpoint* — a value that was true at a stated instant —
+and it does not arrive with every batch. The recorder stamped whatever it last
+had onto each sample, so on two real rides four fifths of all sample intervals
+contained no time at all, and after an auto-pause the number came back *smaller*
+than before: three backward steps in one ride, one of them by 34 minutes. A
+chart of distance over that is a chart of distance over zero, which is either no
+speed or an enormous one, and the ride drew both.
+
+Nothing had noticed because everything that read it read it as a **total**, and
+the total is right: the footer is written once at the end of a session from a
+checkpoint that is current by then, and it agrees with the wall clock to a
+quarter of a percent. What reads it as a series is new — A.23's speed chart, and
+before it the per-bin median times of a route profile, which is how "am I faster
+than usual" is answered.
+
+The clock is therefore rebuilt from the one field on a sample that cannot lie:
+`tOffsetMs`, taken from a monotonic clock. Time between consecutive samples
+counts unless either end is paused, or the hole between them is longer than
+`MAX_INTERPOLATION_GAP_MS` — an auto-pause writes no samples at all and appears
+only as such a hole, a receiver dropout appears the same way, and the app cannot
+tell them apart. Counting it would invent active seconds for a workout that may
+have been standing still; not counting it under-counts a genuine dropout by its
+own length, which is the smaller and quieter error, and it is what every other
+part of this app already does with a hole that size.
+
+`ActiveClock.repair` is not a guess, and it did not have to be: run over the 62
+sessions of a real backup it reproduces the stored per-sample clock of **every
+takeout import exactly**, to the millisecond, and lands within a quarter of a
+percent of the footer's own total on both watch recordings — where the last
+sample's own figure was out by a factor of four. On those two rides the speed
+series went from 429 usable points out of 2686, spanning 1.2 to 34.8 km/h, to
+2684 points spanning 9.4 to 29.4, against a recorded average of 22.5.
+
+It is applied on the way out, every time, exactly as the altimeter de-spiking of
+A.20 is: what the watch said stays in the database and in every backup, so this
+can be changed later without a migration and without anyone having to trust that
+it was right the first time. `RecordedSession.timedSamples` is where it happens,
+and `Track.of` reads that rather than the raw samples — which also puts the route
+profiles back on a real clock at the next clustering, and with them the watch's
+own ahead/behind.
+
+The recorder was fixed too, so that new recordings do not need repairing: each
+sample's active time is now its own offset less every pause recorded before it,
+which is the same arithmetic done where the pauses are known first-hand. The
+live display and the footer keep using Health Services' checkpoint, because that
+is its authority and it is demonstrably right.
+
+**Heart rate had the same shape of problem.** A sample is written per *position*,
+and the rate stamped on it was whatever arrived in the same batch — so on those
+two rides only 28 % and 36 % of samples carried one. The sensor had not stopped;
+the batches simply do not line up. Read literally, that is a heart-rate chart of
+forty disconnected bars and a track drawn in the no-reading colour for two
+thirds of its length, about a ride whose effort was measured all the way along.
+
+A reading is therefore carried forward onto later samples for `HR_HOLD_MS` = 30 s
+and no longer — `Series.hold` on the phone, for recordings already made, and the
+recorder itself for new ones. Thirty seconds is chosen from both sides: it covers
+every ordinary hole between readings (the median is two to three seconds) with
+room to spare, and a rate half a minute old is still the right band for the
+effort, since the bands are ten percent of a peak wide. The sixteen or so holes
+per ride that are longer than that are the strap genuinely losing contact, and
+they stay holes — the chart draws the gap, which is the honest picture of a wrist
+sensor on a bicycle.
+
+**And one thing that is now visible and is not fixed here:** these recordings
+carry no altitude at all, so a watch recording has no elevation profile while a
+takeout import of the same route does. That is a separate question about what
+Health Services offers on this watch, and §3.11 of the open points is where it
+now waits.

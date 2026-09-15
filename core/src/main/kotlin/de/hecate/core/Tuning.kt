@@ -481,6 +481,26 @@ object Tuning {
     const val HR_MEDIAN_WINDOW: Int = 15
 
     /**
+     * How long a heart rate stays true after the last reading [ms].
+     *
+     * The watch stamps a rate on a sample only when the sensor delivered one in
+     * the same batch as the position, which on two real rides was 28 % and 36 %
+     * of the samples — with holes of two to four seconds between readings and a
+     * handful of genuine minute-long ones where the strap lost contact. Read
+     * literally, that is a chart of forty disconnected bars and a track drawn in
+     * the "no reading" colour for two thirds of its length, about a ride whose
+     * effort was in fact measured all the way along.
+     *
+     * Thirty seconds is chosen from both sides: it covers every ordinary hole
+     * between readings with room to spare, and a heart rate half a minute old is
+     * still the right band for the effort — the bands are ten percent of a peak
+     * wide, and nobody crosses one and comes back inside thirty seconds without
+     * the next reading saying so. Longer holes are left as holes, and the chart
+     * draws the gap.
+     */
+    const val HR_HOLD_MS: Long = 30_000L
+
+    /**
      * Window [samples] of the rolling median over a recording's speed.
      *
      * Speed is the one quantity on these screens that is a *derivative*, and the

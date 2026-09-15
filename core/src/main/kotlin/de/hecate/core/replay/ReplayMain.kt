@@ -133,7 +133,7 @@ object ReplayMain {
         if (sessions.isEmpty()) { System.err.println("no sessions found in $dir"); return 2 }
 
         val tracks = sessions.mapNotNull { Track.of(it) }
-        val hr = sessions.associate { it.id to it.samples }
+        val hr = sessions.associate { it.id to it.timedSamples }
         val minMembers = o["min-members"]?.toIntOrNull() ?: de.hecate.core.Tuning.MIN_MEMBERS
         val computed = BundleBuilder.computeRoutes(tracks, hr, minMembers)
         val bundle = BundleBuilder.bundleFrom(tracks, hr)

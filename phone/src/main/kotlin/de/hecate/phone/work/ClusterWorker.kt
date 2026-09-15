@@ -100,7 +100,11 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             )
             Track.of(recorded)?.let {
                 tracks.add(it)
-                hrBySession[s.id] = samples
+                // The same repaired clock the track was built on: the profile
+                // looks a member's heart rate up *by time*, so a lookup list on
+                // the recorded clock and a track on the derived one would slide
+                // the heart rates along the route. See `ActiveClock`.
+                hrBySession[s.id] = recorded.timedSamples
                 localHourBySession[s.id] =
                     (((s.startedAtUtc + s.tzOffsetMinutes * 60_000L) % 86_400_000L) / 3_600_000L).toInt()
             }

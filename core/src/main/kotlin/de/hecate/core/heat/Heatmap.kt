@@ -65,6 +65,12 @@ data class HeatmapGrid(
      *  say that a recording is missing, because a recording that is not drawn
      *  looks exactly like one that was never made. */
     val sessionsOutsideExtent: Int = 0,
+    /** Which question this raster answers ([Heatmap.Extent]), or null for one
+     *  stored before there were two of them. A reader that wanted the card's
+     *  ground and finds null is looking at a raster from an older build, which
+     *  is the one case where the picture on screen is not the picture asked
+     *  for — and the only way to notice is to have written it down. */
+    val extent: Heatmap.Extent? = null,
 ) {
     val isEmpty: Boolean get() = maxCount == 0
 
@@ -83,6 +89,7 @@ data class HeatmapGrid(
             other.sessionsDiscarded == sessionsDiscarded &&
             other.routesDiscarded == routesDiscarded &&
             other.sessionsOutsideExtent == sessionsOutsideExtent &&
+            other.extent == extent &&
             other.cells.contentEquals(cells)
 
     override fun hashCode(): Int = 31 * cells.contentHashCode() + width
@@ -212,6 +219,7 @@ object Heatmap {
             sessionsDiscarded = sessions.size - keptSessions.size,
             routesDiscarded = routes.size - keptRoutes.size,
             sessionsOutsideExtent = outside,
+            extent = extent,
         )
     }
 
@@ -525,6 +533,9 @@ object HeatmapCodec {
         /** Defaulted, like [cellM]: a raster written before the count existed is
          *  a raster whose author did not know, which is what 0 says here. */
         val sessionsOutsideExtent: Int = 0,
+        /** The name of the [Heatmap.Extent] this was built for; absent on
+         *  anything written before there were two. */
+        val extent: String? = null,
         val cellM: Double = 0.0,
         /** Every cell, as written before the run-length encoding existed. */
         val cells: IntArray? = null,
@@ -548,6 +559,7 @@ object HeatmapCodec {
             sessionsDiscarded = grid.sessionsDiscarded,
             routesDiscarded = grid.routesDiscarded,
             sessionsOutsideExtent = grid.sessionsOutsideExtent,
+            extent = grid.extent?.name,
         ),
     )
 
@@ -575,6 +587,7 @@ object HeatmapCodec {
             sessionsDiscarded = s.sessionsDiscarded,
             routesDiscarded = s.routesDiscarded,
             sessionsOutsideExtent = s.sessionsOutsideExtent,
+            extent = s.extent?.let { name -> Heatmap.Extent.entries.firstOrNull { it.name == name } },
         )
     }
 

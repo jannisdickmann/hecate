@@ -174,8 +174,20 @@ data class RecordedSession(
 ) {
     val id: String get() = header.sessionId
 
+    /**
+     * The same samples on a clock that only ever advances — see [ActiveClock]
+     * for why [Sample.activeMs] as recorded cannot be read as a series.
+     *
+     * Anything that asks *when* rather than *how long in total* should read
+     * this. Computed once and kept, because a track is built from it and a
+     * profile is built from the track, and those must be on the same clock as
+     * the heart rates looked up beside them.
+     */
+    val timedSamples: List<Sample> by lazy(LazyThreadSafetyMode.NONE) { ActiveClock.repair(samples) }
+
     /** Active duration from the footer when present, otherwise from the samples.
-     *  An interrupted recording still has a usable duration. */
+     *  An interrupted recording still has a usable duration — and it is read off
+     *  the repaired clock, since the raw one can end lower than it started. */
     val activeDurationMs: Long
-        get() = footer?.activeDurationMs ?: samples.lastOrNull()?.activeMs ?: 0L
+        get() = footer?.activeDurationMs ?: timedSamples.lastOrNull()?.activeMs ?: 0L
 }
