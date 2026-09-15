@@ -82,6 +82,7 @@ import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.Intensity
 import de.hecate.core.profile.Elevation
+import de.hecate.core.profile.Timeline
 import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
@@ -475,7 +476,13 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         Spacer(Modifier.height(12.dp))
         PolylineView(d.geometry, peakHrBpm = peakHr)
         ElevationSection(d.elevation, d.elevationStats, peakHr)
-        IntensityLegend(d.geometry.any { it.hrBpm != null } || d.elevation.any { it.hrBpm != null })
+        SpeedSection("Geschwindigkeit", d.speed, d.speedStats, peakHr)
+        HeartRateSection("Herzfrequenz", d.heartRate, d.heartRateStats, peakHr)
+        IntensityLegend(
+            d.geometry.any { it.hrBpm != null } ||
+                d.elevation.any { it.hrBpm != null } ||
+                d.speed.any { it.hrBpm != null },
+        )
         Spacer(Modifier.height(12.dp))
 
         KeyValue("Art", d.summary.exerciseType.label)
@@ -580,10 +587,12 @@ private fun RoutesScreen(vm: HecateViewModel) {
     }
     // Hoisted above the list: the raster is built off the main thread and kept
     // while the screen lives, so scrolling the card out of the LazyColumn and
-    // back does not rebuild it, and the full-screen view opens onto the bitmap
-    // that is already there rather than onto a blank frame.
+    // back does not rebuild it.
     var expanded by remember { mutableStateOf(false) }
     val raster = heatmap?.let { rememberHeatmapRaster(it.grid) }
+    // The full-screen picture is a different raster of different ground, and it
+    // is read only while the dialog is up — see [HecateViewModel.openHeatmap].
+    val full by vm.fullHeatmap.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize()) {
         // Shown here as well as in Settings, because a re-clustering is most
@@ -600,7 +609,7 @@ private fun RoutesScreen(vm: HecateViewModel) {
             // which is what you want once you are reading the list itself.
             heatmap?.let { h ->
                 item(key = "heatmap") {
-                    HeatmapCard(h, raster) { expanded = true }
+                    HeatmapCard(h, raster) { expanded = true; vm.openHeatmap() }
                     Spacer(Modifier.height(4.dp))
                 }
             }
@@ -611,15 +620,13 @@ private fun RoutesScreen(vm: HecateViewModel) {
     }
 
     if (expanded) {
-        heatmap?.let { h ->
-            HeatmapFullScreen(
-                grid = h.grid,
-                routes = h.routes,
-                raster = raster,
-                caption = heatmapCaption(h),
-                onDismiss = { expanded = false },
-            )
-        }
+        HeatmapFullScreen(
+            state = full,
+            // The full picture's own numbers, and they differ from the card's:
+            // it covers ground the card leaves out, so it leaves less out.
+            caption = full?.let { heatmapCaption(it) } ?: "Wird geladen…",
+            onDismiss = { expanded = false; vm.closeHeatmap() },
+        )
     }
 }
 
@@ -746,7 +753,15 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         Spacer(Modifier.height(8.dp))
         PolylineView(d.geometry, peakHrBpm = peakHr)
         ElevationSection(d.elevation, d.elevationStats, peakHr)
-        IntensityLegend(d.geometry.any { it.hrBpm != null } || d.elevation.any { it.hrBpm != null })
+        // "Median" in both titles, because that is what a route is: the middle
+        // of everything its members did here, not any one ride.
+        SpeedSection("Geschwindigkeit (Median)", d.speed, d.speedStats, peakHr)
+        HeartRateSection("Herzfrequenz (Median)", d.heartRate, d.heartRateStats, peakHr)
+        IntensityLegend(
+            d.geometry.any { it.hrBpm != null } ||
+                d.elevation.any { it.hrBpm != null } ||
+                d.speed.any { it.hrBpm != null },
+        )
         Spacer(Modifier.height(16.dp))
 
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
@@ -1146,6 +1161,54 @@ private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
         Spacer(Modifier.height(6.dp))
         Quiet("Entscheidet nur zwischen Routen, die sich denselben Weg teilen.")
     }
+}
+
+/**
+ * Speed against time, and the range it covered.
+ *
+ * Under the altitude profile rather than above it, because the ground is what
+ * explains the speed: the reader has just seen the hill that the slow stretch is
+ * on. Coloured by heart rate for the same reason — 30 km/h in blue is a descent
+ * and 30 km/h in orange is work.
+ *
+ * The line underneath is the *range*, never an average: both screens already
+ * carry an average of their own (distance over active time; the route's median
+ * duration), and a second "Ø" computed another way and disagreeing with it by a
+ * tenth would be worse than no number at all.
+ */
+@Composable
+private fun SpeedSection(
+    title: String,
+    points: List<Timeline.Point>,
+    stats: Timeline.Stats?,
+    peakHrBpm: Int,
+) {
+    if (points.size < 2 || stats == null) return
+    Spacer(Modifier.height(4.dp))
+    SectionHeader(title)
+    SpeedView(points, peakHrBpm = peakHrBpm)
+    Quiet("${Format.speed(stats.min)}–${Format.speed(stats.max)} km/h")
+}
+
+/**
+ * Heart rate against time, and the range it covered.
+ *
+ * Absent rather than flat when there is no rate to draw: a recording made
+ * without a strap, or a route none of whose members wore one, gets no chart at
+ * all. A line at zero would be a claim about a heart.
+ */
+@Composable
+private fun HeartRateSection(
+    title: String,
+    points: List<Timeline.Point>,
+    stats: Timeline.Stats?,
+    peakHrBpm: Int,
+) {
+    if (points.size < 2 || stats == null) return
+    Spacer(Modifier.height(4.dp))
+    SectionHeader(title)
+    HeartRateView(points, peakHrBpm = peakHrBpm)
+    Quiet("${Format.hr(stats.min)}–${Format.hr(stats.max)} bpm")
 }
 
 /**

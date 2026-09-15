@@ -97,13 +97,15 @@ data class HeatmapGrid(
  *
  * Five decisions shape the whole thing:
  *
- * - **The routes anchor the extent; the recordings may extend it, but only so
- *   far.** A recording that never became a route — one trip to another city —
- *   must not set the bounding box and squash everything you actually run into a
- *   corner. But a box that stops at the routes cuts real tracks off at an
- *   invisible line, so ground a recording covered is included out to
- *   [Tuning.HEATMAP_EXTENT_REACH] times the routes' own larger side, and
- *   anything past that gets no vote at all.
+ * - **There are two extents, because there are two pictures** ([Extent]). The
+ *   card above the routes list is about the routes: its box is theirs, grown to
+ *   [Tuning.HEATMAP_ASPECT], and a recording that wandered elsewhere contributes
+ *   its heat wherever it crosses that box without getting a vote on where the
+ *   box is — one trip to another city must not squash everything you actually
+ *   run into a corner of a thumbnail. The full-screen picture is the opposite
+ *   question, "where have I been", so its box holds everything the radius filter
+ *   kept, in whatever shape that ground happens to be: it is pannable, so
+ *   nothing has to be left out to make it fit.
  * - **The radius filter is about believing coordinates, not about tidiness.** It
  *   is measured from the median start of all routes, so it takes half your
  *   routes moving abroad to move it, and it throws out the fix that landed in
@@ -127,10 +129,42 @@ data class HeatmapGrid(
 object Heatmap {
 
     /**
-     * @param routes every active route's geometry; the extent comes from these.
+     * Which ground the picture is of.
+     *
+     * Not a cosmetic choice: it decides what is drawn at all, since a sample
+     * outside the extent is dropped rather than clamped. The two answers belong
+     * to the two places the picture appears, and neither is right for the other.
+     */
+    enum class Extent {
+        /**
+         * The routes' own box, grown to [Tuning.HEATMAP_ASPECT] — the card on
+         * the routes list.
+         *
+         * A thumbnail of the ground the routes are on. Recordings colour it;
+         * they do not move it, and one that happened somewhere else is simply
+         * not in this picture.
+         */
+        ROUTES,
+
+        /**
+         * Everything the radius filter kept, in its own shape — the full-screen
+         * view.
+         *
+         * A picture you can pan and zoom has no reason to leave anything out,
+         * and no reason to be a particular shape either: the ground decides
+         * both. This is the one that answers "where have I been", as opposed to
+         * "where do my routes go".
+         */
+        EVERYTHING,
+    }
+
+    /**
+     * @param routes every active route's geometry; the extent is anchored on these.
      * @param sessions every recording's track; the heat comes from these.
+     * @param extent which ground to cover — see [Extent].
      * @return null when there is nothing to draw — no routes, or none that
-     *   survive the radius filter, since without routes there is no extent.
+     *   survive the radius filter, since without routes there is no centre and
+     *   no extent.
      */
     fun build(
         routes: List<RouteTrack>,
@@ -138,6 +172,7 @@ object Heatmap {
         maxRadiusM: Double = Tuning.HEATMAP_MAX_RADIUS_M,
         cellM: Double = Tuning.HEATMAP_CELL_M,
         maxCells: Int = Tuning.HEATMAP_MAX_CELLS,
+        extent: Extent = Extent.ROUTES,
     ): HeatmapGrid? {
         val centre = medianStart(routes) ?: return null
 
@@ -153,23 +188,23 @@ object Heatmap {
             s.points.isNotEmpty() && s.points.all { Geo.haversine(centre, it) <= maxRadiusM }
         }
 
-        val extent = extentOf(keptRoutes, keptSessions, centre, cellM, maxCells)
+        val box = extentOf(keptRoutes, keptSessions, centre, cellM, maxCells, extent)
 
-        val cells = IntArray(extent.width * extent.height)
+        val cells = IntArray(box.width * box.height)
         var outside = 0
-        for (s in keptSessions) if (!drawTrack(s.points, centre, extent, cells)) outside++
+        for (s in keptSessions) if (!drawTrack(s.points, centre, box, cells)) outside++
         val max = cells.maxOrNull() ?: 0
 
         return HeatmapGrid(
             originLat = centre.lat,
             originLon = centre.lon,
-            minX = extent.minX,
-            minY = extent.minY,
-            spanX = extent.width * extent.cellM,
-            spanY = extent.height * extent.cellM,
-            width = extent.width,
-            height = extent.height,
-            cellM = extent.cellM,
+            minX = box.minX,
+            minY = box.minY,
+            spanX = box.width * box.cellM,
+            spanY = box.height * box.cellM,
+            width = box.width,
+            height = box.height,
+            cellM = box.cellM,
             cells = cells,
             maxCount = max,
             routeIds = keptRoutes.map { it.id },
@@ -180,7 +215,10 @@ object Heatmap {
         )
     }
 
-    private data class Extent(
+    /** The extent as the raster needs it: where it starts, how many cells, how
+     *  big a cell. Named for the box rather than for [Extent], which is the
+     *  question this is the answer to. */
+    private data class Box(
         val minX: Double,
         val minY: Double,
         val width: Int,
@@ -209,7 +247,7 @@ object Heatmap {
      *
      * @return whether any of it landed inside the picture at all.
      */
-    private fun drawTrack(points: List<LatLon>, centre: LatLon, extent: Extent, cells: IntArray): Boolean {
+    private fun drawTrack(points: List<LatLon>, centre: LatLon, extent: Box, cells: IntArray): Boolean {
         var previous: DoubleArray? = null
         var lastIndex = -1
         var drew = false
@@ -255,27 +293,25 @@ object Heatmap {
     }
 
     /**
-     * The ground the picture covers, padded, brought inside the allowed range of
-     * shapes, and then rounded outwards to whole cells.
+     * The ground the picture covers, padded, shaped, and then rounded outwards
+     * to whole cells.
      *
      * Grown, never cropped, and grown symmetrically: the alternative is either
      * losing part of a route off the edge or stretching the geography, and a
      * route drawn with the wrong proportions is a route you no longer recognise.
      *
-     * The routes anchor it and the recordings may extend it, out to
-     * [Tuning.HEATMAP_EXTENT_REACH] times the routes' larger side. Anchoring it
-     * on the routes is what stops one trip to another city from deciding where
-     * the picture is (A.14); bounding it *by* the routes was cutting real
-     * tracks off at an invisible line, which is a different failure and a worse
-     * one, because nothing on the screen says it happened. A recording beyond
-     * the reach contributes no part of the extent at all — not even the edge it
-     * would have been clamped to, which would stretch the picture to the limit
-     * for something not drawn inside it.
+     * [rule] decides what goes into the box in the first place — the routes, or
+     * the routes and every recording the radius filter kept — and whether the
+     * result is then grown to the card's shape. `EVERYTHING` is left in its own
+     * shape on purpose: it is drawn in a view that pans, where growing the box
+     * to a ratio would add surface nobody asked for and cost cells the ground
+     * could have had instead.
      *
      * The cell size doubles until the raster fits in [maxCells]. Doubling rather
      * than scaling to fit exactly, so that the cell stays a round multiple of the
      * one constant and two rasters of the same ground line up instead of being
-     * off by a fraction of a cell.
+     * off by a fraction of a cell — which is what lets the two pictures here be
+     * two crops of the same geography rather than two different drawings.
      */
     private fun extentOf(
         routes: List<RouteTrack>,
@@ -283,13 +319,14 @@ object Heatmap {
         centre: LatLon,
         cellM: Double,
         maxCells: Int,
-    ): Extent {
+        rule: Extent,
+    ): Box {
         var minX = Double.MAX_VALUE
         var maxX = -Double.MAX_VALUE
         var minY = Double.MAX_VALUE
         var maxY = -Double.MAX_VALUE
-        for (r in routes) {
-            for (p in r.points) {
+        fun include(points: List<LatLon>) {
+            for (p in points) {
                 val l = Geo.toLocal(centre, p)
                 if (l[0] < minX) minX = l[0]
                 if (l[0] > maxX) maxX = l[0]
@@ -297,23 +334,8 @@ object Heatmap {
                 if (l[1] > maxY) maxY = l[1]
             }
         }
-
-        // How far a recording may reach past the routes, in each direction.
-        val reach = maxOf(maxX - minX, maxY - minY) * Tuning.HEATMAP_EXTENT_REACH
-        val reachMinX = minX - reach
-        val reachMaxX = maxX + reach
-        val reachMinY = minY - reach
-        val reachMaxY = maxY + reach
-        for (s in sessions) {
-            for (p in s.points) {
-                val l = Geo.toLocal(centre, p)
-                if (l[0] < reachMinX || l[0] > reachMaxX || l[1] < reachMinY || l[1] > reachMaxY) continue
-                if (l[0] < minX) minX = l[0]
-                if (l[0] > maxX) maxX = l[0]
-                if (l[1] < minY) minY = l[1]
-                if (l[1] > maxY) maxY = l[1]
-            }
-        }
+        for (r in routes) include(r.points)
+        if (rule == Extent.EVERYTHING) for (s in sessions) include(s.points)
 
         var spanX = (maxX - minX).coerceAtLeast(Tuning.HEATMAP_MIN_SPAN_M)
         var spanY = (maxY - minY).coerceAtLeast(Tuning.HEATMAP_MIN_SPAN_M)
@@ -324,12 +346,13 @@ object Heatmap {
         spanX += 2 * pad
         spanY += 2 * pad
 
-        // One scale for both axes, and only as far as the nearest allowed shape:
-        // a picture grown to one fixed ratio is mostly surface, and the empty
-        // half of it costs cells that the ground could have had instead.
-        val aspect = spanX / spanY
-        if (aspect < Tuning.HEATMAP_MIN_ASPECT) spanX = spanY * Tuning.HEATMAP_MIN_ASPECT
-        else if (aspect > Tuning.HEATMAP_MAX_ASPECT) spanY = spanX / Tuning.HEATMAP_MAX_ASPECT
+        // One scale for both axes. Whichever side is short of the card's ratio
+        // grows around the same centre; the pannable picture is not shaped at
+        // all.
+        if (rule == Extent.ROUTES) {
+            val target = Tuning.HEATMAP_ASPECT
+            if (spanX / spanY < target) spanX = spanY * target else spanY = spanX / target
+        }
 
         var cell = cellM
         var cols = ceil(spanX / cell).toInt().coerceAtLeast(1)
@@ -341,8 +364,8 @@ object Heatmap {
         }
 
         // Rounding up to whole cells grew the extent a little; give the growth
-        // back to both sides so the routes stay centred in the picture.
-        return Extent(
+        // back to both sides so the ground stays centred in the picture.
+        return Box(
             minX = cx - cols * cell / 2,
             minY = cy - rows * cell / 2,
             width = cols,

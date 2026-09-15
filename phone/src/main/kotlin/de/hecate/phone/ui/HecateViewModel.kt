@@ -17,8 +17,10 @@ import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.profile.Elevation
 import de.hecate.core.profile.Series
+import de.hecate.core.profile.Timeline
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
+import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.tcx.TcxImporter
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.map
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /**
@@ -90,6 +93,15 @@ data class RouteDetail(
      *  or when the route has not been clustered since schema v6. */
     val elevation: List<Elevation.Point> = emptyList(),
     val elevationStats: Elevation.Stats? = null,
+    /** The speed a typical ride of this route holds, against its median elapsed
+     *  time: the per-bin median times the profile has always carried, turned
+     *  into a chart. */
+    val speed: List<Timeline.Point> = emptyList(),
+    val speedStats: Timeline.Stats? = null,
+    /** The same for the per-bin median heart rate. Empty for a route whose
+     *  members never wore a strap. */
+    val heartRate: List<Timeline.Point> = emptyList(),
+    val heartRateStats: Timeline.Stats? = null,
     val sessions: List<SessionSummary>,
 )
 
@@ -115,6 +127,14 @@ data class SessionDetail(
      *  carries no altitude at all. */
     val elevation: List<Elevation.Point> = emptyList(),
     val elevationStats: Elevation.Stats? = null,
+    /** This recording's speed and heart rate against its active time, thinned
+     *  for drawing, and the numbers read off the full series. Both are empty
+     *  for a recording with too few samples to derive anything, and the heart
+     *  rate is empty for one made without a strap. */
+    val speed: List<Timeline.Point> = emptyList(),
+    val speedStats: Timeline.Stats? = null,
+    val heartRate: List<Timeline.Point> = emptyList(),
+    val heartRateStats: Timeline.Stats? = null,
     /** How the watch's matcher settled on the route, or null when it never did
      *  — every imported session, and any recording whose route was assigned by
      *  the clusterer afterwards rather than live. */
@@ -246,7 +266,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /**
-     * The heatmap, and the geometry of the routes it accepted (US-8).
+     * The card's heatmap, and the geometry of the routes it accepted (US-8).
      *
      * Read from the row `ClusterWorker` writes rather than computed here: it is
      * O(samples) over the entire history, which is not work a screen does when
@@ -257,24 +277,51 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * would put a line on the picture for a route the raster deliberately
      * excluded, in an extent that was computed without it.
      */
-    val heatmap: StateFlow<HeatmapState?> = db.heatmap().watch()
-        .map { row ->
-            val grid = row?.let {
-                runCatching { HeatmapCodec.readGzip(ByteArrayInputStream(it.payload)) }.getOrNull()
-            } ?: return@map null
-            HeatmapState(
-                grid = grid,
-                routes = grid.routeIds.mapNotNull { id ->
-                    db.routes().points(id).takeIf { it.size >= 2 }?.map { LatLon(it.lat, it.lon) }
-                },
-            )
-        }
+    val heatmap: StateFlow<HeatmapState?> = db.heatmap().watch(HeatmapEntity.CARD)
+        .map { row -> row?.let { decodeHeatmap(it) } }
         // After the map, not before it: `flowOn` moves what is *upstream* of it,
         // and the work worth moving is the decoding. At a fixed cell size the
         // stored raster is millions of cells, and inflating and parsing it is
         // real work rather than the microseconds a 192x108 grid used to be.
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * The full-screen heatmap: everything inside the radius, loaded only while
+     * that view is open.
+     *
+     * Not a second watched flow. This raster covers every recording rather than
+     * the routes' own box, so it is the larger of the two by some margin, and
+     * holding it inflated behind a screen that is not showing it costs megabytes
+     * for a dialog most visits to the routes list never open. Loaded on
+     * [openHeatmap] and dropped on [closeHeatmap], which is also what stops it
+     * surviving in memory behind the recordings list afterwards.
+     */
+    private val _fullHeatmap = MutableStateFlow<HeatmapState?>(null)
+    val fullHeatmap: StateFlow<HeatmapState?> = _fullHeatmap.asStateFlow()
+
+    fun openHeatmap() = viewModelScope.launch {
+        _fullHeatmap.value = withContext(Dispatchers.Default) {
+            db.heatmap().get(HeatmapEntity.FULL)?.let { decodeHeatmap(it) }
+        }
+    }
+
+    fun closeHeatmap() {
+        _fullHeatmap.value = null
+    }
+
+    /** A stored raster and the routes that belong on top of it. */
+    private suspend fun decodeHeatmap(row: HeatmapEntity): HeatmapState? {
+        val grid = runCatching {
+            HeatmapCodec.readGzip(ByteArrayInputStream(row.payload))
+        }.getOrNull() ?: return null
+        return HeatmapState(
+            grid = grid,
+            routes = grid.routeIds.mapNotNull { id ->
+                db.routes().points(id).takeIf { it.size >= 2 }?.map { LatLon(it.lat, it.lon) }
+            },
+        )
+    }
 
     /**
      * Whether a re-clustering is queued or running.
@@ -497,6 +544,12 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             Tuning.RESAMPLE_M,
             medianHr,
         )
+        // The same bins, read the other way round: their median cumulative times
+        // say how long a typical ride takes to reach each of them, and a fixed
+        // distance over that is the speed this route is usually done at.
+        val medianTimes = profileRows.map { it.medianCumTimeS }
+        val routeSpeed = Timeline.speedOfBins(medianTimes, Tuning.RESAMPLE_M, medianHr)
+        val routeHeartRate = Timeline.heartRateOfBins(medianTimes, medianHr)
 
         _routeDetail.value = RouteDetail(
             id = route.id,
@@ -520,6 +573,10 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             worstDurationMs = durations.maxOrNull(),
             elevation = Elevation.simplify(routeElevation, CHART_POINTS),
             elevationStats = Elevation.stats(routeElevation),
+            speed = Timeline.simplify(routeSpeed, CHART_POINTS),
+            speedStats = Timeline.stats(routeSpeed),
+            heartRate = Timeline.simplify(routeHeartRate, CHART_POINTS),
+            heartRateStats = Timeline.stats(routeHeartRate),
             sessions = members,
         )
     }
@@ -555,21 +612,23 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         )
         fun hrAt(i: Int): Double? = heartRate[i].takeIf { !it.isNaN() }
 
-        // Only the fields the profile reads; the rest of a Sample is of no
-        // interest to a chart of height against distance.
-        val sessionElevation = Elevation.of(
-            moving.mapIndexed { i, it ->
-                de.hecate.core.model.Sample(
-                    tOffsetMs = it.tOffsetMs,
-                    activeMs = it.activeMs,
-                    lat = it.lat,
-                    lon = it.lon,
-                    altM = it.altM,
-                    hrBpm = hrAt(i)?.roundToInt(),
-                    paused = it.paused,
-                )
-            },
-        )
+        // One list of samples for all three charts, carrying the *smoothed* heart
+        // rate: they must colour the same second the same way, and three
+        // conversions of the same rows would be three chances for them not to.
+        val charted = moving.mapIndexed { i, it ->
+            de.hecate.core.model.Sample(
+                tOffsetMs = it.tOffsetMs,
+                activeMs = it.activeMs,
+                lat = it.lat,
+                lon = it.lon,
+                altM = it.altM,
+                hrBpm = hrAt(i)?.roundToInt(),
+                paused = it.paused,
+            )
+        }
+        val sessionElevation = Elevation.of(charted)
+        val sessionSpeed = Timeline.speedOfSamples(charted)
+        val sessionHeartRate = Timeline.heartRateOfSamples(charted)
 
         _sessionDetail.value = SessionDetail(
             summary = SessionSummary(
@@ -603,6 +662,10 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             sessionEvents = events,
             elevation = Elevation.simplify(sessionElevation, CHART_POINTS),
             elevationStats = Elevation.stats(sessionElevation),
+            speed = Timeline.simplify(sessionSpeed, CHART_POINTS),
+            speedStats = Timeline.stats(sessionSpeed),
+            heartRate = Timeline.simplify(sessionHeartRate, CHART_POINTS),
+            heartRateStats = Timeline.stats(sessionHeartRate),
         )
     }
 

@@ -504,12 +504,20 @@ What that leaves.
   doubles, and nothing here has been looked at in that state. A history with two
   homes in it is the case: it is also the case where the picture is of two towns
   rather than of a street, so coarser cells may be exactly right.
-- **Whether the full-screen view is usable one-handed.** Pinch to 8×, drag to
-  pan, tap to close. It opens showing the whole picture fitted to the width,
-  which on a phone held upright leaves a margin above and below whenever the
-  ground is wider than it is tall — correct, and possibly not what a person
-  wants from a button labelled "Vollbild". The pan clamp has been reasoned about
-  and the dialog has been opened; neither has been felt on a real screen.
+- **Whether the full-screen view is usable one-handed, and whether the pinch
+  feels right.** Pinch to 8×, drag to pan, tap to close. The gesture now holds
+  the ground still under the fingers (A.23) and `ViewportTest` proves the
+  arithmetic, but *proves* is the strongest word available here: a pinch cannot
+  be injected into these emulators at all. `adb shell input` has no second
+  finger, and SELinux refuses `sendevent` on `/dev/input/*` on a production
+  system image, which every Play-enabled AVD is. So the clamp, the anchoring and
+  the feel of the whole thing have been reasoned about and unit-tested, and not
+  once felt. It is the first thing to try on the phone.
+- **Whether the two extents are the right two.** The card is the routes' box and
+  the full-screen view is everything inside the radius (A.23). On the history
+  this was built against that reads well; on one with a second home 60 km away
+  the full picture becomes two towns and a great deal of nothing, at a cell size
+  the cap will have doubled. Nobody has seen that.
 
 Also worth timing on a device: the bitmap is built on `Dispatchers.Default` and
 the blur alone is about 300 ms on a laptop at the cap, so the card may show its
@@ -551,6 +559,27 @@ Worth knowing: a route's colours come from `route_profile.median_hr`, which has
 been filled since the first schema but is null for any bin whose members carried
 no heart rate. A route whose recordings all predate a strap draws plain, like
 such a recording does.
+
+### 3.10 The speed chart is an inference, not a measurement
+
+A.23 added speed and heart rate against time to both detail screens. The heart
+rate is a column being drawn. The speed is not: it is a derivative of the
+positions, and every decision behind it is visible only as a shape.
+
+- **Whether 15 s of rolling median is the right width for a recording.**
+  Narrower and a single wandering fix becomes a sprint; wider and a real sprint
+  becomes the average of what surrounds it. `Tuning.SPEED_MEDIAN_WINDOW`, and a
+  redraw rather than anything stored.
+- **Whether 150 m is the right baseline for a route.** The per-bin median times
+  are monotone only on average, and differencing neighbours produced 4418 km/h
+  on the first real route it met — `ROUTE_SPEED_WINDOW_BINS` is the fix and 40.8
+  km/h was the result, which is a bicycle going downhill but has not been
+  checked against what that descent actually is. A route with a genuinely fast
+  short stretch is the case that would say whether the window is too wide.
+- **Whether a chart of a route's *typical* speed is a thing anybody wants.** It
+  is the median of every ride there, so it is nobody's ride. It may turn out to
+  be the most useful chart on the screen — it is the one that says where this
+  route is slow — or it may turn out to be a shape with no reader.
 
 ---
 

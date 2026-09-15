@@ -13,6 +13,7 @@ import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Track
 import de.hecate.core.heat.Heatmap
 import de.hecate.core.heat.HeatmapCodec
+import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.heat.RouteTrack
 import de.hecate.core.heat.SessionTrack
 import de.hecate.core.model.RecordedSession
@@ -274,18 +275,37 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
         val sessions = tracks.map { SessionTrack(it.sessionId, it.points) }
 
-        val grid = Heatmap.build(routes, sessions)
-        if (grid == null) {
+        // Both pictures, from one pass over the same coordinates: the card's
+        // ground and the pannable view's ground are different extents of the
+        // same history (`Heatmap.Extent`), and computing the second one when the
+        // user opens the dialog would be seconds of work on the frame they are
+        // waiting for.
+        val card = build(routes, sessions, Heatmap.Extent.ROUTES, HeatmapEntity.CARD, "Karte")
+        if (card == null) {
             Log.i(TAG, "Keine Heatmap: keine Route innerhalb des Radius")
             return
         }
+        build(routes, sessions, Heatmap.Extent.EVERYTHING, HeatmapEntity.FULL, "Vollbild")
+    }
+
+    /** One raster, stored under [id]. Returns null when there was nothing to
+     *  draw, which for both extents means the same thing: no route survived the
+     *  radius filter, so there is no centre to draw around. */
+    private suspend fun build(
+        routes: List<RouteTrack>,
+        sessions: List<SessionTrack>,
+        extent: Heatmap.Extent,
+        id: Int,
+        label: String,
+    ): HeatmapGrid? {
+        val grid = Heatmap.build(routes, sessions, extent = extent) ?: return null
         val payload = ByteArrayOutputStream().also { HeatmapCodec.writeGzip(grid, it) }.toByteArray()
-        db.heatmap().put(
-            HeatmapEntity(payload = payload, computedAtUtc = System.currentTimeMillis()),
+        AppGraph.db.heatmap().put(
+            HeatmapEntity(id = id, payload = payload, computedAtUtc = System.currentTimeMillis()),
         )
         Log.i(
             TAG,
-            "Heatmap: ${grid.routeIds.size} Routen, ${grid.sessionsUsed} Aufzeichnungen, " +
+            "Heatmap ($label): ${grid.routeIds.size} Routen, ${grid.sessionsUsed} Aufzeichnungen, " +
                 "${grid.width}x${grid.height} Zellen à ${grid.cellM.toInt()} m, " +
                 "max ${grid.maxCount}, ${payload.size} B" +
                 if (grid.routesDiscarded > 0 || grid.sessionsDiscarded > 0) {
@@ -296,13 +316,15 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 // The other way of not being in the picture, and the one that
                 // has no error behind it: inside the radius, off the ground the
                 // extent covers. It is the first number to want when somebody
-                // says a ride is missing.
+                // says a ride is missing — and on the full picture it should
+                // never be anything but zero.
                 if (grid.sessionsOutsideExtent > 0) {
                     " (${grid.sessionsOutsideExtent} Aufzeichnungen außerhalb des Ausschnitts)"
                 } else {
                     ""
                 },
         )
+        return grid
     }
 
     companion object {

@@ -7,11 +7,13 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -128,69 +130,84 @@ fun rememberHeatmapRaster(
 /**
  * The heatmap, full screen, draggable and pinchable.
  *
- * The card on the routes list is a thumbnail of a raster that is now far finer
- * than the card can show; this is where that resolution is for. A `Dialog` with
- * the platform's own width rule turned off, so it covers the navigation bar too
- * — the alternative, another entry in the app's screen enum, would put a
- * picture into the back stack beside the panels and the details, which it is
- * not.
+ * A different picture from the card, not an enlargement of it: this one covers
+ * every recording the radius filter kept, in whatever shape that ground is
+ * (`Heatmap.Extent.EVERYTHING`), because a view that pans has no reason to leave
+ * anything out and no reason to be 16:9. Its raster is the larger of the two and
+ * is built here rather than hoisted, so that it exists while this dialog does
+ * and not a moment longer.
  *
- * Panning is clamped to the picture's own edges: dragging it off the screen
- * entirely and being left with a blank surface and no way back is the failure
- * mode of every hand-rolled pan, and the fix is four lines.
+ * A `Dialog` with the platform's own width rule turned off, so it covers the
+ * navigation bar too — the alternative, another entry in the app's screen enum,
+ * would put a picture into the back stack beside the panels and the details,
+ * which it is not.
+ *
+ * [state] is null while the raster is still being read off the database, which
+ * on a large history is long enough to notice; a spinner is the honest thing to
+ * show in that window.
  */
 @Composable
 fun HeatmapFullScreen(
-    grid: HeatmapGrid,
-    routes: List<List<LatLon>>,
-    raster: ImageBitmap?,
+    state: HeatmapState?,
     caption: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offset by remember { mutableStateOf(Offset.Zero) }
-                val widthPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxWidth.toPx() }
-                val heightPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxHeight.toPx() }
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val widthPx = with(density) { maxWidth.toPx() }
+                val heightPx = with(density) { maxHeight.toPx() }
+                val grid = state?.grid
+                val raster = grid?.let { rememberHeatmapRaster(it) }
 
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, MAX_ZOOM)
-                                // How far the scaled picture may travel before
-                                // its own edge comes inside the screen. Measured
-                                // against the *drawn* picture rather than the
-                                // window: the picture is wider than it is tall
-                                // inside a taller screen, so its vertical slack
-                                // is not the window's.
-                                val drawnH = widthPx * grid.height / grid.width
-                                val slackX = maxOf(0f, (widthPx * scale - widthPx) / 2f)
-                                val slackY = maxOf(0f, (drawnH * scale - heightPx) / 2f)
-                                offset = Offset(
-                                    (offset.x + pan.x).coerceIn(-slackX, slackX),
-                                    (offset.y + pan.y).coerceIn(-slackY, slackY),
-                                )
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    HeatmapView(
-                        grid = grid,
-                        routes = routes,
-                        raster = raster,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer(
-                                scaleX = scale,
-                                scaleY = scale,
-                                translationX = offset.x,
-                                translationY = offset.y,
-                            ),
-                    )
+                if (grid == null) {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                } else {
+                    // Fitted, not cropped: whichever side runs out first decides
+                    // the drawn size, so the whole picture is on screen before a
+                    // finger touches it.
+                    val pictureAspect = grid.width.toFloat() / grid.height.toFloat()
+                    val fitWidth = pictureAspect >= widthPx / heightPx
+                    val drawnW = if (fitWidth) widthPx else heightPx * pictureAspect
+                    val drawnH = drawnW / pictureAspect
+
+                    var scale by remember { mutableFloatStateOf(1f) }
+                    var offset by remember { mutableStateOf(Offset.Zero) }
+
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(grid) {
+                                detectTransformGestures { centroid, pan, zoom, _ ->
+                                    val next = Viewport(scale, offset).pinched(
+                                        centroid = centroid - Offset(size.width / 2f, size.height / 2f),
+                                        pan = pan,
+                                        zoom = zoom,
+                                        windowW = widthPx,
+                                        windowH = heightPx,
+                                        drawnW = drawnW,
+                                        drawnH = drawnH,
+                                    )
+                                    scale = next.scale
+                                    offset = next.offset
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        HeatmapView(
+                            grid = grid,
+                            routes = state.routes,
+                            raster = raster,
+                            modifier = (if (fitWidth) Modifier.fillMaxWidth() else Modifier.fillMaxHeight())
+                                .graphicsLayer(
+                                    scaleX = scale,
+                                    scaleY = scale,
+                                    translationX = offset.x,
+                                    translationY = offset.y,
+                                ),
+                        )
+                    }
                 }
 
                 Text(
@@ -216,6 +233,77 @@ fun HeatmapFullScreen(
             }
         }
     }
+}
+
+/**
+ * Where the picture is and how big, as the full-screen view holds it.
+ *
+ * [offset] is the `graphicsLayer` translation, in pixels, of a picture that
+ * scales about its own centre — so both fields are exactly what that modifier
+ * takes, and the pinch arithmetic below has somewhere to be tested from.
+ */
+internal data class Viewport(val scale: Float, val offset: Offset)
+
+/**
+ * One pinch, applied.
+ *
+ * The part worth writing down is that a zoom has a *place*. The picture scales
+ * about its own centre, so left to itself a pinch magnifies the middle of the
+ * screen however far from the middle the fingers are — which is what "it seems
+ * to zoom to some arbitrary point" describes, and it is arbitrary in the precise
+ * sense that it has nothing to do with the gesture.
+ *
+ * Holding the ground still under the fingers is one line of algebra. A point p
+ * of the picture is drawn at `s·p + t`; for the point currently under the
+ * centroid c to stay under it after the scale becomes `s' = k·s`, the
+ * translation has to become
+ *
+ *     t' = c − k·(c − t) = c·(1 − k) + k·t
+ *
+ * with [centroid] measured from the centre the picture scales about, which is
+ * why the caller subtracts half the window before passing it. Panning is then
+ * added on top.
+ *
+ * What is left is how far it may travel: only as far as its own edge, so no
+ * margin of surface is ever dragged into view and the picture cannot be lost off
+ * the side of the screen. Measured against the *drawn* picture rather than
+ * against the window, whose shape it does not share.
+ *
+ * That clamp also decides what happens on the axis where the picture is still
+ * smaller than the window — a wide picture on an upright phone, before it has
+ * been magnified enough to overflow. There it stays centred, and the anchoring
+ * on that axis is quietly given up, because honouring it would mean sliding the
+ * picture up the screen and pulling empty surface in below it. Once the picture
+ * covers the window, which is exactly when there is somewhere to go, the ground
+ * stays under the fingers on both axes and provably so: the offset the anchoring
+ * asks for is |c|·(s − 1), the clamp allows (drawn·s − window) / 2, and for any
+ * centroid inside a window the picture covers, the first is the smaller.
+ */
+internal fun Viewport.pinched(
+    centroid: Offset,
+    pan: Offset,
+    zoom: Float,
+    windowW: Float,
+    windowH: Float,
+    drawnW: Float,
+    drawnH: Float,
+    maxZoom: Float = MAX_ZOOM,
+): Viewport {
+    val next = (scale * zoom).coerceIn(1f, maxZoom)
+    val factor = next / scale
+    val moved = Offset(
+        centroid.x * (1 - factor) + factor * offset.x,
+        centroid.y * (1 - factor) + factor * offset.y,
+    ) + pan
+    val slackX = maxOf(0f, (drawnW * next - windowW) / 2f)
+    val slackY = maxOf(0f, (drawnH * next - windowH) / 2f)
+    return Viewport(
+        scale = next,
+        offset = Offset(
+            moved.x.coerceIn(-slackX, slackX),
+            moved.y.coerceIn(-slackY, slackY),
+        ),
+    )
 }
 
 /**

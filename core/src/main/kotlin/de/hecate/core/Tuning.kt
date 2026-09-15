@@ -311,43 +311,19 @@ object Tuning {
     const val HEATMAP_CELL_M: Double = 15.0
 
     /**
-     * The shapes the extent is allowed to have, wide:high, and it keeps its own
-     * inside them.
+     * The shape the card's extent is grown to, wide:high.
      *
-     * A range rather than the single 16:9 the fixed raster used to impose,
-     * because forcing one shape onto the ground is what made the picture mostly
-     * empty: a corridor 4 km wide and 14 km long came out 25 km across, nine
-     * tenths of it surface, and then cost a doubling of the cell size to stay
-     * under [HEATMAP_MAX_CELLS]. Growing only as far as the nearest bound keeps
-     * the same ground at half the area.
+     * The picture above the routes list is a card in a scrolling list, so its
+     * shape is a layout decision rather than a fact about the ground: taller
+     * than 16:9 and it pushes the routes themselves off their own screen. The
+     * extent is *grown* to it, never cropped — a route drawn out of proportion
+     * is a route you no longer recognise.
      *
-     * The bounds are what the two views can show. Squarer than 1:1 is a card
-     * taller than it is wide, which pushes the routes list off its own screen;
-     * wider than 16:9 is a letterbox with nothing in the middle of it. Inside
-     * that range the picture is whatever shape the ground is, which on a phone
-     * held upright is also the shape that fills the full-screen view.
+     * The full-screen picture has no such constraint and is therefore not grown
+     * to any shape at all: it covers what it covers, and what the screen cannot
+     * fit, panning reaches. See `Heatmap.Extent`.
      */
-    const val HEATMAP_MIN_ASPECT: Double = 1.0
-    const val HEATMAP_MAX_ASPECT: Double = 16.0 / 9.0
-
-    /**
-     * How far past the routes a recording may push the edge of the picture, as
-     * a fraction of the routes' own larger side.
-     *
-     * The extent is anchored on the routes (A.14) — one trip to another city
-     * must not squash everything you actually run into a corner — but anchored
-     * is not the same as bounded by them, and bounding it by them was drawing
-     * tracks that stopped dead at an invisible line: a fifth of one real
-     * history's sample points lay outside the box and were dropped, which looks
-     * exactly like a heatmap that has been cut off, because it is one.
-     *
-     * So ground a recording actually covered is included, out to as much again
-     * as the routes themselves span; past that it is a trip rather than a
-     * neighbourhood, and the picture stays about the ground you know. The
-     * radius filter ([HEATMAP_MAX_RADIUS_M]) still applies first and still
-     * decides what is drawn at all.
-     */
-    const val HEATMAP_EXTENT_REACH: Double = 1.0
+    const val HEATMAP_ASPECT: Double = 16.0 / 9.0
 
     /**
      * Ceiling on the number of cells, whatever [HEATMAP_CELL_M] would ask for.
@@ -503,6 +479,42 @@ object Tuning {
      * filter can invent it one; that case alternates, and honestly so.
      */
     const val HR_MEDIAN_WINDOW: Int = 15
+
+    /**
+     * Window [samples] of the rolling median over a recording's speed.
+     *
+     * Speed is the one quantity on these screens that is a *derivative*, and the
+     * noise therefore arrives multiplied: two consecutive fixes 15 m apart in
+     * the wrong direction are 54 km/h of sprint that never happened. Fifteen
+     * seconds at 1 Hz removes every excursion shorter than seven of them, which
+     * covers the whole family — a fix that jumped, a tunnel, the second after a
+     * dropout — while leaving a real acceleration untouched, because a median is
+     * the identity on a monotonic run.
+     *
+     * The same width as [HR_MEDIAN_WINDOW], and that is not laziness: both are
+     * "about as long as a person can meaningfully vary either", and two charts
+     * side by side under two different smoothings would disagree about where an
+     * effort began.
+     */
+    const val SPEED_MEDIAN_WINDOW: Int = 15
+
+    /**
+     * How many bins a route's speed is measured across.
+     *
+     * A route's profile holds, per bin, the *median* cumulative time its members
+     * took to get there — and each of those medians is taken independently, so
+     * the sequence is only monotone on average. Two neighbouring bins can end up
+     * a hundredth of a second apart, which over a ten metre bin is four thousand
+     * kilometres an hour, and one such bin is enough to make the whole chart a
+     * flat line under one spike. That is not a spike to be filtered out
+     * afterwards: it is a difference taken over too short a baseline.
+     *
+     * So the speed at a bin is the distance across [ROUTE_SPEED_WINDOW_BINS] of
+     * them over the time across the same, centred, which at [RESAMPLE_M] is
+     * 150 m — tens of seconds of riding, long enough that the medians' own
+     * scatter is small against it and short enough to keep a hill.
+     */
+    const val ROUTE_SPEED_WINDOW_BINS: Int = 15
 
     /**
      * Where one intensity zone ends and the next begins, as a fraction of the

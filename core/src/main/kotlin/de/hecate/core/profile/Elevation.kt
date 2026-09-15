@@ -193,31 +193,10 @@ object Elevation {
     /**
      * Thin a series down to at most [max] points for drawing.
      *
-     * An hour-long ride is 3600 samples and a phone chart is a few hundred pixels
-     * wide, so most of them land on a pixel that is already painted. Every bucket
-     * keeps its *highest* and *lowest* point rather than an average, because the
-     * shape of a ridge is the whole reason to look at the chart and averaging is
-     * exactly what flattens it.
+     * [Series.thin] does the work, and does it for every chart in the app; this
+     * only says that the thing being plotted is the altitude and the thing that
+     * orders it is the distance.
      */
-    fun simplify(points: List<Point>, max: Int): List<Point> {
-        if (points.size <= max || max < 4) return points
-        val buckets = max / 2
-        val per = points.size.toDouble() / buckets
-        val out = ArrayList<Point>(max)
-        for (b in 0 until buckets) {
-            val from = (b * per).toInt()
-            val to = (((b + 1) * per).toInt()).coerceAtMost(points.size)
-            if (from >= to) continue
-            var lo = points[from]
-            var hi = points[from]
-            for (i in from until to) {
-                val p = points[i]
-                if (p.altM < lo.altM) lo = p
-                if (p.altM > hi.altM) hi = p
-            }
-            // In the order they were travelled, so the line never doubles back.
-            if (lo.distanceM <= hi.distanceM) { out.add(lo); out.add(hi) } else { out.add(hi); out.add(lo) }
-        }
-        return out
-    }
+    fun simplify(points: List<Point>, max: Int): List<Point> =
+        Series.thin(points, max, { it.altM }, { it.distanceM })
 }

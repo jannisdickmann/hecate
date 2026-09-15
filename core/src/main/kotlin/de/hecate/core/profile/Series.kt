@@ -48,4 +48,41 @@ object Series {
         }
         return out
     }
+
+    /**
+     * Thin a series down to at most [max] points for drawing, keeping its shape.
+     *
+     * An hour-long ride is 3600 samples and a phone chart is a few hundred
+     * pixels wide, so most of them land on a pixel that is already painted.
+     * Every bucket keeps its **highest and lowest** point rather than an
+     * average, because the shape of a ridge — or of a sprint, or of the moment a
+     * heart rate topped out — is the whole reason to look at the chart, and
+     * averaging is exactly what flattens it. The two are emitted in the order
+     * they were travelled, so the line never doubles back on itself.
+     *
+     * Generic over the point type, with [value] saying what is being plotted and
+     * [order] saying which came first, because every chart in this app wants the
+     * identical treatment and the surest way to make two charts disagree is to
+     * give them two copies of this.
+     */
+    fun <T> thin(points: List<T>, max: Int, value: (T) -> Double, order: (T) -> Double): List<T> {
+        if (points.size <= max || max < 4) return points
+        val buckets = max / 2
+        val per = points.size.toDouble() / buckets
+        val out = ArrayList<T>(max)
+        for (b in 0 until buckets) {
+            val from = (b * per).toInt()
+            val to = (((b + 1) * per).toInt()).coerceAtMost(points.size)
+            if (from >= to) continue
+            var lo = points[from]
+            var hi = points[from]
+            for (i in from until to) {
+                val p = points[i]
+                if (value(p) < value(lo)) lo = p
+                if (value(p) > value(hi)) hi = p
+            }
+            if (order(lo) <= order(hi)) { out.add(lo); out.add(hi) } else { out.add(hi); out.add(lo) }
+        }
+        return out
+    }
 }

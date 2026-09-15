@@ -584,12 +584,21 @@ switches. An assumed route shows blue on the watch, a worked-out one green.
 
 ## Intensity colours and your peak heart rate
 
-The track drawing and the altitude profile on both detail screens are coloured
-by how hard you were working: **Leicht** (blue), **Mittel** (green),
+The track drawing and the three charts on both detail screens — altitude against
+distance, speed against time, heart rate against time — are coloured by how hard
+you were working: **Leicht** (blue), **Mittel** (green),
 **Intensiv** (orange) and **Höchstleistung** (red), at 70 / 80 / 90 % of your
 peak heart rate. A recording is coloured from its own samples, a route from the
 median heart rate of its members at each point along it, and a stretch with no
 reading at all is drawn plain rather than as an easy one.
+
+On a recording the charts are its own samples; on a route they are the median
+over everything you have done there, so "Geschwindigkeit (Median)" is the speed
+that route is usually ridden at rather than any one ride. Under each chart is the
+range it covers, because the vertical axis is exaggerated — deliberately, since
+an hour held between 130 and 150 bpm drawn honestly is a straight line — and the
+range is what keeps that honest. Speed is smoothed before it is drawn: it is a
+derivative, and one second of GNSS noise is an imaginary sprint.
 
 The peak rate is under Einstellungen → Belastung and starts at 180 bpm. Set your
 own: `220 − age` is out by more than a whole band for about one person in three,

@@ -236,12 +236,12 @@ interface HeatmapDao {
     suspend fun put(heatmap: HeatmapEntity)
 
     @Query("SELECT * FROM heatmap WHERE id = :id")
-    suspend fun get(id: Int = HeatmapEntity.SINGLETON): HeatmapEntity?
+    suspend fun get(id: Int = HeatmapEntity.CARD): HeatmapEntity?
 
     /** Observed by the routes screen so the picture refreshes itself when a
      *  re-clustering finishes, rather than on the next visit to the panel. */
     @Query("SELECT * FROM heatmap WHERE id = :id")
-    fun watch(id: Int = HeatmapEntity.SINGLETON): Flow<HeatmapEntity?>
+    fun watch(id: Int = HeatmapEntity.CARD): Flow<HeatmapEntity?>
 }
 
 /**

@@ -111,70 +111,91 @@ class HeatmapTest {
     // ------------------------------------------------------------------ extent
 
     @Test
-    fun `a recording far past the routes gets no vote on the extent`() {
+    fun `the card's extent comes from the routes, not from the recordings`() {
         val routes = listOf(squareRoute())
         val tight = Heatmap.build(routes, listOf(session("near", 0.0 to 0.0)))!!
-        // An outlier recording, well inside the radius but far outside the
-        // routes: it must not stretch the picture, and it must not stretch it to
-        // the reach limit either — an extent grown for something that is not
-        // drawn inside it is the same empty picture by another route.
-        val withOutlier = Heatmap.build(
+        // Two recordings that went elsewhere, one of them a long way: on the
+        // card they colour what they cross and move nothing.
+        val withOthers = Heatmap.build(
             routes,
-            listOf(session("near", 0.0 to 0.0), session("far", 40_000.0 to 40_000.0)),
+            listOf(
+                session("near", 0.0 to 0.0),
+                session("beyond", 900.0 to 900.0),
+                session("far", 40_000.0 to 40_000.0),
+            ),
         )!!
 
-        assertEquals(tight.spanX, withOutlier.spanX, 1e-6)
-        assertEquals(tight.spanY, withOutlier.spanY, 1e-6)
-        assertEquals(tight.minX, withOutlier.minX, 1e-6)
-        assertEquals(tight.minY, withOutlier.minY, 1e-6)
+        assertEquals(tight.spanX, withOthers.spanX, 1e-6)
+        assertEquals(tight.spanY, withOthers.spanY, 1e-6)
+        assertEquals(tight.minX, withOthers.minX, 1e-6)
+        assertEquals(tight.minY, withOthers.minY, 1e-6)
     }
 
     @Test
-    fun `a recording just past the routes is inside the picture, not cut off by it`() {
-        // The regression: the box stopped at the routes, so a fifth of a real
-        // history's samples were dropped and its tracks ended at an invisible
-        // line. Within the reach — here 1 km of route, so 1 km past it — the
-        // ground a recording covered is ground the picture contains.
+    fun `the full picture holds every recording the radius kept`() {
+        // The regression this exists for: the full-screen view used to be the
+        // card's extent enlarged, so tracks ended in mid-air at an invisible
+        // line — on one real history a fifth of all sample points did.
         val g = Heatmap.build(
             listOf(squareRoute()),
-            listOf(SessionTrack("beyond", List(20) { at(900.0 + it * 5, 900.0) })),
+            listOf(
+                SessionTrack("beyond", List(20) { at(4_000.0 + it * 5, 3_000.0) }),
+                SessionTrack("far", List(20) { at(-9_000.0 - it * 5, -7_000.0) }),
+            ),
+            extent = Heatmap.Extent.EVERYTHING,
         )!!
         val origin = LatLon(g.originLat, g.originLon)
-        val far = Geo.toLocal(origin, at(995.0, 900.0))
-        assertTrue(far[0] in g.minX..(g.minX + g.spanX), "x ${far[0]} outside ${g.minX}..${g.minX + g.spanX}")
-        assertTrue(far[1] in g.minY..g.maxY, "y ${far[1]} outside ${g.minY}..${g.maxY}")
-        assertTrue(g.maxCount > 0, "the recording contributed no heat")
+        for (corner in listOf(at(4_095.0, 3_000.0), at(-9_095.0, -7_000.0))) {
+            val l = Geo.toLocal(origin, corner)
+            assertTrue(l[0] in g.minX..(g.minX + g.spanX), "x ${l[0]} outside ${g.minX}..${g.minX + g.spanX}")
+            assertTrue(l[1] in g.minY..g.maxY, "y ${l[1]} outside ${g.minY}..${g.maxY}")
+        }
+        assertEquals(0, g.sessionsOutsideExtent, "nothing may be left out of this one")
+        assertTrue(g.maxCount > 0, "the recordings contributed no heat")
     }
 
     @Test
-    fun `the extent keeps its own shape inside the range the views can show`() {
-        // A tall route and a wide one, both outside the range: each grows to the
-        // nearest bound and no further. A square-ish one is left alone.
-        val tall = Heatmap.build(listOf(route(1, 0.0 to -3000.0, 0.0 to 3000.0)), emptyList())!!
-        val wide = Heatmap.build(listOf(route(1, -8000.0 to 0.0, 8000.0 to 0.0)), emptyList())!!
-        val square = Heatmap.build(listOf(route(1, -1500.0 to -1000.0, 1500.0 to 1000.0)), emptyList())!!
-        for (g in listOf(tall, wide, square)) {
+    fun `a recording outside the radius moves neither extent`() {
+        // The radius filter runs first, and it is the only thing that removes a
+        // recording from the full picture. A fix in the Gulf of Guinea would
+        // otherwise make the extent a continent wide.
+        val routes = listOf(squareRoute())
+        val clean = Heatmap.build(routes, emptyList(), extent = Heatmap.Extent.EVERYTHING)!!
+        val glitched = Heatmap.build(
+            routes,
+            listOf(SessionTrack("glitched", listOf(at(0.0, 0.0), LatLon(0.0, 0.0)))),
+            extent = Heatmap.Extent.EVERYTHING,
+        )!!
+        assertEquals(clean.spanX, glitched.spanX, 1e-6)
+        assertEquals(clean.spanY, glitched.spanY, 1e-6)
+        assertEquals(1, glitched.sessionsDiscarded)
+    }
+
+    @Test
+    fun `the card is grown to its ratio and the full picture is not`() {
+        // A tall route and a wide one: on the card both come out 16:9, because a
+        // card is a fixed shape in a list. The same ground drawn for the view
+        // that pans keeps its own proportions.
+        val tall = listOf(route(1, 0.0 to -3000.0, 0.0 to 3000.0))
+        val wide = listOf(route(1, -8000.0 to 0.0, 8000.0 to 0.0))
+        for (r in listOf(tall, wide)) {
+            val g = Heatmap.build(r, emptyList())!!
             assertEquals(
                 g.width.toDouble() / g.height,
                 g.spanX / g.spanY,
                 1e-9,
                 "extent is not ${g.width}:${g.height}",
             )
-            // ...to within the rounding to whole cells, which is where the shape
-            // now comes from: the extent is grown and then measured in cells,
-            // rather than cut into a fixed number of them.
-            assertTrue(
-                g.spanX / g.spanY >= Tuning.HEATMAP_MIN_ASPECT - 0.01 &&
-                    g.spanX / g.spanY <= Tuning.HEATMAP_MAX_ASPECT + 0.01,
-                "aspect ${g.spanX / g.spanY} is outside the range",
-            )
+            // ...to within the rounding to whole cells, which is where the ratio
+            // now comes from: the extent is grown to it and then measured in
+            // cells, rather than cut into a fixed number of them.
+            assertEquals(Tuning.HEATMAP_ASPECT, g.spanX / g.spanY, 0.01)
         }
-        assertEquals(Tuning.HEATMAP_MIN_ASPECT, tall.spanX / tall.spanY, 0.01)
-        assertEquals(Tuning.HEATMAP_MAX_ASPECT, wide.spanX / wide.spanY, 0.01)
-        // Grown to neither bound: 3 km by 2 km of ground keeps its own shape,
-        // give or take the padding, which is the same metres on both sides and
-        // therefore always moves a picture a little towards square.
-        assertEquals(3480.0 / 2480.0, square.spanX / square.spanY, 0.02)
+        val full = Heatmap.build(tall, emptyList(), extent = Heatmap.Extent.EVERYTHING)!!
+        assertTrue(
+            full.spanY > full.spanX,
+            "a 6 km tall route came out ${full.spanX.toInt()} x ${full.spanY.toInt()} m",
+        )
     }
 
     // -------------------------------------------------------------- cell size

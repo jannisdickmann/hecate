@@ -1087,11 +1087,12 @@ cropped, never stretched. A sample outside it is dropped rather than clamped,
 because clamping piles every distant point onto the border cells and draws a hot
 frame around a map with nothing at its edges.
 
-(A.22 amends two halves of that. Anchored turned out not to mean *bounded*: a
-box that stops at the routes cuts real tracks off at an invisible line, so a
-recording may now extend it by up to one route-span, and anything further away
-still gets no vote. And the fixed 16:9 became a range of allowed shapes, because
-forcing one ratio onto a corridor made the picture mostly surface.)
+(A.22 stretched that box until it held the recordings too, because one that
+stops at the routes cuts real tracks off at an invisible line. A.23 replaced
+that compromise with two boxes: this one, unchanged and 16:9, for the card, and
+a second covering everything inside the radius for the view that pans. Both
+paragraphs below describe the card; the full-screen extent is `Extent.EVERYTHING`
+and leaves nothing out at all.)
 
 **The radius filter is about believing coordinates.** Any route or recording
 with a point more than `HEATMAP_MAX_RADIUS_M` (100 km, configurable) from the
@@ -1805,7 +1806,10 @@ trailing space first so the cut does not read as a typo. Twenty is about as much
 as anyone reads to recognise a route they named themselves, and the whole name
 is one tap away on a screen with a line to spare for it.
 
-**The heatmap was cut off, and it was cut off by its own extent.** The box came
+**The heatmap was cut off, and it was cut off by its own extent.** (A.23 keeps
+the diagnosis and changes the cure: the card went back to the routes' own box
+and the full-screen view got an extent of its own. What follows is why the
+single extent was grown, which is still the reason there are now two.) The box came
 from the routes and stopped there (A.14), which is right about *where* the
 picture is and wrong about *how big*: on the history above, a fifth of all
 sample points lay outside it and were dropped, so tracks ended in mid-air at an
@@ -1818,7 +1822,8 @@ the picture is about. What that ride gets instead is a mention: the caption now
 says how many recordings are inside the radius but outside the picture, because
 a recording that is not drawn looks exactly like one that was never made.
 
-The extent also stopped being forced to 16:9. Growing a 4 × 14 km corridor to
+The extent also stopped being forced to 16:9. (A.23 put that back for the card
+and dropped it for the full picture — see there.) Growing a 4 × 14 km corridor to
 one fixed shape made it 25 km wide, nine tenths surface, and then cost a
 doubling of the cell size to stay under the cap — so the fixed ratio became a
 range, `HEATMAP_MIN_ASPECT`..`HEATMAP_MAX_ASPECT`, and inside it the picture is
@@ -1860,3 +1865,103 @@ user does nothing, written above a control they are looking at *because* they
 are about to do something. The words themselves are not lost — §A.4b and the
 README still say what the five positions mean, which is where a sentence about
 the mechanism belongs.
+
+### A.23 Two pictures of the same ground, and one chart drawn four times
+
+Three changes, all of them from the same session with the app as A.22: one
+correction to what A.22 did, one gesture that was wrong in a way arithmetic can
+state exactly, and the two charts the screens had been missing.
+
+**The heatmap is two rasters now, not one.** A.22 grew the single extent until it
+held the recordings as well as the routes, and that was the wrong shape of answer
+— it made the card worse to make the full-screen view better. The two views are
+asking different questions. The card above the routes list is about the routes:
+their own box, grown to 16:9 because it is a card in a scrolling list, and a
+recording that wandered elsewhere colours what it crosses without getting a vote
+on where the box is. The full-screen view is about where you have been, so its
+box holds every recording the radius filter kept, in whatever shape that ground
+happens to be — it pans and zooms, so nothing has to be left out to make it fit
+and no ratio has to be imposed to make it a card.
+
+`Heatmap.build` therefore takes a `Heatmap.Extent`, and `ClusterWorker` runs it
+twice over the same coordinates, storing the two rasters as two rows of the
+`heatmap` table. Two rows rather than two columns or two tables because the
+schema has carried an id since v4 and never used it for anything: no migration,
+and the routes screen goes on inflating only the small one. The big one is read
+when the dialog opens and dropped when it closes, which is the other half of the
+same decision — it is the larger raster of the two and there is no reason for it
+to sit in memory behind a list.
+
+The caption differs between them and that is the point: on the card it can say
+"1 außerhalb des Ausschnitts", and on the full picture that number is zero by
+construction. `HEATMAP_EXTENT_REACH` is gone, along with the aspect *range* A.22
+introduced; `HEATMAP_ASPECT` is back to being one ratio for the one picture that
+needs one.
+
+**Pinch zoom now has a place.** It scaled about the picture's own centre however
+far from the centre the fingers were — "it seems to zoom to some arbitrary
+point", and arbitrary is precise: the centroid had nothing to do with it. A
+point p is drawn at s·p + t; for whatever is under the centroid c to stay under
+it while s becomes k·s, the translation has to become
+
+    t' = c − k·(c − t) = c·(1 − k) + k·t
+
+with c measured from the centre the picture scales about. That is the whole fix.
+The clamp stays as it was — the picture may travel only as far as its own edge —
+and on an axis the picture does not yet fill there is nowhere to go, so the
+anchoring is given up there rather than dragging empty surface into view. Where
+it matters it holds exactly, and provably: the anchoring asks for |c|·(s − 1) of
+offset, the clamp allows (drawn·s − window)/2, and for a centroid inside a window
+the picture covers, the first is the smaller.
+
+It is `Viewport.pinched`, a pure function, for one reason: a wrong zoom centre is
+not a crash and not even a wrong picture. It is a gesture that works, magnifies
+the right amount, and magnifies the wrong place — invisible to anything that
+checks a screenshot, and exactly what a test can pin. Six of them do.
+
+**Speed and heart rate against time, on both detail screens.** Four charts exist
+now, and they are one composable: `BandedChart`, with `ElevationView`,
+`SpeedView` and `HeartRateView` as three-line adapters saying what their axes
+mean. The point of that arrangement is not brevity — it is that four charts
+maintained separately do not stay the same shape for a month, and "the same
+shape" here is specific: the same vertical exaggeration, the same four intensity
+colours in the same bands, the same fill under the line and nothing above it
+(A.22), the same thinning, the same treatment of a gap. The thinning moved to
+`Series.thin`, generic over the point type, for the same reason: it is the
+function that decides whether a peak survives being drawn, and two copies of it
+would eventually disagree about that.
+
+Both new charts are coloured by heart rate rather than by their own value, and on
+the speed chart that is the whole reason to have it: 30 km/h in blue is a
+descent, 30 km/h in orange is work, and no single-colour speed trace says which.
+On the heart-rate chart colouring by the value is not a tautology either — it is
+what puts the four zone boundaries onto the trace, so the chart answers "how long
+was I in the orange" with no axis to read.
+
+The numbers come from `Timeline`, in `:core` with the rest of the arithmetic. A
+recording's speed is measured over the travelled distance between consecutive
+samples, with a dropout left as a gap rather than averaged across — a straight
+line through unknown terrain is not a path anybody took — and then passed through
+the same rolling median as everything else, because speed is the one quantity on
+these screens that is a *derivative* and 15 m of GNSS noise in one second is
+54 km/h of sprint that never happened. The axis is active time, so a café stop
+closes up instead of spending a fifth of the chart saying nothing happened.
+
+A route's speed comes from the per-bin median times its profile has held since
+the first schema, and it needed one piece of care that only real data showed. The
+medians are taken per bin independently, so the sequence is monotone on average
+and not in fact: two adjacent bins came out a hundredth of a second apart, which
+over a ten metre bin is four thousand kilometres an hour, and the first real
+route drew exactly that — one spike, and a flat line underneath it. The
+difference is therefore taken across `ROUTE_SPEED_WINDOW_BINS` = 15 bins (150 m,
+tens of seconds of riding) rather than between neighbours, and the result goes
+through the rolling median as well, which removes what a window cannot: a single
+large jump spread thinly across every window containing it. 4418 km/h became
+40.8, which is a bicycle going downhill.
+
+Neither the range nor the average is written under these charts by accident.
+Both screens already carry an average of their own — a recording's distance over
+its active time, a route's median duration — and a second "Ø", computed
+differently and disagreeing by a tenth, would be worse than no number at all. So
+the line under each chart is the range, which is the fact the chart's own
+exaggerated axis is hiding.
