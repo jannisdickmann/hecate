@@ -292,6 +292,15 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     " (${grid.routesDiscarded} Routen / ${grid.sessionsDiscarded} Aufzeichnungen außerhalb des Radius)"
                 } else {
                     ""
+                } +
+                // The other way of not being in the picture, and the one that
+                // has no error behind it: inside the radius, off the ground the
+                // extent covers. It is the first number to want when somebody
+                // says a ride is missing.
+                if (grid.sessionsOutsideExtent > 0) {
+                    " (${grid.sessionsOutsideExtent} Aufzeichnungen außerhalb des Ausschnitts)"
+                } else {
+                    ""
                 },
         )
     }
