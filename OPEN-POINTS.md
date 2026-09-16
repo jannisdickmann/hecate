@@ -533,6 +533,9 @@ the running loop is a smudge. The recordings list has an activity filter now
 
 ### 3.9 The intensity colours have been seen on an emulator, not on a wrist-worn history
 
+(A.26 found what §3.9 could not: the colours were fine and the data was not —
+the recorder kept one heart rate per delivery and threw the rest away.)
+
 Both drawings on both detail screens are coloured by effort (A.21), and every
 part of that is arithmetic that produces a picture rather than an error: a wrong
 boundary still colours something. `IntensityTest` pins the boundaries, the
@@ -612,6 +615,33 @@ ride — and then decide.
 Worth knowing before anyone spends time on it: a barometric altitude is what
 makes a profile worth having, and whether this watch exposes one through Health
 Services at all is the first question, not the last.
+
+### 3.12 Backfilling a heart rate the recorder never wrote
+
+The two rides recorded before A.26 carry 161 and 787 readings where the sensor
+measured thousands. Those readings are not in the files and no amount of
+processing will bring them back. Two other copies of the same rides plausibly
+exist, and reading either one into an existing recording is a feature that does
+not exist yet.
+
+- **Health Connect.** The phone already writes sessions there and holds the
+  write permission; what it has never asked for is `ReadHeartRateRecord`. If
+  Google Health or Fitbit syncs a continuous rate for the workout's window,
+  filling the holes is a query and a merge — the merge already exists
+  (`HeartRates.merge`), and the only new decisions are which source to trust
+  when both have a reading and how to mark a recording whose colours came from
+  somewhere else.
+- **A Google takeout.** The same workout appears in the export with its own
+  series, and the importer already parses exactly that. What it does today is
+  skip the whole workout as a duplicate of the recording it already has
+  (`isDuplicateImport`); what it would have to learn is to merge one field of a
+  duplicate rather than dropping it.
+
+Neither is hard. Both change a recording after the fact, which this app has so
+far refused to do — the file is what the watch said — so the question is not
+whether it can be done but whether a recording that borrows its heart rate from
+another app is still the recording. A visible mark ("Puls aus Health Connect")
+is probably the price of doing it at all.
 
 ---
 

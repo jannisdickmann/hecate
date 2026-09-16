@@ -592,10 +592,13 @@ peak heart rate. A recording is coloured from its own samples, a route from the
 median heart rate of its members at each point along it, and a stretch with no
 reading at all is drawn plain rather than as an easy one.
 
-On a recording the charts are its own samples — with the heart rate held for up
-to half a minute after each reading, because a watch reports one only every few
-seconds and a chart of the holes is a chart of the sensor rather than of the
-ride. On a route they are the median over everything you have done there, so "Geschwindigkeit (Median)" is the speed
+On a recording the charts are its own samples. The heart rate is recorded as its
+own series, at whatever moments the sensor measured, and joined to the positions
+when the phone reads the session in; on a chart a reading is then held for up to
+half a minute after it was taken, since a rate half a minute old is still the
+right band for the effort. A stretch with no reading at all is drawn in a quiet
+grey rather than in a colour, because nothing measured should be the quietest
+thing on the picture. On a route they are the median over everything you have done there, so "Geschwindigkeit (Median)" is the speed
 that route is usually ridden at rather than any one ride. Under each chart is the
 range it covers, because the vertical axis is exaggerated — deliberately, since
 an hour held between 130 and 150 bpm drawn honestly is a straight line — and the

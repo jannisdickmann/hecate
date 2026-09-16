@@ -2090,3 +2090,88 @@ anything at or below zero as "–", which is right for an average nobody could
 compute and wrong for the slowest moment of a walk. Standing at a junction is a
 speed, and on a hike it is most of the interesting part of the range.
 `Format.speedRange` writes it as 0,0.
+
+### A.26 One reading per delivery is not a heart rate
+
+A.24 said the heart-rate coverage of a watch recording — 28 % of samples on one
+ride, 36 % on another — was a batching artefact, and held that the phone could
+repair it by holding each reading for thirty seconds. Both halves were wrong in
+the same place, and the number that shows it is this: that 47-minute ride
+contains **161 distinct readings**. One every seventeen seconds, from a sensor
+that measures every second, on a wrist that never left the handlebars.
+
+The recorder wrote one sample per *position* and stamped it with
+`hrPoints.lastOrNull()` — the last reading of whatever delivery had just
+arrived. Health Services batches, so a delivery can carry a minute of readings;
+every one but the last was discarded. Holding a reading for thirty seconds
+cannot bring back what was never written, and on that ride thirty of its
+forty-seven minutes sit inside holes longer than the hold. The charts were not
+lying. The file really is that empty.
+
+**A heart rate is its own series now.** It has its own sensor, its own clock and
+its own delivery schedule, so it gets its own record in the session file —
+`{"k":"r","v":{"t":…,"hr":…}}` — written for every reading in every delivery,
+deduplicated by time. Nothing else about the format changes, and the format's
+existing promise does the rest: a reader that has never heard of the record
+drops the line, so an older build reads a newer file as it always did.
+
+The two series are joined on the way into the phone's database
+(`HeartRates.merge`), where everything downstream wants one row per position
+carrying the effort being made at it. The join is by time and bounded:
+`HR_MERGE_TOLERANCE_MS` = 5 s, which is wider than either sensor's cadence and
+far narrower than the thirty seconds a reading is allowed to *stand* for on a
+chart. The two constants are different questions — "these describe the same
+moment" and "nothing better has arrived since" — and conflating them is how a
+reading from a climb ends up colouring a descent.
+
+What the merge cannot place, it drops: a reading taken while the receiver had no
+position has no row to live on. That is the same trade the app makes everywhere
+else about a dropout, and it is bounded by the same thing — positions arrive
+every second while a recording is running.
+
+**The recorder now says what it got.** At the end of a session the log carries
+`N Messpunkte, M Pulswerte`, because nobody had that second number until a ride
+came back with a fifth of one, and finding it out cost unpacking a backup and
+counting. The phone's ingest log says the same from its side, including how many
+readings found a position to sit on.
+
+**And absence stopped shouting.** A stretch with no reading was drawn in the
+scheme's primary colour, which under dynamic colour is frequently the brightest
+thing on the screen — so on a recording that is mostly coloured by effort, the
+eye went straight to the stretches where nothing had been measured. They are now
+the surface's own grey at 45 % alpha: the quietest thing on the picture, which is
+what "nothing was measured here" should look like. A drawing with no readings at
+all is unchanged — that is not a hole, it is simply a track.
+
+**And the count found something else.** With the numbers in the log, the very
+first test recording ended like this:
+
+```
+Sitzung bb65cc4c: 82 Messpunkte, 100 Pulswerte
+Sitzung bb65cc4c: 82 Messpunkte, 100 Pulswerte
+Sitzung bb65cc4c ohne Messpunkte — verworfen statt hochgeladen
+```
+
+Two threads, the same session, and then a file with 82 positions in it deleted
+for being empty. `endSession` is reached by two paths — the user pressing
+Beenden, and Health Services reporting the exercise ended — and on a real stop
+both arrive. Its guard read `sessionId` at the top and cleared it eight lines and
+three suspension points later, so both callers walked past it; the first consumed
+the sample counter and zeroed it, and the second read zero, concluded the
+recording was empty, and discarded it. The window had been there since the
+counter was introduced and is invisible without a number to print: every log line
+says what the *first* caller saw.
+
+It is a `Mutex` and one moved assignment — the id is cleared inside the lock,
+before the first suspension point, so a second ending finds nothing to end. Worth
+noting for what it says about §1 of the open points: the thing that can cost a
+recording was not the keystore or the link, it was two events arriving at once at
+the end of a workout.
+
+**The two rides already recorded cannot be repaired from their own files.** Their
+missing readings were never written. The only copies that still exist are
+Google's: the workout is in Google Health with its own heart-rate series, which
+means a future takeout export contains it, and Health Connect may hold it too.
+Reading either back into an existing recording is a feature this app does not
+have — §3.12 of the open points says what it would take and why it is worth
+deciding rather than assuming.

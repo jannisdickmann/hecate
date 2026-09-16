@@ -501,6 +501,21 @@ object Tuning {
     const val HR_HOLD_MS: Long = 30_000L
 
     /**
+     * How near in time a heart-rate reading has to be to a position for the two
+     * to be about the same moment [ms].
+     *
+     * The sensors run on their own schedules — a position a second, a rate
+     * whenever the optics settle — so joining them is a question of tolerance
+     * rather than of equality. Five seconds is comfortably wider than either
+     * cadence and far narrower than the thirty seconds a reading is allowed to
+     * *stand* for on a chart ([HR_HOLD_MS]): the first is "these two describe
+     * the same moment", the second is "nothing better has arrived since". Both
+     * exist because conflating them is how a reading from a climb ends up
+     * colouring a descent.
+     */
+    const val HR_MERGE_TOLERANCE_MS: Long = 5_000L
+
+    /**
      * Window [samples] of the rolling median over a recording's speed.
      *
      * Speed is the one quantity on these screens that is a *derivative*, and the

@@ -82,7 +82,11 @@ fun BandedChart(
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
     minSpanY: Double = 0.0,
 ) {
-    val plain = routeLineColor
+    // A chart with no reading anywhere is one plain line and takes the scheme's
+    // colour; one with readings has *holes*, and a hole must recede rather than
+    // glow — see [HecateIntensityColors.of].
+    val measured = points.any { it.hrBpm != null }
+    val plain = if (measured) HecateIntensityColors.Unmeasured else routeLineColor
     val bandColors = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
 
     Box(modifier.fillMaxWidth().height(height)) {

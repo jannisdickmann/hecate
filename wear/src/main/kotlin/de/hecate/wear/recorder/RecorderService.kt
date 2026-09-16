@@ -18,6 +18,7 @@ import androidx.health.services.client.data.LocationData
 import androidx.health.services.client.data.SampleDataPoint
 import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
 import de.hecate.core.model.Sample
@@ -36,6 +37,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.TimeZone
 import java.util.UUID
 
@@ -108,6 +111,15 @@ class RecorderService : Service() {
     private var lastHrBpm: Int? = null
     private var lastHrAtMs = 0L
 
+    /** The last reading written, and how many — the second only so the log can
+     *  say at the end what the sensor actually gave, which is the number nobody
+     *  had until a ride came back with a fifth of it. */
+    private var lastRateAtMs = -1L
+    private var ratesWritten = 0
+
+    /** Serialises [endSession]; see there for what happens without it. */
+    private val endLock = Mutex()
+
     private val bus get() = AppGraph.recorder
 
     override fun onCreate() {
@@ -176,6 +188,8 @@ class RecorderService : Service() {
         pausedSinceMs = null
         lastHrBpm = null
         lastHrAtMs = 0L
+        lastRateAtMs = -1L
+        ratesWritten = 0
         val startedAtUtcMs = System.currentTimeMillis()
         val tzOffsetMinutes = TimeZone.getDefault().getOffset(startedAtUtcMs) / 60_000
 
@@ -268,8 +282,27 @@ class RecorderService : Service() {
             }
     }
 
-    private suspend fun endSession(reason: SessionEndReason) {
-        val id = sessionId ?: return
+    /**
+     * Close the session file, decide whether it was worth keeping, and hand it
+     * to the uploader.
+     *
+     * **Single-flight, and that is not defensive programming.** Two things end a
+     * recording — the user pressing Beenden, and Health Services reporting the
+     * exercise ended — and on a real stop both arrive. The old guard read
+     * `sessionId` at the top and cleared it eight lines and three suspension
+     * points later, so both callers walked straight past it on different
+     * threads; the first consumed the sample counter and zeroed it, the second
+     * then read zero, concluded the recording was empty, and *deleted the file*.
+     * Seen on the emulator with 82 positions and 100 heart rates in it.
+     *
+     * The lock closes the window and clearing the id inside it makes the second
+     * call a no-op rather than a second ending.
+     */
+    private suspend fun endSession(reason: SessionEndReason) = endLock.withLock {
+        val id = sessionId ?: return@withLock
+        // Claimed before the first suspension point: anything else that arrives
+        // now finds nothing to end.
+        sessionId = null
         bus.update { it.copy(phase = RecorderPhase.ENDING) }
         runCatching { source.end() }
 
@@ -285,18 +318,25 @@ class RecorderService : Service() {
         writer?.close()
         writer = null
         matcher = null
-        sessionId = null
         lastState = null
         sawFirstLocation = false
 
+        // What the two sensors actually gave, side by side. The heart rate is
+        // here because nobody had that number until a ride came back with a
+        // fifth of one, and a count in the log is how the next ride says so
+        // without anyone having to unpack a backup to find out.
+        //
         // A recording with no positions in it is not a recording. Offering it to
         // the phone is worse than useless: ingest refuses anything under two
         // samples, a refusal is deliberately not acknowledged so that a bug here
         // cannot throw data away, and the file therefore stays on the watch and
         // is re-offered for ever. Three of these had accumulated before anyone
-        // noticed. Nothing is lost by dropping it — there was nothing in it.
+        // noticed. Nothing is lost by dropping it — there was nothing in it,
+        // which is a claim this code has to be *sure* of: see the lock above.
+        Log.i(TAG, "Sitzung $id: $samplesWritten Messpunkte, $ratesWritten Pulswerte")
         val empty = samplesWritten < MIN_USEFUL_SAMPLES
         samplesWritten = 0
+        ratesWritten = 0
         if (empty) {
             Log.w(TAG, "Sitzung $id ohne Messpunkte — verworfen statt hochgeladen")
             AppGraph.sessions.discard(id)
@@ -449,6 +489,12 @@ class RecorderService : Service() {
         val hrPoints = runCatching { metrics.getData(DataType.HEART_RATE_BPM) }.getOrDefault(emptyList())
         val distance = runCatching { metrics.getData(DataType.DISTANCE_TOTAL)?.total }.getOrNull()
 
+        // Every reading, at its own time — not one per delivery. Health Services
+        // batches, and a batch can carry a minute of them; keeping only the last
+        // wrote 161 readings for a 47-minute ride and lost the rest, which is
+        // the whole reason the series is its own record now. See [HeartRate].
+        writeRates(hrPoints)
+
         val measured = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
         if (measured != null) {
             lastHrBpm = measured
@@ -477,6 +523,26 @@ class RecorderService : Service() {
             onSample(sample)
         }
         maybeUpdateNotification()
+    }
+
+    /**
+     * Write each heart-rate reading of a delivery, at the time the sensor took
+     * it.
+     *
+     * Deduplicated by that time, because a batch can repeat what the previous
+     * one ended with, and a file with the same reading twice is a file that
+     * disagrees with itself about how often the sensor measured.
+     */
+    private fun writeRates(points: List<SampleDataPoint<Double>>) {
+        val w = writer ?: return
+        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+            val bpm = point.value.toInt().takeIf { it in 20..250 } ?: continue
+            val tOffsetMs = point.timeDurationFromBoot.toMillis() - startedElapsedNs / 1_000_000
+            if (tOffsetMs < 0 || tOffsetMs <= lastRateAtMs) continue
+            w.writeRate(HeartRate(tOffsetMs = tOffsetMs, bpm = bpm))
+            lastRateAtMs = tOffsetMs
+            ratesWritten++
+        }
     }
 
     private fun toSample(

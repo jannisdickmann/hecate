@@ -62,7 +62,10 @@ fun PolylineView(
     startColor: Color = HecateMapColors.Start,
     endColor: Color = HecateMapColors.End,
 ) {
-    val plain = routeLineColor
+    // As on the charts: a track with no reading anywhere is simply a track, and
+    // one with readings has holes that must not read as emphasis.
+    val measured = points.any { it.hrBpm != null }
+    val plain = if (measured) HecateIntensityColors.Unmeasured else routeLineColor
     val bandColors = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
 
     Box(modifier.fillMaxWidth().height(height)) {

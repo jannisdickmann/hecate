@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RecordedSession
@@ -223,7 +224,13 @@ class ArchiveRepository(
                 }
                 db.withTransaction {
                     db.sessions().insert(row.toEntity())
-                    db.sessions().insertSamples(session.samples.map { it.toEntity(row.id) })
+                    // The same join the live ingest does: an archive carries the
+                    // two series exactly as the watch wrote them, so a restore
+                    // has to put them together too. A session without a separate
+                    // series comes through unchanged.
+                    db.sessions().insertSamples(
+                        HeartRates.merge(session.samples, session.heartRates).map { it.toEntity(row.id) },
+                    )
                     if (session.matchLog.isNotEmpty()) {
                         db.sessions().upsertMatchLog(matchLogEntity(row.id, session.matchLog))
                     }

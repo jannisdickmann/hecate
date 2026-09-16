@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.SessionSource
@@ -77,7 +78,14 @@ class SessionRepository(
             return IngestResult.Duplicate(session.id, "Duplikat von ${clash.id}")
         }
 
-        val hrValues = session.samples.mapNotNull { it.hrBpm }
+        // The two sensors are recorded separately and joined here, once, on the
+        // way in: everything downstream wants one row per position carrying the
+        // effort that was being made at it. A session with no separate series —
+        // an import, or a recording from before the watch wrote one — comes
+        // through unchanged. See `HeartRates.merge`.
+        val samples = HeartRates.merge(session.samples, session.heartRates)
+
+        val hrValues = samples.mapNotNull { it.hrBpm }
         val avgHr = if (hrValues.isEmpty()) null else hrValues.average()
 
         val committedAt = session.matchLog.firstOrNull { it.phase == MatchPhase.COMMITTED }?.travelledM
@@ -107,7 +115,7 @@ class SessionRepository(
         db.withTransaction {
             dao.insert(entity)
             dao.insertSamples(
-                session.samples.map {
+                samples.map {
                     SampleEntity(
                         sessionId = session.id,
                         tOffsetMs = it.tOffsetMs,
@@ -143,7 +151,11 @@ class SessionRepository(
             }
         }
 
-        Log.i(TAG, "Sitzung ${session.id} gespeichert (${session.samples.size} Messpunkte)")
+        Log.i(
+            TAG,
+            "Sitzung ${session.id} gespeichert (${samples.size} Messpunkte, " +
+                "${session.heartRates.size} Pulswerte, ${hrValues.size} davon zugeordnet)",
+        )
         if (triggerFollowUp) queueFollowUp()
         return IngestResult.Stored(session.id)
     }

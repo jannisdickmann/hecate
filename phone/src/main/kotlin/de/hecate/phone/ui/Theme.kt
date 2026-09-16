@@ -91,17 +91,31 @@ object HecateIntensityColors {
     val Hard = Color(0xFFEF6C00)
     val Peak = Color(0xFFD32F2F)
 
-    /** The colour for a stretch with no heart rate at all — drawn in the
-     *  scheme's own line colour rather than in any band's, since "unknown" is
-     *  not an effort level. */
+    /**
+     * The colour of an effort band, or of a stretch that has no reading.
+     *
+     * [unmeasured] decides the second, and it has to be given because the right
+     * answer depends on what is beside it. A drawing with no heart rate anywhere
+     * is just a drawing, and takes the scheme's line colour. A drawing that is
+     * *mostly* coloured has holes in it, and a hole drawn in the scheme's
+     * primary — which under dynamic colour can be the brightest thing on the
+     * screen — reads as a highlight: the eye is drawn to precisely the stretches
+     * where nothing was measured. Absence has to be the quietest thing on the
+     * picture, not the loudest.
+     */
     @Composable
-    fun of(intensity: Intensity?): Color = when (intensity) {
+    fun of(intensity: Intensity?, unmeasured: Color = routeLineColor): Color = when (intensity) {
         Intensity.EASY -> Easy
         Intensity.MODERATE -> Moderate
         Intensity.HARD -> Hard
         Intensity.PEAK -> Peak
-        null -> routeLineColor
+        null -> unmeasured
     }
+
+    /** What a stretch with no reading looks like on a drawing that has readings
+     *  elsewhere: the surface's own quiet grey, dimmed further. */
+    val Unmeasured: Color
+        @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
 }
 
 /**
