@@ -567,8 +567,8 @@ adb -s <watch> shell dumpsys package de.hecate | grep -A8 "runtime permissions"
 
 Shortcuts and variants are independent routes that happen to share a prefix
 (§8.1), and while two routes are on the same ground the matcher will not guess
-between them — it shows `Suche…`, with no ETA, until the paths part. On a route
-family that shares most of its length, that is most of the run.
+between them — it shows both names, with no ETA, until the paths part. On a
+route family that shares most of its length, that is most of the run.
 
 Each route therefore carries a priority from −2 to +2, set on its detail screen
 as a row of five buttons — read them as ganz hinten, eher nicht, keine Meinung,

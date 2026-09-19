@@ -52,6 +52,24 @@ data class RouteProfile(
 ) {
     val totalMedianTimeS: Double get() = medianCumTimeS.lastOrNull() ?: 0.0
 
+    /**
+     * Full-scale deflection for an ahead/behind indicator [s]: how far off the
+     * median this route's own history says is a lot.
+     *
+     * The interquartile spread at the finish, doubled, floored by a fraction of
+     * the median total time for a route whose members barely differ, and clamped
+     * (`Tuning.DELTA_SCALE_*`). Lives here rather than on the watch because it is
+     * a property of the route — the same number belongs on any screen that ever
+     * draws this comparison.
+     */
+    fun deltaFullScaleS(): Double {
+        val iqr = ((p75S.lastOrNull() ?: 0.0) - (p25S.lastOrNull() ?: 0.0)).coerceAtLeast(0.0)
+        return maxOf(
+            de.hecate.core.Tuning.DELTA_SCALE_IQR_MULTIPLE * iqr,
+            de.hecate.core.Tuning.DELTA_SCALE_MIN_FRACTION * totalMedianTimeS,
+        ).coerceIn(de.hecate.core.Tuning.DELTA_SCALE_MIN_S, de.hecate.core.Tuning.DELTA_SCALE_MAX_S)
+    }
+
     /** Median cumulative time at an arbitrary distance along the route, linearly
      *  interpolated between bins and clamped at both ends. */
     fun medianTimeAt(distM: Double): Double {

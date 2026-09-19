@@ -39,6 +39,9 @@ keystore.properties
 # Recorded session fixtures pulled off the watch
 /fixtures/*.jsonl
 
+# Kotlin Gradle plugin scratch directory, created by any build in the root
+.kotlin/
+
 # Google Takeout archives — personal data, never committed
 /takeout/
 
