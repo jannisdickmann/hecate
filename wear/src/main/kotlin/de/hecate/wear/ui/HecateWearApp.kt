@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -230,7 +233,7 @@ private data class LiveLayout(
     val arcStroke: Dp,
     val arcInset: Dp,
     val contentPadding: Dp,
-    val durationStyle: TextStyle,
+    val heroStyle: TextStyle,
     val primaryStyle: TextStyle,
     val secondaryStyle: TextStyle,
     /** "noch 2,10 km · an 18:42" against "2,10 km · 18:42". */
@@ -252,7 +255,7 @@ private fun rememberLiveLayout(): LiveLayout {
         // but they do cost width, and on the smaller face that is the whole
         // budget. Hence the wider gutter and the smaller primary numerals there.
         contentPadding = if (large) 22.dp else 18.dp,
-        durationStyle = if (large) numeral.copy(fontSize = 38.sp) else numeral,
+        heroStyle = if (large) numeral.copy(fontSize = 38.sp) else numeral,
         primaryStyle = if (large) numeral else numeral.copy(fontSize = 26.sp),
         secondaryStyle = MaterialTheme.typography.labelMedium,
         verboseEta = large,
@@ -269,7 +272,7 @@ private const val LARGE_SCREEN_DP = 225
  *
  * Laid out as a headline plus a two-column grid rather than a stack of single
  * values: paired numbers halve the vertical space, and the pairs are the ones
- * you read together anyway — how far against how fast, effort against standing.
+ * you read together anyway — how far against how long, effort against standing.
  *
  * The whole thing has a height budget, and it is the small watch that sets it.
  * A 41 mm face is 204 dp tall and the clock takes the first 26 of them, so the
@@ -318,17 +321,24 @@ private fun LivePage(state: RecorderUiState) {
                 ReplayBanner(state)
                 RouteHeadline(state)
 
-                Text(
-                    Format.duration(shownDuration),
-                    style = layout.durationStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                )
+                // Speed leads, and the full-width line is also the only place
+                // its unit fits: "Ø km/h" in half a row was clipped to "Ø", which
+                // reads as a quantity of its own rather than as a cut-off one.
+                // A single cell in a row of one, so that it shrinks by the same
+                // rule as every other number here.
+                Row(Modifier.fillMaxWidth()) {
+                    Metric(
+                        Format.speedValue(state.speedKmh ?: Format.speedFrom(state.distanceM, shownDuration)),
+                        if (state.speedKmh == null) "Ø km/h" else "km/h",
+                        layout.heroStyle,
+                    )
+                }
 
                 Spacer(Modifier.height(2.dp))
-                // The primary pair: what the ride has covered, and how fast it is
-                // going right now — which for the first time is actually the
-                // current speed rather than the session average wearing its name.
+                // The primary pair: how far, and how long it has taken. Time sits
+                // in a cell rather than on the wide line because it is the one
+                // number on this screen that carries no unit, so it is the one
+                // that can afford the narrow half.
                 Row(Modifier.fillMaxWidth()) {
                     Metric(
                         Format.distanceValue(state.distanceM),
@@ -336,8 +346,8 @@ private fun LivePage(state: RecorderUiState) {
                         layout.primaryStyle,
                     )
                     Metric(
-                        Format.speedValue(state.speedKmh ?: Format.speedFrom(state.distanceM, shownDuration)),
-                        if (state.speedKmh == null) "Ø km/h" else "km/h",
+                        Format.duration(shownDuration),
+                        "",
                         layout.primaryStyle,
                     )
                 }
@@ -466,7 +476,9 @@ private fun RowScope.ComparisonMetric(
     val colour = if (delta < 0) DeltaTone.Ahead else DeltaTone.Behind
     Metric(
         Format.delta(delta),
-        "Ø",
+        // ± rather than Ø: the number is a signed deviation, not an average, and
+        // Ø is already the session average's own mark two cells away.
+        "±",
         style,
         // Dimmed rather than hidden while the projected position is stale: this
         // is the last honest comparison, and the alternative — recomputing it
@@ -517,6 +529,14 @@ private fun HealthLine(health: RecordingHealth, layout: LiveLayout) {
  * Inline rather than stacked because vertical space is the scarce one here (see
  * [LivePage]); [valueStyle] is what ranks the cell, so the same helper serves
  * both the primary and the secondary pair.
+ *
+ * **It shrinks rather than clips.** A single line that does not fit used to be
+ * cut at the right edge, and the unit is written last, so the unit was always
+ * exactly what was lost: the distance cell read "12,98" with no "km" at all, and
+ * a session average of 22,3 km/h read "22,3 Ø" — not a truncated number but a
+ * different claim, and a silent one. The cell now steps the type down until the
+ * whole of it fits, which is the trade the wrist wants: a number two points
+ * smaller is still read at a glance, a number whose unit is missing is not.
  */
 @Composable
 private fun RowScope.Metric(
@@ -526,18 +546,33 @@ private fun RowScope.Metric(
     color: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     val unitColor = MaterialTheme.colorScheme.onSurfaceVariant
-    Text(
+    // Relative to the value rather than an absolute 12 sp, so that a cell forced
+    // to give up four points does not keep a unit nearly as tall as its number.
+    val unitSize = (UNIT_SP / valueStyle.fontSize.value).em
+    BasicText(
         buildAnnotatedString {
             append(value)
-            withStyle(SpanStyle(fontSize = 12.sp, color = unitColor)) { append(" $unit") }
+            if (unit.isNotEmpty()) {
+                withStyle(SpanStyle(fontSize = unitSize, color = unitColor)) { append(" $unit") }
+            }
         },
-        style = valueStyle,
-        color = color,
+        style = valueStyle.copy(color = color, textAlign = TextAlign.Center),
         maxLines = 1,
-        textAlign = TextAlign.Center,
+        autoSize = TextAutoSize.StepBased(
+            minFontSize = MIN_METRIC_SP.sp,
+            maxFontSize = valueStyle.fontSize,
+            stepSize = 0.5.sp,
+        ),
         modifier = Modifier.weight(1f),
     )
 }
+
+/** The unit's size at a cell's full size; scaled down with it from there. */
+private const val UNIT_SP = 12f
+
+/** Below this a metric is not glanceable, and the layout is wrong rather than
+ *  the type too big. Nothing on either face has reached it. */
+private const val MIN_METRIC_SP = 16f
 
 // ------------------------------------------------------------------ edge bars
 
