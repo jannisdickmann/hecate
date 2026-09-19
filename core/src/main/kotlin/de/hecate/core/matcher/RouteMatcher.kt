@@ -71,6 +71,15 @@ class RouteMatcher(
     private var prev: Sample? = null
     private var lastActiveMs = 0L
 
+    /** Session time of the last sample that carried evidence, and the last delta
+     *  computed from one. Together they are how the display learns that what it
+     *  is showing is the last honest answer rather than a current one: while no
+     *  usable sample arrives the projected position stands still, and a delta
+     *  recomputed against a standing position simply counts the outage as
+     *  lateness. */
+    private var lastUsableTOffsetMs = -1L
+    private var lastDelta: Double? = null
+
     private var commitHold = 0
     private var commitHoldRouteId: Long? = null
     private var committedRouteId: Long? = null
@@ -151,9 +160,17 @@ class RouteMatcher(
         if (disabled) return MatchState(sample.tOffsetMs, phase, committedRouteId, disabled = true)
         lastActiveMs = sample.activeMs
         if (!sample.usable) {
-            if (sample.paused) prev = null // do not measure travel across a pause
+            if (sample.paused) {
+                prev = null // do not measure travel across a pause
+                // A pause is not a stale position: nothing is expected to move,
+                // and active time is not running either, so the belief is as
+                // current as it ever was. Only a sample rejected for *accuracy*
+                // leaves the projection behind the user.
+                lastUsableTOffsetMs = sample.tOffsetMs
+            }
             return buildState(sample.tOffsetMs, deviationFired = false)
         }
+        lastUsableTOffsetMs = sample.tOffsetMs
         if (cands.isEmpty()) {
             // No bundle, or no route of this exercise type: honestly unknown.
             phase = MatchPhase.UNKNOWN
@@ -567,19 +584,61 @@ class RouteMatcher(
         }
         live.sortByDescending { it.weight }
 
+        // How long the projection has stood still. Every number below that
+        // depends on *where* the user is depends on this being small.
+        val staleMs = if (lastUsableTOffsetMs < 0) 0L
+        else (tOffsetMs - lastUsableTOffsetMs).coerceAtLeast(0L)
+        val stale = staleMs > Tuning.STALE_POSITION_MS
+
         val elapsedS = lastActiveMs / 1000.0
-        val pooledMedian = pooledMedianTimeAtPosition()
-        val delta = if (phase == MatchPhase.UNKNOWN || pooledMedian == null) null
-        else elapsedS - pooledMedian
+        val delta = if (stale) {
+            // Frozen, not recomputed: with the position standing still, elapsed
+            // time alone would make the user look steadily slower for as long as
+            // the GNSS outage lasts. The last value computed against a real
+            // position is the honest one, and [positionStaleMs] says so.
+            lastDelta
+        } else {
+            val pooledMedian = pooledMedianTimeAtPosition()
+            val d = if (phase == MatchPhase.UNKNOWN || pooledMedian == null) null
+            else elapsedS - pooledMedian
+            lastDelta = d
+            d
+        }
+
+        // The route every route-relative number below is about: the commitment,
+        // or — when there is none — the leader, if it holds enough of the belief
+        // to be worth naming. A.4b's complaint was that a route family sharing a
+        // long prefix leaves the watch with no remaining distance and no ETA for
+        // most of a workout although the matcher has a clear favourite
+        // throughout; this is that favourite, flagged as one.
+        val leader = live.firstOrNull()
+        val committed = committedRouteId?.let { cands[it] }
+        val contenderCount = contenders().size
+        val provisionalCand = if (committed == null && leader != null &&
+            leader.weight >= Tuning.LEADER_MIN_WEIGHT &&
+            // Never off a tie. Routes running over the same ground explain every
+            // sample equally well, so whichever is momentarily ahead on weight is
+            // ahead by GNSS noise — the same reason commitment refuses here.
+            contenderCount <= 1
+        ) {
+            cands[leader.routeId]?.takeIf { !it.dropped }
+        } else {
+            null
+        }
+        val focus = committed ?: provisionalCand
 
         var remaining: Double? = null
         var eta: Double? = null
-        if (phase == MatchPhase.COMMITTED) {
-            val c = committedRouteId?.let { cands[it] }
-            if (c != null && c.positionM >= 0.0) {
-                remaining = (c.entry.geometry.lengthM - c.positionM).coerceAtLeast(0.0)
-                eta = estimateEta(c, elapsedS)
-            }
+        var progress: Double? = null
+        var scale: Double? = null
+        if (focus != null && focus.positionM >= 0.0) {
+            val lengthM = focus.entry.geometry.lengthM
+            remaining = (lengthM - focus.positionM).coerceAtLeast(0.0)
+            if (lengthM > 0.0) progress = (focus.positionM / lengthM).coerceIn(0.0, 1.0)
+            // No arrival time off a standing position: an ETA is a claim about
+            // the next few minutes, and there is nothing current to make it from.
+            if (!stale) eta = estimateEta(focus, elapsedS)
+            scale = focus.entry.profile.deltaFullScaleS()
         }
 
         return MatchState(
@@ -593,6 +652,14 @@ class RouteMatcher(
             deltaVsMedianS = delta,
             remainingM = remaining,
             etaSecondsFromNow = eta,
+            leaderRouteId = leader?.routeId,
+            leaderWeight = leader?.weight ?: 0.0,
+            contenderCount = contenderCount,
+            provisional = committed == null && focus != null,
+            progressFraction = progress,
+            deltaScaleS = scale,
+            noRoutesKnown = cands.isEmpty(),
+            positionStaleMs = staleMs,
             deviationAlert = deviationFired,
             offRoute = offRoute,
             disabled = disabled,

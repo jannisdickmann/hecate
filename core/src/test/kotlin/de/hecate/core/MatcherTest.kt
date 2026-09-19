@@ -151,11 +151,25 @@ class MatcherTest {
     }
 
     @Test
-    fun `remaining distance and eta appear only once committed`() {
+    fun `remaining distance and eta appear once there is a route to measure against`() {
         val b = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(58), seed = 999)
         val states = replay(today, b)
-        assertTrue(states.filter { it.phase != MatchPhase.COMMITTED }.all { it.remainingM == null && it.etaSecondsFromNow == null })
+        // Once only committed states carried these. They are now also offered for
+        // an unambiguous leader, flagged `provisional` so the display can mark
+        // them as the guess they are — without that, a route family sharing a
+        // long prefix leaves the watch with no remaining distance and no arrival
+        // time for most of a workout (A.4b). What has not changed is that they
+        // never appear without *some* single route behind them.
+        assertTrue(
+            states.filter { it.phase != MatchPhase.COMMITTED }
+                .all { (it.remainingM == null && it.etaSecondsFromNow == null) || it.provisional },
+            "remaining distance offered with no route behind it",
+        )
+        assertTrue(
+            states.none { it.provisional && it.contenderCount > 1 },
+            "provisional while two routes were still indistinguishable",
+        )
         val committed = states.filter { it.phase == MatchPhase.COMMITTED }
         assertTrue(committed.isNotEmpty())
         assertTrue(committed.last().remainingM != null)

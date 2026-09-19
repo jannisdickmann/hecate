@@ -569,4 +569,83 @@ object Tuning {
     const val HR_ZONE_MODERATE_FRACTION: Double = 0.70
     const val HR_ZONE_HARD_FRACTION: Double = 0.80
     const val HR_ZONE_PEAK_FRACTION: Double = 0.90
+
+    // ---------------------------------------------------------- live display
+
+    /**
+     * The weight one route needs before the watch says its name without being
+     * committed to it.
+     *
+     * The matcher commits on evidence that has *held* ([COMMIT_WEIGHT] for
+     * [COMMIT_HOLD_SAMPLES] samples over [COMMIT_MIN_M]); the display has a
+     * weaker job, which is to stop claiming ignorance it does not have. A route
+     * holding half the belief is the app's best current answer and saying so —
+     * marked as provisional — beats "Suche…", which reads as a malfunction and
+     * throws away a name the matcher is already carrying.
+     *
+     * Below [COMMIT_WEIGHT] on purpose, and deliberately not near it: this
+     * number decides what a *label* says, never what the session file records.
+     */
+    const val LEADER_MIN_WEIGHT: Double = 0.50
+
+    /**
+     * How long the matcher's idea of where the user is may go unrefreshed before
+     * the display stops trusting anything derived from it.
+     *
+     * Unusable samples (accuracy beyond [MAX_USABLE_ACCURACY_M], or none arriving
+     * at all) leave the projected position where it was while elapsed time keeps
+     * running, so ahead/behind drifts steadily worse for a reason that has
+     * nothing to do with the user. Past this the delta is frozen at its last
+     * honest value and the display dims it, which is a statement about the
+     * measurement rather than about the runner.
+     */
+    const val STALE_POSITION_MS: Long = 20_000L
+
+    /**
+     * Full-scale deflection of the ahead/behind bar, as a multiple of the
+     * route's own interquartile spread at the finish.
+     *
+     * A bar needs a scale, and the only defensible one is the route's own
+     * history: being a minute down means something quite different on a
+     * fifteen-minute commute that never varies than on a two-hour ride that
+     * varies by ten. Two IQRs pins the bar at "further outside your usual spread
+     * than three quarters of your attempts ever get".
+     *
+     * Taken at the *end* of the route, not at the current position, so the scale
+     * is one number for the whole workout: a bar whose scale moved underneath it
+     * would swing while the user held a steady pace, which is the opposite of
+     * what it is for.
+     */
+    const val DELTA_SCALE_IQR_MULTIPLE: Double = 2.0
+
+    /** Floor under [DELTA_SCALE_IQR_MULTIPLE] as a fraction of the route's median
+     *  total time, for a route whose members are so alike — or so few — that its
+     *  quartiles almost touch. Without it a metronomic commute produces a bar
+     *  that slams to full scale over a few seconds of traffic light. */
+    const val DELTA_SCALE_MIN_FRACTION: Double = 0.04
+
+    /** Absolute bounds on the bar's scale [s]. The floor keeps a short route's
+     *  bar from being a hair trigger; the ceiling keeps a long one's from being
+     *  a bar that never visibly moves. */
+    const val DELTA_SCALE_MIN_S: Double = 45.0
+    const val DELTA_SCALE_MAX_S: Double = 900.0
+
+    /**
+     * How long since the last usable position fix before the watch says so.
+     *
+     * [FIX_STALE_MS] is "GPS is struggling", which is worth knowing but changes
+     * nothing you would do; [FIX_LOST_MS] is "this recording is currently a
+     * stopwatch with a heart rate monitor", which is worth interrupting for.
+     * Both are measured from the last sample that actually passed
+     * [Sample.usable][de.hecate.core.model.Sample.usable], not from a system
+     * availability callback, because the callback fires on transitions and a fix
+     * that quietly goes to 200 m of error never produces one.
+     */
+    const val FIX_STALE_MS: Long = 20_000L
+    const val FIX_LOST_MS: Long = 60_000L
+
+    /** Nothing written to the session file for this long while the exercise is
+     *  active. The recorder is then not recording, whatever the screen says, and
+     *  that is the one thing the watch must never be quiet about. */
+    const val NO_WRITE_MS: Long = 90_000L
 }

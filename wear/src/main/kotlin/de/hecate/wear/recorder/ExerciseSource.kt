@@ -40,6 +40,12 @@ class ExerciseSource(private val context: Context) {
         DataType.HEART_RATE_BPM,
         DataType.DISTANCE_TOTAL,
         DataType.CALORIES_TOTAL,
+        // Current speed, which the live screen claimed to show for a year
+        // without ever asking for it — the cell fell through to
+        // distance-over-time and called an hour's average "right now". Dropped
+        // by [supported] on an exercise type that does not produce it, and the
+        // display falls back to the average *and says so*.
+        DataType.SPEED,
     )
 
     private val wantedWarmUpTypes = setOf(DataType.LOCATION, DataType.HEART_RATE_BPM)
@@ -60,7 +66,12 @@ class ExerciseSource(private val context: Context) {
     private fun <T : DataType<*, *>> permitted(types: Set<T>): Set<T> =
         types.filterTo(HashSet()) { type ->
             when (type) {
-                DataType.LOCATION -> granted(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                // Speed is a location product and carries location's permission
+                // with it; naming it without the grant would have Health
+                // Services reject the config as a whole, which is exactly the
+                // failure this filter exists for.
+                DataType.LOCATION, DataType.SPEED ->
+                    granted(android.Manifest.permission.ACCESS_FINE_LOCATION)
                 DataType.HEART_RATE_BPM -> granted(READ_HEART_RATE) || granted(BODY_SENSORS)
                 else -> true
             }

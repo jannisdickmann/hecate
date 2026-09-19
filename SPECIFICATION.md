@@ -100,13 +100,21 @@ as one of my routes.*
 *As the user, some minutes into my workout the watch tells me which route I am
 on — and honestly says "unknown" when it does not know.*
 
-- Display states: `Suche…` (searching) → `Weg zur Arbeit` (committed) →
-  `Unbekannt` (null hypothesis dominant).
-- Commitment must not occur while two or more routes remain plausible; a shared
-  start segment leaves the display in `Suche…` for as long as the paths coincide.
-- Commitment is revocable: if evidence collapses, the display returns to
-  `Suche…` rather than showing a wrong name.
+- Display states, revised in A.27: `Noch am Vergleichen` (nothing decided yet) →
+  `Arbeit · Waldrunde` (several indistinguishable) → `≈ Weg zur Arbeit` (a
+  leader, named provisionally) → `Weg zur Arbeit` (committed) → `Neue Strecke`
+  (null hypothesis dominant). The original wording — `Suche…` and `Unbekannt` —
+  described the same states as failures and threw away a named favourite the
+  matcher was already carrying.
+- Commitment must not occur while two or more routes remain plausible; neither
+  may the provisional naming above. A shared start segment shows both names for
+  as long as the paths coincide.
+- Commitment is revocable: if evidence collapses, the display falls back to the
+  weaker claims above rather than showing a wrong name.
 - Never commits on a genuinely novel path.
+- No state of the matcher may be drawn in a warning colour. Whether the app
+  knows the route and whether the recording is working are separate questions
+  with separate lines (US-11).
 
 ### US-5 — Ahead/behind, before the route is known (must)
 
@@ -116,18 +124,27 @@ possible, even before the route is identified.*
 - While uncommitted, ahead/behind is computed against the pooled history of all
   still-plausible candidates (they share the traversed prefix, so they share its
   history).
-- Displayed as signed seconds vs. the median at the current position.
-- Suppressed only when the null hypothesis dominates.
+- Displayed as signed seconds vs. the median at the current position, and as a
+  bar down the right edge of the screen whose full-scale deflection is a
+  multiple of the route's own interquartile spread at the finish (A.27).
+- Suppressed only when the null hypothesis dominates, and frozen — not
+  recomputed — while the projected position is stale, so that a GNSS outage is
+  never charged to the user as lateness.
+- Where there is nothing to compare against, the cell shows the session's
+  average speed rather than a dash.
 
 ### US-6 — Remaining distance and arrival time (must)
 
 *As the user, once the route is known I see how far is left and when I will
 arrive.*
 
-- Remaining distance = route length − current position.
+- Remaining distance = route length − current position, also drawn as a
+  progress bar down the left edge of the screen (A.27).
 - ETA derived from the per-position median pace profile, scaled by today's
-  observed performance ratio.
-- Both suppressed while uncommitted (they are meaningless without a route).
+  observed performance ratio, and published as an absolute arrival instant so a
+  stale figure cannot walk forwards.
+- Both suppressed while there is no single route behind them. An unambiguous
+  leader counts, marked as provisional; a tie does not (A.4b, A.27).
 
 ### US-7 — Deviation alert (must)
 
@@ -287,9 +304,11 @@ dependency list.
   survives without one (matcher simply reports `Unbekannt`).
 - `Uploader` — on stop, and on service start (to catch reboot leftovers), puts
   each unacked session file as a `DataClient` Asset.
-- UI: three pager pages — **Live** (current metrics), **Route** (name, remaining,
-  ETA, ahead/behind), **Control** (pause/stop). Ongoing Activity notification
-  mirrors the key metric.
+- UI: two pager pages — **Live** (metrics, route belief, the two edge bars and
+  one health line) and **Control** (pause/stop). Layout adapts to the two watch
+  sizes at the platform's large-round breakpoint (`screenWidthDp >= 225`).
+  Ongoing Activity notification mirrors the key metric and takes its route
+  wording from the same place the screen does.
 
 Recorder state machine: `IDLE → PREPARING → ACTIVE ⇄ PAUSED → ENDING → IDLE`.
 `PREPARING` calls `prepareExercise()` and waits for a GNSS fix before
@@ -2175,3 +2194,85 @@ means a future takeout export contains it, and Health Connect may hold it too.
 Reading either back into an existing recording is a feature this app does not
 have — §3.12 of the open points says what it would take and why it is worth
 deciding rather than assuming.
+
+### A.27 A watch that says what it knows
+
+The specification gave US-4 three display states — `Suche…`, the route name,
+`Unbekannt` — and the implementation drew the first and the last of them in the
+same warning colours it uses for a missing GNSS fix and a pause. Two of those
+decisions were wrong, and they were wrong in opposite directions: the watch
+sounded broken when it was working, and said nothing at all when it was not.
+
+**The words.** `Suche…` describes a search that might fail. What the matcher is
+actually doing is comparing today's track against routes it already knows, and
+from the very first sample it holds a weighted, named candidate list — seeded by
+how often each route is taken on this weekday at this hour (§5.6, "Priors at
+start"). None of that reached the screen. `Unbekannt` is worse: the null
+hypothesis winning is a *finding*, and a useful one — this is not one of your
+routes, run it a few more times and it becomes one. The states are now
+`Noch am Vergleichen`, `Arbeit · Waldrunde` (both names, while they are
+genuinely indistinguishable), `≈ Weg zur Arbeit` (the leader, named and hedged),
+the bare name once committed, and `Neue Strecke`. `Noch keine Routen` is now
+distinct from `Neue Strecke`: a bundle with no route of this exercise type is a
+fact about the phone, not about today, and the matcher reports the two
+separately.
+
+**The colours.** Nothing about the route may be drawn in a warning colour any
+more. `RouteTone`, `DeltaTone` and `HealthTone` are three objects precisely so
+that the compiler makes it awkward to put the health palette on the knowledge
+line again.
+
+**The other half.** Splitting the channels exposed how little the old status line
+ever said about the recording itself. Every one of these was invisible on the
+live page: a GNSS fix lost mid-workout (the fix state was rendered on the
+*control* page, which you have to swipe to); a fix present but far beyond
+`MAX_USABLE_ACCURACY_M`, where samples are silently rejected, the matcher's
+projected position freezes, elapsed time keeps running, and the only visible
+symptom is the ahead/behind figure drifting worse — the app blaming the runner
+for the receiver; and every recorder message, which only the *start* screen
+rendered, so a failed warm-up or a recording running without location permission
+was something you found out about after you stopped. One of those messages
+could never be seen at all: `bus.reset()` ran four lines after
+"Nichts aufgezeichnet — verworfen" was set and wiped it.
+
+There is now one health line, ranked by how much each state changes what you
+should do next, and one marker beside it that is always drawn — because an empty
+status line and a broken status line look identical, and "everything is fine"
+deserves to be a state the screen shows rather than the absence of one. It keeps
+its own one-second clock, since the states that matter most are exactly the ones
+where nothing is arriving to trigger a redraw.
+
+**Two bars, and what sets their scale.** The left edge carries progress along the
+route, the right edge today against the route's median: green upwards from the
+three o'clock anchor for ahead, red downwards for behind. They are drawn on a
+canvas *behind* the text, which is why they were affordable at all — the live
+page's height budget (§A.4's 175 dp inside a 41 mm face) is untouched, and what
+they cost is width, paid for out of the gutter and, on the smaller watch, two
+points of the primary numerals.
+
+The interesting question was the right-hand bar's scale. Being a minute down
+means something entirely different on a commute that never varies than on a ride
+that varies by ten, so the scale is the route's own interquartile spread at the
+finish, doubled, floored at 4 % of its median total time for a route whose
+members barely differ, and clamped to 45…900 s. Taken at the *finish* rather
+than at the current position on purpose: a scale that moved as you ran would
+make the bar swing while you held a steady pace.
+
+**What became honest on the way.** The live screen's speed cell had never once
+shown current speed — `speedKmh` was declared and never assigned, so the cell
+fell through to distance-over-time for the whole workout while its own comment
+said "how fast it is going right now". `DataType.SPEED` is now requested (and
+dropped by the capability filter where an exercise type does not produce it, per
+A.17), and where the fallback is used the unit says `Ø km/h`. The arrival time
+is published as an instant rather than as seconds-from-now, because the display
+recomputed `now + eta` on every recomposition: an arrival that had stopped being
+updated — after the matcher was disabled, say — walked a minute further into the
+future for every minute you looked at it. And a disabled matcher now clears its
+numbers instead of leaving a route name, a delta and an ETA frozen on screen
+under a headline saying the matcher is off.
+
+**What did not change.** Commitment still refuses to choose between routes on
+the same ground, and so does the provisional naming: a leader is named only when
+it is the sole contender, so `Arbeit · Waldrunde` is what a shared prefix shows
+— the honest answer, and still more than `Suche…` ever was. Priority (A.4b)
+remains the only thing that breaks such a tie.
