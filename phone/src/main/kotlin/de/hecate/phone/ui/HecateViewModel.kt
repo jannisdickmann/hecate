@@ -22,6 +22,7 @@ import de.hecate.core.profile.Series
 import de.hecate.core.profile.Timeline
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
+import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
@@ -550,6 +551,39 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     fun retryHealthConnect() = viewModelScope.launch {
         Jobs.enqueueHealthConnect(getApplication())
         _status.value = "Health-Connect-Schreiben angestoßen"
+    }
+
+    /**
+     * Correct the sport a recording was filed under, and rebuild what depended
+     * on it.
+     *
+     * The watch records what it was told to record, and the button pressed at
+     * the trailhead is the one thing about a workout nobody can fix afterwards —
+     * except here. It matters more than a label: exercise type is a hard
+     * partition in clustering, so a hike filed as a walk is compared only against
+     * walks and can form, join or break a route on that basis. Hence the
+     * re-cluster, which is the whole point of the edit rather than a side effect
+     * of it; the new bundle reaches the watch the same way any other does.
+     *
+     * Health Connect is rewritten rather than left disagreeing. The record is
+     * keyed by `clientRecordId = sessionId`, so writing it again replaces the
+     * entry instead of adding a second one — but only for sessions this app put
+     * there. A SKIPPED session came *from* Health Connect and is never written
+     * back, and a PENDING or FAILED one is already queued with whatever type it
+     * now has.
+     */
+    fun setExerciseType(id: String, type: ExerciseType) = viewModelScope.launch {
+        val dao = db.sessions()
+        val before = dao.byId(id) ?: return@launch
+        if (before.exerciseType == type) return@launch
+        dao.setExerciseType(id, type)
+        if (before.hcWriteState == HcWriteState.WRITTEN) {
+            dao.setHcState(id, HcWriteState.PENDING, null)
+            Jobs.enqueueHealthConnect(getApplication())
+        }
+        loadSession(id)
+        Jobs.enqueueClustering(getApplication())
+        _status.value = "Art: ${type.label} — Routen werden neu berechnet"
     }
 
     fun deleteSession(id: String) = viewModelScope.launch {

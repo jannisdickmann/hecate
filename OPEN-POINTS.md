@@ -242,6 +242,45 @@ contemplates, this is the thing that will complain first.
 
 ---
 
+### 2.9 The two emulators are not paired, and nothing decides whether they should be
+
+`tools/emu` boots a watch and a phone that cannot talk to each other. The
+Wearable Data Layer is not a socket the app opens: it is Play services on both
+nodes brokered by the Wear OS companion app, and without a pairing there is no
+node, so `DataClient` publishes into nothing. That is why Appendix A.19's pass
+over every screen could cover every screen and no transfer, and why
+`tools/emu bundle` exists — on a wrist the phone sends the bundle, and here it
+has to be put there by hand.
+
+What pairing would take, as far as anyone here knows and with the third point
+unverified:
+
+- A **Google Play** phone image, because the companion app comes from the Play
+  Store and is not legitimately sideloadable — which also means a Google account
+  signed in on the emulator, against the grain of the rest of this setup.
+- A watch image with Play services, which the standard `android-wear` images have.
+- A **TCP bridge on port 5601** between the two. The documented spelling covers a
+  Wear emulator and a *physical* phone (`adb -d forward tcp:5601 tcp:5601`); for
+  two emulators on one host it is a forward on the watch plus a reverse on the
+  phone, and nobody here has run it. Android Studio's Device Manager has a
+  pairing assistant that does this and drives the companion app, with no
+  documented command-line equivalent — so the honest options are to install
+  Studio once or to get the bridge right by hand. Either way it dies with the
+  emulator and `tools/emu up` would have to re-establish it.
+- Both APKs sharing an `applicationId` and a signature, which they already do
+  (§1.2), and which `tools/emu install` satisfies with one debug keystore.
+
+**What it would buy**: the transfer path, which nothing can currently exercise —
+session upload, the acknowledgement, `markAcked` deleting the file, the bundle
+coming back, and both gaps in §1.2 that are dead code until something delivers a
+`DataItem`. Possibly Health Connect write-back on the phone emulator as well,
+though a Play image is likely necessary there too and that has not been checked.
+
+**What it would not buy**: matching. The watch's sensor data would still come from
+the synthetic provider and its one default route. That gap is answered instead by
+`tools/emu replay` (Appendix A.28), which needs no pairing at all — which is
+exactly why this is a decision rather than a blocker.
+
 ## 3. Known gaps against the specification
 
 ### 3.1 The auto-pause broadcast test has not been run
@@ -274,7 +313,11 @@ says nothing about whether the picker's Uri opens for writing on a phone.
 §6.5 does not ask for instrumented tests — it asks for emulator and on-wrist
 verification, both of which are manual. This is a reasonable position for a
 single-user sideloaded app, but it does mean every regression in the list above
-will still be found by wearing it.
+will still be found by wearing it. One of the two is at least repeatable now:
+`tools/emu replay` plays a stored activity into the recorder, so Compose, the
+match display and the deviation haptic can be watched against a real track
+without leaving the desk (Appendix A.28). It is still a human looking at a
+screen, not a test.
 
 The first session on real hardware produced three defects, and the suite was
 green through all of them. That is not a failure of the tests; it is the exact

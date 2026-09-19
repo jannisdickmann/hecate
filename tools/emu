@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Emulators for UI work (§6.5's emulator layer): a 45 mm Pixel Watch 4 and a
-# Pixel 8. Plumbing, permissions and layout only — the Wear emulator's synthetic
-# provider emits one default route with identical values every run, so nothing
-# here can test the matcher. Use fixtures and `:core:run replay` for that.
+# Pixel 8. Plumbing, permissions and layout — and, through `replay`, the matcher
+# as the watch actually shows it: a stored activity is played into the recorder
+# in place of the Wear synthetic provider, whose one default route with identical
+# values every run can never find anything. `bundle` puts the routes there first,
+# because the two emulators are not paired and the Data Layer cannot.
+#
+# A replay writes no session and uploads nothing, so nothing it does can reach
+# the phone's history.
 set -euo pipefail
 
 export ANDROID_HOME="${ANDROID_HOME:-/usr/local/android-sdk}"
@@ -29,12 +34,53 @@ boot() { # avd serial
 
 # Cheap insurance against the above ever being wrong again: the watch image
 # reports "watch" in ro.build.characteristics and the phone image does not.
-assert_roles() {
-  local w p
+assert_watch() {
+  local w
   w=$(adb -s "$WATCH" shell getprop ro.build.characteristics 2>/dev/null | tr -d '\r')
-  p=$(adb -s "$PHONE" shell getprop ro.build.characteristics 2>/dev/null | tr -d '\r')
   case "$w" in *watch*) ;; *) echo "error: $WATCH is not the watch ($w)" >&2; exit 1 ;; esac
+}
+
+assert_roles() {
+  local p
+  assert_watch
+  p=$(adb -s "$PHONE" shell getprop ro.build.characteristics 2>/dev/null | tr -d '\r')
   case "$p" in *watch*) echo "error: $PHONE is the watch, not the phone" >&2; exit 1 ;; esac
+}
+
+# Copies a file into the watch app's own storage.
+#
+# `adb push` cannot write under /data/data, and `run-as` — which can, on a
+# debuggable build — runs on the watch and cannot read this laptop's disk. So the
+# bytes go through adb's stdin rather than via /data/local/tmp: an app cannot
+# generally read that directory anyway, since SELinux labels it for the shell
+# user and run-as drops into the app's own domain.
+#
+# The size is checked afterwards because the two ways this can go wrong are both
+# silent — a truncated transfer, and an adb old enough to translate line endings
+# in a stream, which would corrupt the gzipped bundle rather than fail.
+push_private() { # <local file> <dest dir, relative to the app's home> <dest name>
+  local want got
+  want=$(stat -c %s "$1")
+  adb -s "$WATCH" shell "run-as de.hecate sh -c 'mkdir -p $2 && cat > $2/$3'" < "$1" || {
+    echo "error: run-as refused. Only a debuggable build can be written to — tools/emu install" >&2
+    exit 1
+  }
+  got=$(adb -s "$WATCH" shell "run-as de.hecate stat -c %s $2/$3" 2>/dev/null | tr -d '\r')
+  [ "$got" = "$want" ] || {
+    echo "error: $3 arrived as $got bytes, not $want — not using it" >&2
+    adb -s "$WATCH" shell "run-as de.hecate rm -f $2/$3" || true
+    exit 1
+  }
+}
+
+# Paths on this machine mean what they look like they mean; everything else goes
+# through to :core:run untouched, whose working directory is the repository root.
+absolutise() {
+  local a out=()
+  for a in "$@"; do
+    if [ -e "$a" ]; then out+=("$(readlink -f "$a")"); else out+=("$a"); fi
+  done
+  printf '%s\n' "${out[*]-}"
 }
 
 # Granted here rather than tapped through: the runtime prompts are not what is
@@ -107,8 +153,120 @@ case "${1:-up}" in
     echo "wrote $out-watch.png $out-phone.png"
     ;;
 
+  bundle) # a route bundle from this machine into the watch's own storage.
+          #
+          # On a wrist this arrives over the Data Layer from the phone and there
+          # is nothing to do by hand. The emulators are not paired (§6.5), so the
+          # bundle has to be put there, and without one every replay below can
+          # only ever say "Unbekannt" — correctly.
+    assert_watch
+    [ -f "${2:-}" ] || { echo "usage: tools/emu bundle <bundle.json|bundle.json.gz>" >&2; exit 2; }
+    src="$(readlink -f "$2")"
+    gz="$src"
+    # BundleStore reads one shape only, and `:core:run bundle --out` writes the
+    # other, so anything that is not already gzip is gzipped on the way past.
+    case "$src" in
+      *.gz) ;;
+      *) gz="$(mktemp -t hecate-bundle.XXXXXX)"; gzip -c "$src" > "$gz" ;;
+    esac
+    push_private "$gz" files route-bundle.json.gz
+    [ "$gz" = "$src" ] || rm -f "$gz"
+    # The parsed bundle is cached for the life of the process, so a running app
+    # would go on using the old one.
+    adb -s "$WATCH" shell am force-stop de.hecate
+    echo "bundle installed on the watch; app stopped so it reads the new one"
+    ;;
+
+  replay) # play a stored activity into the recorder, in place of the sensors.
+          #
+          # This is the only way to see the matcher work on an emulator: the Wear
+          # synthetic provider emits one default route with identical values every
+          # run, so it can never match anything. What is on screen during a replay
+          # is what would have been on the wrist that day — the decisions are the
+          # matcher's own, and it is not told which of the two it is running in.
+    shift || true
+    case "${1:-}" in
+      --list|-l)
+        shift
+        # Straight through to the harness, which knows what each session matches
+        # and can therefore say which ones are worth watching.
+        ( cd "$ROOT" && ./gradlew -q :core:run --args="sessions $(absolutise "$@")" )
+        exit 0
+        ;;
+      --stop)
+        adb -s "$WATCH" shell am broadcast -n de.hecate/de.hecate.wear.recorder.ReplayReceiver \
+          -a de.hecate.wear.REPLAY_STOP >/dev/null
+        echo "replay stopped"
+        exit 0
+        ;;
+    esac
+
+    archive=""; pos=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --archive) archive="$(readlink -f "${2:?--archive wants a backup ZIP}")"; shift 2 ;;
+        *) pos+=("$1"); shift ;;
+      esac
+    done
+    speed="${pos[1]:-10}"
+
+    if [ -n "$archive" ]; then
+      [ -n "${pos[0]:-}" ] || { echo "usage: tools/emu replay --archive <zip> <id> [speed]" >&2; exit 2; }
+      # Into build/, which .gitignore covers: a session out of a real backup is
+      # personal data and must not land in the tree — same rule as `shot`.
+      session="$ROOT/build/replay/${pos[0]}.jsonl"
+      mkdir -p "$(dirname "$session")"
+      ( cd "$ROOT" && ./gradlew -q :core:run --args="extract --archive $archive --session ${pos[0]} --out $session" )
+    else
+      session="${pos[0]:-}"
+      [ -f "$session" ] || {
+        echo "usage: tools/emu replay <session.jsonl> [speed]" >&2
+        echo "       tools/emu replay --archive <backup.zip> <id> [speed]" >&2
+        echo "       tools/emu replay --list [--archive <zip> | --sessions <dir>] [--bundle <f>]" >&2
+        exit 2
+      }
+      session="$(readlink -f "$session")"
+    fi
+
+    assert_watch
+    adb -s "$WATCH" shell "run-as de.hecate ls files/route-bundle.json.gz" >/dev/null 2>&1 ||
+      echo "note: no route bundle on the watch, so this will say \"Unbekannt\" throughout — tools/emu bundle <f>"
+    push_private "$session" files/replay current.jsonl
+    # The app must be in the foreground for its receiver to be allowed to start a
+    # foreground service; a broadcast into a stopped app cannot. If this ever
+    # fails anyway the replay stays armed, and starting any exercise on the watch
+    # picks it up instead of recording.
+    adb -s "$WATCH" shell monkey -p de.hecate -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    sleep 2
+    adb -s "$WATCH" shell am broadcast -n de.hecate/de.hecate.wear.recorder.ReplayReceiver \
+      -a de.hecate.wear.REPLAY --es file current.jsonl --ef speed "$speed" >/dev/null
+    echo "replaying $(basename "$session") at ×$speed — the Live page says Wiedergabe while it runs"
+    echo "quiet? adb -s $WATCH logcat -s ReplayReceiver:* ReplayFeed:* RecorderService:*"
+    ;;
+
   log)   adb -s "$WATCH" logcat -s Hecate:V AndroidRuntime:E ;;
   down)  adb -s "$WATCH" emu kill 2>/dev/null || true; adb -s "$PHONE" emu kill 2>/dev/null || true ;;
 
-  *) echo "usage: tools/emu {up|watch|phone|install|push <zip>|run [RUNNING|WALKING|HIKING|BIKING|SKIING]|pause|stop|shot [prefix]|log|down}" >&2; exit 2 ;;
+  *)
+    cat >&2 <<'USAGE'
+usage: tools/emu <command>
+
+  up | watch | phone          boot the emulators
+  install                     build and install both debug APKs, grant permissions
+  run [TYPE]                  synthetic exercise (plumbing only; matches nothing)
+  pause | stop                synthetic auto-pause / end
+  bundle <bundle.json>        sideload a route bundle onto the watch
+  replay --list [...]         list stored activities and what each one matches
+  replay <session.jsonl> [speed]
+  replay --archive <zip> <id> [speed]
+                              play a stored activity into the recorder
+  replay --stop               end a running replay
+  push <archive.zip>          a backup into the phone's Downloads
+  shot [prefix]               screenshot both, into build/
+  log | down                  watch logcat / kill both emulators
+
+  TYPE is one of RUNNING WALKING HIKING BIKING SKIING; speed defaults to 10.
+USAGE
+    exit 2
+    ;;
 esac

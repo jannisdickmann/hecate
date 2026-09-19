@@ -2,6 +2,7 @@ package de.hecate.wear.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,6 +35,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -52,6 +57,7 @@ import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.HorizontalPagerScaffold
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -143,6 +149,16 @@ private fun StartScreen(state: RecorderUiState) {
                 Button(
                     onClick = { RecorderService.start(context, type) },
                     label = { Text(type.label) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(type.iconRes),
+                            // The label beside it already says the word, so an
+                            // icon that repeated it would only make every button
+                            // announce its type twice.
+                            contentDescription = null,
+                            modifier = Modifier.size(ButtonDefaults.IconSize),
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -187,6 +203,29 @@ private fun StartScreen(state: RecorderUiState) {
     }
 }
 
+/**
+ * The glyph for a sport, for the one screen that offers a choice between them.
+ *
+ * Buttons on a round face are read at arm's length and often in the dark, and
+ * five German words of similar length are a slow way to find the one you want;
+ * a shape is faster than a word here, which is the whole reason for it.
+ *
+ * The five files are copied from `:phone` rather than shared, because `:core` is
+ * pure Kotlin and holds no Android resources — a common resource module would be
+ * a lot of build for five static vectors. `when` without an `else` is the guard:
+ * a sixth exercise type will not compile until it has an icon, which is how
+ * A.18 asks new types to be added.
+ */
+@get:DrawableRes
+private val ExerciseType.iconRes: Int
+    get() = when (this) {
+        ExerciseType.RUNNING -> de.hecate.wear.R.drawable.ic_run
+        ExerciseType.WALKING -> de.hecate.wear.R.drawable.ic_walk
+        ExerciseType.HIKING -> de.hecate.wear.R.drawable.ic_hike
+        ExerciseType.BIKING -> de.hecate.wear.R.drawable.ic_bike
+        ExerciseType.SKIING -> de.hecate.wear.R.drawable.ic_ski
+    }
+
 // --------------------------------------------------------------------- pager
 
 @Composable
@@ -230,7 +269,7 @@ private data class LiveLayout(
     val arcStroke: Dp,
     val arcInset: Dp,
     val contentPadding: Dp,
-    val durationStyle: TextStyle,
+    val heroStyle: TextStyle,
     val primaryStyle: TextStyle,
     val secondaryStyle: TextStyle,
     /** "noch 2,10 km · an 18:42" against "2,10 km · 18:42". */
@@ -252,7 +291,7 @@ private fun rememberLiveLayout(): LiveLayout {
         // but they do cost width, and on the smaller face that is the whole
         // budget. Hence the wider gutter and the smaller primary numerals there.
         contentPadding = if (large) 22.dp else 18.dp,
-        durationStyle = if (large) numeral.copy(fontSize = 38.sp) else numeral,
+        heroStyle = if (large) numeral.copy(fontSize = 38.sp) else numeral,
         primaryStyle = if (large) numeral else numeral.copy(fontSize = 26.sp),
         secondaryStyle = MaterialTheme.typography.labelMedium,
         verboseEta = large,
@@ -269,7 +308,7 @@ private const val LARGE_SCREEN_DP = 225
  *
  * Laid out as a headline plus a two-column grid rather than a stack of single
  * values: paired numbers halve the vertical space, and the pairs are the ones
- * you read together anyway — how far against how fast, effort against standing.
+ * you read together anyway — how far against how long, effort against standing.
  *
  * The whole thing has a height budget, and it is the small watch that sets it.
  * A 41 mm face is 204 dp tall and the clock takes the first 26 of them, so the
@@ -315,19 +354,27 @@ private fun LivePage(state: RecorderUiState) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
+                ReplayBanner(state)
                 RouteHeadline(state)
 
-                Text(
-                    Format.duration(shownDuration),
-                    style = layout.durationStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                )
+                // Speed leads, and the full-width line is also the only place
+                // its unit fits: "Ø km/h" in half a row was clipped to "Ø", which
+                // reads as a quantity of its own rather than as a cut-off one.
+                // A single cell in a row of one, so that it shrinks by the same
+                // rule as every other number here.
+                Row(Modifier.fillMaxWidth()) {
+                    Metric(
+                        Format.speedValue(state.speedKmh ?: Format.speedFrom(state.distanceM, shownDuration)),
+                        if (state.speedKmh == null) "Ø km/h" else "km/h",
+                        layout.heroStyle,
+                    )
+                }
 
                 Spacer(Modifier.height(2.dp))
-                // The primary pair: what the ride has covered, and how fast it is
-                // going right now — which for the first time is actually the
-                // current speed rather than the session average wearing its name.
+                // The primary pair: how far, and how long it has taken. Time sits
+                // in a cell rather than on the wide line because it is the one
+                // number on this screen that carries no unit, so it is the one
+                // that can afford the narrow half.
                 Row(Modifier.fillMaxWidth()) {
                     Metric(
                         Format.distanceValue(state.distanceM),
@@ -335,8 +382,8 @@ private fun LivePage(state: RecorderUiState) {
                         layout.primaryStyle,
                     )
                     Metric(
-                        Format.speedValue(state.speedKmh ?: Format.speedFrom(state.distanceM, shownDuration)),
-                        if (state.speedKmh == null) "Ø km/h" else "km/h",
+                        Format.duration(shownDuration),
+                        Format.durationUnit(shownDuration),
                         layout.primaryStyle,
                     )
                 }
@@ -351,7 +398,7 @@ private fun LivePage(state: RecorderUiState) {
                         "bpm",
                         layout.secondaryStyle,
                     )
-                    ComparisonMetric(state, shownDuration, layout.secondaryStyle)
+                    ComparisonMetric(state, layout.secondaryStyle)
                 }
 
                 // US-6: meaningless without a route, so absent until there is one
@@ -382,6 +429,28 @@ private fun LivePage(state: RecorderUiState) {
             }
         }
     }
+}
+
+/**
+ * That these samples came out of a stored session rather than off the wrist.
+ *
+ * Its own line, in neither the belief half nor the health half, because it is a
+ * fact about neither: the matcher below it is working normally and the recording
+ * below that is healthy — on samples that are not being recorded. Absent in a
+ * release build, where nothing can set it, and never suppressed otherwise, so
+ * that no screenshot of a replay can be read as one of a workout.
+ */
+@Composable
+private fun ReplayBanner(state: RecorderUiState) {
+    val label = state.replayLabel ?: return
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = RouteTone.Assumed,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 /**
@@ -416,34 +485,40 @@ private fun RouteHeadline(state: RecorderUiState) {
 }
 
 /**
- * The right-hand cell of the secondary pair: ahead/behind while there is
- * anything to compare against, and the session's average speed when there is
- * not.
+ * The right-hand cell of the secondary pair: ahead or behind the usual time on
+ * this ground, and nothing at all when there is no usual time to be had.
  *
- * The cell never goes blank, and that is a deliberate reversal. It used to show
- * a grey dash whenever the null hypothesis had won — at exactly the moment the
- * app had nothing to say about routes and every reason to say something about
- * the workout. A number the user can use beats a dash that says the app gave up.
+ * It has held three different things. A grey dash, which said the app had given
+ * up; then the session's average speed, which was genuinely the most useful
+ * number available while the average lived nowhere else. The average is now the
+ * headline, so that fallback would only print it twice — and a cell that repeats
+ * the biggest number on the screen is worse than an empty one, because it costs
+ * a glance to discover it says nothing new.
  */
 @Composable
 private fun RowScope.ComparisonMetric(
     state: RecorderUiState,
-    durationMs: Long,
     style: TextStyle,
 ) {
     val delta = state.deltaVsMedianS
     if (delta == null) {
-        Metric(
-            Format.speedValue(Format.speedFrom(state.distanceM, durationMs)),
-            "Ø km/h",
-            style,
-        )
+        // Nothing to compare against, so nothing here. It used to fall back to
+        // the session average, which was worth showing when the average lived
+        // nowhere else — it is now the headline number two rows up, and a screen
+        // this small must not spend a cell saying the same thing twice.
+        //
+        // The space is held rather than collapsed: heart rate keeps its own half
+        // of the row, so it does not slide to the centre and back the moment the
+        // matcher finds something to compare.
+        Spacer(Modifier.weight(1f))
         return
     }
     val colour = if (delta < 0) DeltaTone.Ahead else DeltaTone.Behind
     Metric(
         Format.delta(delta),
-        "Ø",
+        // ± rather than Ø: the number is a signed deviation, not an average, and
+        // Ø is already the session average's own mark two cells away.
+        "±",
         style,
         // Dimmed rather than hidden while the projected position is stale: this
         // is the last honest comparison, and the alternative — recomputing it
@@ -494,6 +569,14 @@ private fun HealthLine(health: RecordingHealth, layout: LiveLayout) {
  * Inline rather than stacked because vertical space is the scarce one here (see
  * [LivePage]); [valueStyle] is what ranks the cell, so the same helper serves
  * both the primary and the secondary pair.
+ *
+ * **It shrinks rather than clips.** A single line that does not fit used to be
+ * cut at the right edge, and the unit is written last, so the unit was always
+ * exactly what was lost: the distance cell read "12,98" with no "km" at all, and
+ * a session average of 22,3 km/h read "22,3 Ø" — not a truncated number but a
+ * different claim, and a silent one. The cell now steps the type down until the
+ * whole of it fits, which is the trade the wrist wants: a number two points
+ * smaller is still read at a glance, a number whose unit is missing is not.
  */
 @Composable
 private fun RowScope.Metric(
@@ -503,18 +586,33 @@ private fun RowScope.Metric(
     color: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     val unitColor = MaterialTheme.colorScheme.onSurfaceVariant
-    Text(
+    // Relative to the value rather than an absolute 12 sp, so that a cell forced
+    // to give up four points does not keep a unit nearly as tall as its number.
+    val unitSize = (UNIT_SP / valueStyle.fontSize.value).em
+    BasicText(
         buildAnnotatedString {
             append(value)
-            withStyle(SpanStyle(fontSize = 12.sp, color = unitColor)) { append(" $unit") }
+            if (unit.isNotEmpty()) {
+                withStyle(SpanStyle(fontSize = unitSize, color = unitColor)) { append(" $unit") }
+            }
         },
-        style = valueStyle,
-        color = color,
+        style = valueStyle.copy(color = color, textAlign = TextAlign.Center),
         maxLines = 1,
-        textAlign = TextAlign.Center,
+        autoSize = TextAutoSize.StepBased(
+            minFontSize = MIN_METRIC_SP.sp,
+            maxFontSize = valueStyle.fontSize,
+            stepSize = 0.5.sp,
+        ),
         modifier = Modifier.weight(1f),
     )
 }
+
+/** The unit's size at a cell's full size; scaled down with it from there. */
+private const val UNIT_SP = 12f
+
+/** Below this a metric is not glanceable, and the layout is wrong rather than
+ *  the type too big. Nothing on either face has reached it. */
+private const val MIN_METRIC_SP = 16f
 
 // ------------------------------------------------------------------ edge bars
 
@@ -544,9 +642,15 @@ private fun RowScope.Metric(
  */
 @Composable
 private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
-    val hasRoute = state.belief.hasRoute
-    val progress = if (hasRoute) state.progressFraction?.toFloat()?.coerceIn(0f, 1f) else null
-    val deltaFraction = if (hasRoute) deltaFractionOf(state) else null
+    // Progress needs one specific route — it is a position along that route.
+    // The delta does not: it is pooled across whatever the matcher is still
+    // weighing, so the right-hand bar keeps working while the left one waits.
+    val progress = if (state.belief.hasRoute) {
+        state.progressFraction?.toFloat()?.coerceIn(0f, 1f)
+    } else {
+        null
+    }
+    val deltaFraction = deltaFractionOf(state)
 
     // Animated because the recorder publishes about once a second and an
     // un-animated bar steps visibly on every one of them.
@@ -608,12 +712,30 @@ private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
  * is positive when *slower*, and a bar that grew upwards as the user fell behind
  * would be read backwards by everyone including its author.
  */
+/**
+ * The ahead/behind bar's deflection, or null when there is nothing to draw.
+ *
+ * The delta itself is pooled across the live candidates rather than taken from
+ * one route, so it exists as soon as the matcher has any of them — including
+ * while two routes are still indistinguishable. Only the *scale* comes from a
+ * single route's own quartiles, and that is the one thing a tie cannot supply.
+ * Falling back to a fixed scale there keeps the bar on screen through exactly
+ * the stretch of a workout it used to vanish for: a route family sharing a long
+ * prefix, where the watch knows perfectly well that you are a minute up.
+ *
+ * The fallback is deliberately coarse. It is a reading of "about how far ahead",
+ * not a measurement against this route's own spread, and [DEFAULT_DELTA_SCALE_S]
+ * is wide enough that a normal day sits well inside it rather than pinned.
+ */
 private fun deltaFractionOf(state: RecorderUiState): Float? {
     val delta = state.deltaVsMedianS ?: return null
-    val scale = state.deltaScaleS ?: return null
-    if (scale <= 0.0) return null
+    val scale = state.deltaScaleS?.takeIf { it > 0.0 } ?: DEFAULT_DELTA_SCALE_S
     return (-delta / scale).coerceIn(-1.0, 1.0).toFloat()
 }
+
+/** Full-scale deflection when no single route owns the bar: five minutes either
+ *  way. See [deltaFractionOf]. */
+private const val DEFAULT_DELTA_SCALE_S = 300.0
 
 /** Where the arcs sit, in `drawArc` degrees. Both leave room at twelve and six
  *  o'clock for the clock and the pager indicator. */

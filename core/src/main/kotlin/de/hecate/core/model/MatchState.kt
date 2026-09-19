@@ -126,6 +126,12 @@ enum class MatchEvent {
     NULL_DOMINANT,
     DEVIATION,
     DEVIATION_CLEARED,
+    ;
+
+    /** True for both ways of arriving at a route, so that a reader asking "did
+     *  this session ever settle on something" cannot answer it for one of them
+     *  and forget the other. */
+    val isCommit: Boolean get() = this == COMMIT || this == COMMIT_BY_PRIORITY
 }
 
 /**

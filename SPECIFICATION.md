@@ -457,6 +457,7 @@ mismatch, an uninstall, and the loss of any un-uploaded session on the watch.
 | `:core` unit tests | metric, clustering, projection, profile maths | JUnit, synthetic geometries (5° divergence, self-intersecting loop, injected jitter) |
 | Replay harness | matcher decisions on real tracks | `ReplayMain` over a fixture set of stored sessions, golden-file assertions |
 | Wear emulator | service lifecycle, permissions, UI layout, Ongoing Activity | Emulator synthetic data — plumbing only; it emits a **single default route** with identical values every run, so it can never test matching |
+| Replay on the emulator | what the watch *shows* while matching: commitment, deviation, ahead/behind | `tools/emu replay` — a stored session fed to the recorder in place of the sensors, so the decisions are the matcher's own (A.28). Debug builds only; writes nothing, uploads nothing |
 | Event injection | auto-pause handling | `adb shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.android.wearable.healthservices` |
 | On-wrist | real GNSS noise, ambient batching, battery | Log to file, `adb pull` afterwards; no debugger survives a run |
 
@@ -736,7 +737,11 @@ prevent. See OPEN-POINTS.md §1.1.
 
 ### A.8 Scope not reached
 
-- §6.5's emulator layer has not been exercised. Its on-wrist layer has, once:
+- §6.5's emulator layer has been exercised across every screen (A.19) and can
+  now be pointed at the matcher as well (A.28). What it still cannot reach is
+  anything needing two paired nodes — the Data Layer and Health Connect — for
+  which see OPEN-POINTS §2.9.
+- §6.5's on-wrist layer has been exercised once:
   a Pixel Watch 4 and a Pixel 8 completed a full round trip, which is what found
   the three defects OPEN-POINTS §3.2 lists. One session is not the ten
   consecutive recordings §6.6 asks for.
@@ -2276,3 +2281,57 @@ the same ground, and so does the provisional naming: a leader is named only when
 it is the sole contender, so `Arbeit · Waldrunde` is what a shared prefix shows
 — the honest answer, and still more than `Suche…` ever was. Priority (A.4b)
 remains the only thing that breaks such a tie.
+
+### A.28 Replaying an activity into the recorder
+
+§6.5 gives the replay harness the matcher's *decisions* and the emulator the
+*plumbing*, and between those two sits the thing this app is: the screen finding
+a route. `ReplayMain` prints a decision timeline, which answers whether the
+matcher is right and nothing about what a wrist sees at minute four. The Wear
+emulator renders every screen faithfully and has nothing to render, because its
+synthetic provider emits one default route with identical values every run. So
+`tools/emu replay` joins them: a stored session's samples are fed to
+`RecorderService` in place of Health Services, and the matcher, the metrics, the
+deviation haptic and the ongoing notification all run unchanged.
+
+**The recorder is not told which it is running in.** A `SampleFeed` stands where
+`ExerciseSource` stands, and `onSample` — the critical path of NFR-1 — is the
+same code either way. That is the whole reason to do it in the app rather than
+with a fake provider outside it: a replay that went down a second path would
+verify the second path.
+
+**It writes nothing.** No session file is opened, nothing is offered to the
+phone, and the empty-session discard is skipped because there is nothing to
+discard. Replaying an activity therefore cannot reach the database, the routes or
+Health Connect, which is what makes it safe to point at a real 65-workout backup.
+
+**Debug builds only, and structurally so.** The broadcast receiver that arms a
+replay and the feed that implements it both live in `wear/src/debug`; `src/main`
+holds an interface and a field that nothing in a release build ever writes. A
+release APK contains no implementation of `SampleFeed` at all, so the recorder
+has no path to a sample it did not measure. The transport is the same
+`adb shell run-as` that reaches `files/sessions/`, which needs a debuggable APK
+for the same reason and is equally unavailable on a wrist.
+
+**Speed is a wait, not a fast-forward.** `RouteMatcher` reads no clock and counts
+its hold windows in samples, so a replay at ×10 commits on the sample a replay at
+×1 does, and on the one the watch did. Only two things notice: the predicted
+arrival time, which is "now plus the remaining seconds" and is therefore wrong by
+the speed factor, and a gap in the recording, which is replayed as a gap divided
+by the speed rather than smoothed away — a 90 s dropout is one of the things
+worth watching the matcher survive.
+
+**Picking what to replay is the other half.** A session that matches nothing
+replays as a minute of "Suche…", so `sessions` lists what is available together
+with what each one matches — from the phone's own conclusion when that is all
+there is, or, given `--bundle`, by replaying each session against the bundle
+about to be sideloaded, which is the question actually being asked. `extract`
+then takes one out of a backup as JSONL. Both are commands of the harness rather
+than of `tools/emu`, because neither needs a device and both are useful without
+one.
+
+**What it still does not test.** Everything §6.5 already says the emulator
+cannot: real GNSS noise, ambient batching, battery, and — while the emulators
+stay unpaired — the Data Layer and Health Connect. A replay proves the matcher
+and the display agree with the harness. It proves nothing about the sensors,
+because it replaces them.

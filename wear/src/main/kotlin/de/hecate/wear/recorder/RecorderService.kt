@@ -34,8 +34,10 @@ import de.hecate.wear.notify.Haptics
 import de.hecate.wear.notify.OngoingNotification
 import de.hecate.wear.ui.Format
 import de.hecate.wear.ui.Wording
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -64,6 +66,18 @@ class RecorderService : Service() {
 
     private var writer: SessionWriter? = null
     private var matcher: MatcherHost? = null
+
+    /** Non-null only while a stored session is being replayed (§6.5, debug builds
+     *  only). Everything that would otherwise touch the disk or the phone checks
+     *  this first: a replay is a rehearsal, not a recording. */
+    @Volatile
+    private var feed: SampleFeed? = null
+
+    /** The coroutine pouring that session in, so that stopping can stop it.
+     *  Cleared before a replay that ran to its end calls [endSession] itself,
+     *  which must not then cancel the coroutine it is running on. */
+    @Volatile
+    private var replayJob: Job? = null
 
     private var sessionId: String? = null
     private var startedElapsedNs: Long = 0
@@ -156,8 +170,8 @@ class RecorderService : Service() {
                 startForegroundNow(type)
                 scope.launch { beginSession(type) }
             }
-            ACTION_PAUSE -> scope.launch { source.pause() }
-            ACTION_RESUME -> scope.launch { source.resume() }
+            ACTION_PAUSE -> scope.launch { setPaused(true) }
+            ACTION_RESUME -> scope.launch { setPaused(false) }
             ACTION_STOP -> scope.launch { endSession(SessionEndReason.USER_STOPPED) }
             ACTION_UPLOAD -> scope.launch { AppGraph.uploader.uploadPending() }
             else -> {
@@ -186,10 +200,25 @@ class RecorderService : Service() {
     private suspend fun beginSession(type: ExerciseType) {
         if (bus.state.value.isRecording) return
 
-        val id = UUID.randomUUID().toString()
+        // A replay stands in for Health Services (§6.5): the samples come out of a
+        // stored session instead of a sensor, and every line below this one runs
+        // the same either way. Debug builds only — nothing arms [PendingFeed] in a
+        // release APK — and it writes nothing and uploads nothing, so replaying
+        // yesterday's commute cannot reach the phone's history or Health Connect.
+        val replay = PendingFeed.take()
+        feed = replay
+        val header = replay?.header
+
+        val id = header?.sessionId ?: UUID.randomUUID().toString()
         sessionId = id
         // NFR-6: the monotonic clock times the session; the wall clock is sampled
         // exactly once, here, for display and for Health Connect.
+        //
+        // A replay takes the wall clock, the zone and the sport from the recording
+        // instead. Not cosmetic: the matcher only considers routes of the
+        // session's own type, and its start-of-session prior is conditioned on the
+        // day and the hour (§5.6), so replaying Tuesday's commute as a Sunday
+        // afternoon would ask it a different question than the one under test.
         startedElapsedNs = SystemClock.elapsedRealtimeNanos()
         pausedTotalMs = 0L
         pausedSinceMs = null
@@ -197,27 +226,31 @@ class RecorderService : Service() {
         lastHrAtMs = 0L
         lastRateAtMs = -1L
         ratesWritten = 0
-        val startedAtUtcMs = System.currentTimeMillis()
-        val tzOffsetMinutes = TimeZone.getDefault().getOffset(startedAtUtcMs) / 60_000
+        val startedAtUtcMs = header?.startedAtUtcMs ?: System.currentTimeMillis()
+        val tzOffsetMinutes = header?.tzOffsetMinutes
+            ?: (TimeZone.getDefault().getOffset(startedAtUtcMs) / 60_000)
+        val exerciseType = header?.exerciseType ?: type
 
         val bundle = AppGraph.bundles.load()
         routeNames = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
 
-        val w = SessionWriter(AppGraph.sessions.fileFor(id))
-        w.open()
-        w.writeHeader(
-            SessionHeader(
-                sessionId = id,
-                startedAtUtcMs = startedAtUtcMs,
-                tzOffsetMinutes = tzOffsetMinutes,
-                exerciseType = type,
-                bundleVersion = bundle.version.takeIf { it > 0 },
-                appVersion = BuildInfo.VERSION,
-            ),
-        )
-        writer = w
+        if (replay == null) {
+            val w = SessionWriter(AppGraph.sessions.fileFor(id))
+            w.open()
+            w.writeHeader(
+                SessionHeader(
+                    sessionId = id,
+                    startedAtUtcMs = startedAtUtcMs,
+                    tzOffsetMinutes = tzOffsetMinutes,
+                    exerciseType = exerciseType,
+                    bundleVersion = bundle.version.takeIf { it > 0 },
+                    appVersion = BuildInfo.VERSION,
+                ),
+            )
+            writer = w
+        }
 
-        matcher = MatcherHost(bundle, type, startedAtUtcMs, tzOffsetMinutes) { entry ->
+        matcher = MatcherHost(bundle, exerciseType, startedAtUtcMs, tzOffsetMinutes) { entry ->
             writer?.writeMatch(entry)
         }
         if (matcher?.disabled == true) recordEvent(SessionEventType.MATCHER_DISABLED)
@@ -225,20 +258,36 @@ class RecorderService : Service() {
         val canLocate = source.canRecordLocation()
         bus.update {
             RecorderUiState(
-                phase = RecorderPhase.PREPARING,
-                exerciseType = type,
+                // A replay has no sensor to warm up and no fix to wait for.
+                phase = if (replay == null) RecorderPhase.PREPARING else RecorderPhase.ACTIVE,
+                exerciseType = exerciseType,
                 sessionId = id,
                 startedAtUtcMs = startedAtUtcMs,
                 bundleVersion = bundle.version,
                 pendingUploads = it.pendingUploads,
-                locationPermission = canLocate,
+                // A replay needs no permission and has nothing to ask for one.
+                locationPermission = canLocate || replay != null,
                 // The header is a write, and dating the first one from here is
                 // what keeps "nothing has been written for a minute and a half"
                 // from being true of every session before its first sample.
                 lastWriteAtMs = System.currentTimeMillis(),
+                replayLabel = replay?.label,
+                // Its first fix is dated from now for the same reason the first
+                // write is, and more urgently: [startedAtUtcMs] is the
+                // *recording's* start, so the health line's "never had a fix, so
+                // measure from the beginning" fallback would open every replay of
+                // a week-old session by reporting a week without GPS.
+                gpsReady = replay != null,
+                lastFixAtMs = if (replay != null) System.currentTimeMillis() else 0L,
             )
         }
         if (matcher?.disabled == true) disableMatcher()
+
+        if (replay != null) {
+            Haptics.tick(this)
+            driveReplay(replay)
+            return
+        }
 
         // PREPARING: warm the sensors and wait for a fix before the session starts,
         // so the first few hundred metres — the ones the matcher needs most — are
@@ -298,6 +347,75 @@ class RecorderService : Service() {
     }
 
     /**
+     * Pause and resume, from whichever of the two sources is running.
+     *
+     * The live path asks Health Services and learns the new state back through
+     * [handleUpdate]; a replay has nobody to ask, so it stops the feed and says so
+     * itself. Same button, same page, both honest about what they did.
+     */
+    private suspend fun setPaused(paused: Boolean) {
+        val replay = feed
+        if (replay != null) {
+            replay.setPaused(paused)
+            bus.update {
+                it.copy(
+                    phase = if (paused) RecorderPhase.PAUSED else RecorderPhase.ACTIVE,
+                    autoPaused = false,
+                )
+            }
+            return
+        }
+        if (paused) source.pause() else source.resume()
+    }
+
+    /** Runs a replay to its end, which is an auto-end: the recording ran out. */
+    private fun driveReplay(replay: SampleFeed) {
+        replayJob = scope.launch {
+            try {
+                replay.drive(::onReplaySample)
+            } catch (cancelled: CancellationException) {
+                // Stopped, or the service is going away. Either way somebody else
+                // is doing the ending.
+                throw cancelled
+            } catch (t: Throwable) {
+                Log.e(TAG, "Wiedergabe abgebrochen", t)
+            }
+            replayJob = null
+            endSession(SessionEndReason.AUTO_ENDED)
+        }
+    }
+
+    /**
+     * One replayed sample, in place of [ingest].
+     *
+     * [onSample] goes first, exactly as it does live: it is the matcher's path,
+     * and the metrics below read the belief it produces. Everything here comes
+     * out of the stored sample rather than out of Health Services, which is the
+     * whole of the difference between a replay and a workout.
+     */
+    private fun onReplaySample(sample: Sample) {
+        // A stop races the sample after it: cancellation is not instant, and a
+        // straggler arriving after [endSession] has reset the bus would leave the
+        // watch showing a recording that is not happening — the state outlives the
+        // service, so it would still be there on the next launch. Asked of the bus
+        // rather than of `sessionId`, because the flow is what publishes the end
+        // of the session across threads.
+        if (bus.state.value.sessionId == null) return
+        onSample(sample)
+        bus.update {
+            it.copy(
+                phase = if (sample.paused) RecorderPhase.PAUSED else RecorderPhase.ACTIVE,
+                activeDurationMs = sample.activeMs,
+                heartRateBpm = sample.hrBpm ?: it.heartRateBpm,
+                // A session imported from a takeout carries no cumulative distance
+                // of its own, so the matcher's travelled figure stands in for it.
+                distanceM = sample.cumDistanceM ?: lastState?.travelledM ?: it.distanceM,
+            )
+        }
+        maybeUpdateNotification()
+    }
+
+    /**
      * Close the session file, decide whether it was worth keeping, and hand it
      * to the uploader.
      *
@@ -318,8 +436,16 @@ class RecorderService : Service() {
         // Claimed before the first suspension point: anything else that arrives
         // now finds nothing to end.
         sessionId = null
+        val replaying = feed != null
+        // Null when a replay is ending itself, having just run out of samples;
+        // cancelling here would then cancel the coroutine doing the ending.
+        replayJob?.cancel()
+        replayJob = null
         bus.update { it.copy(phase = RecorderPhase.ENDING) }
-        runCatching { source.end() }
+        // Nothing to end when nothing was started: a replay never touched Health
+        // Services, and asking it to stop an exercise it has no record of is a
+        // logged error for no reason.
+        if (!replaying) runCatching { source.end() }
 
         val st = bus.state.value
         writer?.writeFooter(
@@ -333,6 +459,7 @@ class RecorderService : Service() {
         writer?.close()
         writer = null
         matcher = null
+        feed = null
         lastState = null
         sawFirstLocation = false
 
@@ -348,8 +475,12 @@ class RecorderService : Service() {
         // is re-offered for ever. Three of these had accumulated before anyone
         // noticed. Nothing is lost by dropping it — there was nothing in it,
         // which is a claim this code has to be *sure* of: see the lock above.
+        //
+        // Never for a replay, which is surer still: it opened no file, and the id
+        // it runs under is the stored session's own, so discarding "its" file
+        // would delete the recording being replayed.
         Log.i(TAG, "Sitzung $id: $samplesWritten Messpunkte, $ratesWritten Pulswerte")
-        val empty = samplesWritten < MIN_USEFUL_SAMPLES
+        val empty = samplesWritten < MIN_USEFUL_SAMPLES && !replaying
         samplesWritten = 0
         ratesWritten = 0
         if (empty) {
@@ -359,13 +490,15 @@ class RecorderService : Service() {
         }
 
         Haptics.tick(this)
-        AppGraph.uploader.uploadPending()
+        // A replay produced no file, so there is nothing new to offer the phone
+        // and no reason to wake the Data Layer on its account.
+        if (!replaying) AppGraph.uploader.uploadPending()
         bus.reset()
         bus.update { it.copy(pendingUploads = AppGraph.sessions.unacked().size) }
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        Log.i(TAG, "Sitzung $id beendet ($reason)")
+        Log.i(TAG, if (replaying) "Wiedergabe $id beendet" else "Sitzung $id beendet ($reason)")
     }
 
     private fun recordEvent(type: SessionEventType, note: String? = null) {

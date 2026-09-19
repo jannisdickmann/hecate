@@ -7,6 +7,7 @@ import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.io.SessionCodec
 import de.hecate.core.matcher.RouteMatcher
+import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
@@ -42,22 +43,31 @@ object ReplayMain {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        exitProcess(dispatch(args))
+    }
+
+    /**
+     * Everything [main] does except ending the process, which is what lets the
+     * commands be tested: a test that called [main] would take the JVM with it.
+     */
+    fun dispatch(args: Array<String>): Int {
         if (args.isEmpty()) {
             usage()
-            exitProcess(2)
+            return 2
         }
         val opts = parseOptions(args.drop(1))
-        val code = when (args[0]) {
+        return when (args[0]) {
             "replay" -> cmdReplay(opts)
             "bundle" -> cmdBundle(opts)
             "verify" -> cmdVerify(opts)
             "selfcheck" -> cmdSelfCheck(opts)
             "onwrist" -> cmdOnWrist(opts)
+            "sessions" -> cmdSessions(opts)
+            "extract" -> cmdExtract(opts)
             "takeout" -> cmdTakeout(opts)
             "help", "--help", "-h" -> { usage(); 0 }
             else -> { usage(); 2 }
         }
-        exitProcess(code)
     }
 
     private fun usage() {
@@ -76,6 +86,14 @@ object ReplayMain {
               onwrist   --bundle <f> --session <f>
                         Compare the replayed log against the log the watch stored
                         inside the session file itself.
+              sessions  (--archive <zip> | --sessions <dir>) [--bundle <f>]
+                        [--type T] [--matched]
+                        List the stored activities and what each one matches, so
+                        that a replay can be picked by what it does rather than by
+                        the date on it. --bundle answers for that bundle.
+              extract   --archive <zip> --session <id> [--out <f>]
+                        Write one session out of a backup as JSONL, by id or by
+                        any unique prefix of one.
               takeout   [--input <zip|dir|glob>] [--out <dir|file>] [--existing <backup.zip>]
                         [--map Name=TYPE,...] [--zone <id>] [--no-auto] [--verbose]
                         Turn a Google Health takeout into a backup archive the
@@ -193,6 +211,255 @@ object ReplayMain {
         session.samples.chunked(30).forEach { m.updateAll(it) }
 
         return report("streamed vs batched", streamed, batched)
+    }
+
+    /**
+     * Which stored activities are worth replaying, and which of them lock on.
+     *
+     * The point of this listing is its last column. Replaying a session that never
+     * matches anything shows a minute of "Suche…" and nothing else, and there are
+     * only two ways to know which is which before spending that minute: the
+     * archive remembers what the phone concluded when it ingested each session,
+     * and `--bundle` replays every session against the bundle you are about to put
+     * on the watch — which answers for *that* bundle rather than for the day the
+     * session was recorded, and is therefore the one to trust when picking
+     * something to watch the matcher do.
+     */
+    private fun cmdSessions(o: Map<String, String>): Int {
+        val bundle = o["bundle"]?.let { loadBundle(it) ?: return 2 }
+        val typeFilter = o["type"]?.let { name ->
+            ExerciseType.parse(name.uppercase()) ?: run {
+                System.err.println(
+                    "no such type: $name (${ExerciseType.entries.joinToString(", ") { it.name }})",
+                )
+                return 2
+            }
+        }
+
+        val archive = o["archive"]
+        val rows = when {
+            archive != null -> archiveRows(File(archive), bundle) ?: return 2
+            o["sessions"] != null -> directoryRows(File(o["sessions"]!!), bundle) ?: return 2
+            else -> { usage(); return 2 }
+        }
+
+        val shown = rows
+            .filter { typeFilter == null || it.type == typeFilter }
+            .filter { !o.containsKey("matched") || it.matched }
+            .sortedBy { it.startedAtUtcMs }
+        if (shown.isEmpty()) {
+            println("no sessions to list")
+            return 0
+        }
+
+        // The id column is there to be typed back into `extract`, so it is only
+        // as short as it can be while still naming one session — and it is
+        // measured against every session in the archive rather than against the
+        // ones that survived a filter, because `extract` searches all of them.
+        val width = shortIdWidth(rows.map { it.id })
+        println("%-${width}s  %-16s %-7s %10s %9s  %s".format("id", "started", "type", "distance", "active", "locks onto"))
+        for (r in shown) {
+            println(
+                "%-${width}s  %s %-7s %7.2f km %9s  %s".format(
+                    r.id.take(width),
+                    // In the time zone the session was recorded in, which for a
+                    // holiday's worth of workouts is not this laptop's.
+                    LOCAL_STAMP.withZone(java.time.ZoneOffset.ofTotalSeconds(r.tzOffsetMinutes * 60))
+                        .format(Instant.ofEpochMilli(r.startedAtUtcMs)),
+                    r.type,
+                    r.distanceM / 1000.0,
+                    hms(r.activeMs),
+                    r.verdict,
+                ),
+            )
+        }
+        println("---")
+        println("${shown.size} of ${rows.size} sessions")
+        if (bundle == null) {
+            println("note: verdicts are what was decided when each session was recorded or ingested.")
+            println("      --bundle <f> replays them against a bundle instead, which is the")
+            println("      question you actually care about before sideloading that bundle.")
+        }
+        if (archive != null) {
+            println("extract one with: extract --archive $archive --session <id>")
+        }
+        return 0
+    }
+
+    /**
+     * One session out of a backup, in the watch's own JSONL format.
+     *
+     * The format is the same on both sides of the ZIP (see [Archive]), so this is
+     * a copy rather than a conversion — and what comes out is exactly what
+     * `replay`, `verify` and `tools/emu replay` all read.
+     */
+    private fun cmdExtract(o: Map<String, String>): Int {
+        val archive = o["archive"]?.let { File(it) } ?: run { usage(); return 2 }
+        if (!archive.isFile) { System.err.println("no such file: $archive"); return 2 }
+        val wanted = o["session"] ?: run { usage(); return 2 }
+
+        val reader = try {
+            ArchiveCodec.Reader(archive)
+        } catch (e: Exception) {
+            System.err.println("not a Hecate backup: $archive (${e.message})")
+            return 2
+        }
+        reader.use {
+            val ids = it.database.sessions.map { s -> s.id }
+            // Exact first, then unique prefix: a full UUID is not something anyone
+            // retypes off a listing, and the listing prints the first eight
+            // characters for exactly this reason.
+            val matches = ids.filter { id -> id == wanted }
+                .ifEmpty { ids.filter { id -> id.startsWith(wanted) } }
+            val id = when (matches.size) {
+                0 -> { System.err.println("no session in $archive starts with \"$wanted\""); return 2 }
+                1 -> matches.single()
+                else -> {
+                    System.err.println("\"$wanted\" matches ${matches.size} sessions:")
+                    matches.take(10).forEach { m -> System.err.println("  $m") }
+                    return 2
+                }
+            }
+            val session = it.session(id) ?: run {
+                System.err.println("$id is in the database part but the archive holds no file for it")
+                return 2
+            }
+            val out = o["out"]?.let { path -> File(path) } ?: File("fixtures/$id.jsonl")
+            out.parentFile?.mkdirs()
+            out.writeText(SessionCodec.encodeSession(session))
+            println("$id -> $out (${session.samples.size} samples)")
+            return 0
+        }
+    }
+
+    // --------------------------------------------------- listing the candidates
+
+    private data class SessionRow(
+        val id: String,
+        val startedAtUtcMs: Long,
+        val tzOffsetMinutes: Int,
+        val type: ExerciseType,
+        val distanceM: Double,
+        val activeMs: Long,
+        val verdict: String,
+        val matched: Boolean,
+    )
+
+    /**
+     * Rows from a backup.
+     *
+     * Without a bundle this reads nothing but `database.json`, which already
+     * carries the distance, the duration and what the phone matched — 65 sessions
+     * without parsing a single sample. A `--bundle` is what makes it parse them,
+     * because a replay needs the samples.
+     */
+    private fun archiveRows(file: File, bundle: RouteBundle?): List<SessionRow>? {
+        if (!file.isFile) { System.err.println("no such file: $file"); return null }
+        val reader = try {
+            ArchiveCodec.Reader(file)
+        } catch (e: Exception) {
+            System.err.println("not a Hecate backup: $file (${e.message})")
+            return null
+        }
+        return reader.use {
+            val names = it.database.routes.associate { r -> r.id to r.name }
+            it.database.sessions.map { row ->
+                val replayed = bundle?.let { b -> it.session(row.id)?.let { s -> verdictOf(s, b) } }
+                SessionRow(
+                    id = row.id,
+                    startedAtUtcMs = row.startedAtUtc,
+                    tzOffsetMinutes = row.tzOffsetMinutes,
+                    type = row.exerciseType,
+                    distanceM = row.totalDistanceM,
+                    activeMs = row.activeDurationMs,
+                    verdict = replayed?.text ?: storedVerdict(row, names),
+                    matched = replayed?.matched ?: (row.matchedRouteId != null),
+                )
+            }
+        }
+    }
+
+    /** Rows from a directory of session files, as `fixtures/` holds them. */
+    private fun directoryRows(dir: File, bundle: RouteBundle?): List<SessionRow>? {
+        if (!dir.isDirectory) { System.err.println("not a directory: $dir"); return null }
+        val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        val rows = ArrayList<SessionRow>()
+        for (f in files) {
+            val session = SessionCodec.decodeSession(f.readLines().asSequence())
+            if (session == null) {
+                System.err.println("not a session file, skipped: $f")
+                continue
+            }
+            val replayed = bundle?.let { verdictOf(session, it) }
+            rows.add(
+                SessionRow(
+                    id = session.id,
+                    startedAtUtcMs = session.header.startedAtUtcMs,
+                    tzOffsetMinutes = session.header.tzOffsetMinutes,
+                    type = session.header.exerciseType,
+                    distanceM = Track.of(session)?.totalDistanceM ?: 0.0,
+                    activeMs = session.activeDurationMs,
+                    verdict = replayed?.text ?: ownLogVerdict(session),
+                    matched = replayed?.matched ?: session.matchLog.any { it.event.isCommit },
+                ),
+            )
+        }
+        return rows
+    }
+
+    private data class Verdict(val text: String, val matched: Boolean)
+
+    /** What this bundle does with this session, which is what a replay will show. */
+    private fun verdictOf(session: RecordedSession, bundle: RouteBundle): Verdict {
+        val log = ArrayList<MatchLogEntry>()
+        val states = run(session, bundle, log)
+        val names = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+        val commit = log.firstOrNull { it.event.isCommit }
+        val final = states.lastOrNull()
+        if (commit == null) {
+            return Verdict(if (final?.phase == MatchPhase.UNKNOWN) "unknown" else "no commit", false)
+        }
+        return Verdict(
+            "%s @ %.1f km, t=%.0fs%s".format(
+                names[commit.committedRouteId] ?: "route ${commit.committedRouteId}",
+                commit.travelledM / 1000.0,
+                commit.tOffsetMs / 1000.0,
+                // A route that is committed to and then lost is still worth
+                // replaying — it is the more interesting thing to watch — but you
+                // should know before you start that the name goes away again.
+                if (final?.phase != MatchPhase.COMMITTED) ", lost again" else "",
+            ),
+            matched = true,
+        )
+    }
+
+    /** What the phone concluded about this session when it ingested it. */
+    private fun storedVerdict(row: Archive.Session, names: Map<Long, String>): String {
+        val id = row.matchedRouteId ?: return "-"
+        val name = names[id] ?: "route $id"
+        return row.committedAtM?.let { "%s @ %.1f km".format(name, it / 1000.0) } ?: name
+    }
+
+    /** What the watch itself decided while recording, if it held a bundle then. */
+    private fun ownLogVerdict(session: RecordedSession): String {
+        if (session.header.bundleVersion == null) return "no bundle when recorded"
+        val commit = session.matchLog.firstOrNull { it.event.isCommit } ?: return "no commit"
+        return "route %d @ %.1f km, t=%.0fs".format(
+            commit.committedRouteId ?: commit.routeId ?: -1L,
+            commit.travelledM / 1000.0,
+            commit.tOffsetMs / 1000.0,
+        )
+    }
+
+    /** "42:15", or "1:04:33" once it needs the hours. */
+    private fun hms(ms: Long): String {
+        val total = ms / 1000
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val s = total % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
     }
 
     // ------------------------------------------------------------------- helpers
@@ -390,6 +657,28 @@ object ReplayMain {
             name.lowercase() to parsed
         }
     }
+
+    /** Enough of a UUID to pick one session out of a few hundred by eye, and the
+     *  length the id column starts at. */
+    private const val SHORT_ID = 8
+
+    /**
+     * The shortest prefix length that still tells every one of [ids] apart, never
+     * below [SHORT_ID].
+     *
+     * A listing whose ids are ambiguous is worse than one with long ids: the
+     * whole column exists so that it can be pasted into `extract --session`, and
+     * `extract` refuses a prefix that matches two sessions.
+     */
+    private fun shortIdWidth(ids: List<String>): Int {
+        val longest = ids.maxOfOrNull { it.length } ?: SHORT_ID
+        for (n in SHORT_ID..longest) {
+            if (ids.distinctBy { it.take(n) }.size == ids.size) return n
+        }
+        return longest
+    }
+
+    private val LOCAL_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     private fun loadBundle(path: String?): RouteBundle? {
         if (path == null) { usage(); return null }

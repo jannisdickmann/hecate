@@ -107,6 +107,23 @@ interface SessionDao {
     @Query("UPDATE session SET matched_route_id = NULL, match_coverage = NULL WHERE matched_route_id = :routeId")
     suspend fun clearMatchesFor(routeId: Long)
 
+    /**
+     * Correct the sport a recording was filed under.
+     *
+     * The only writer of `exercise_type` other than ingest, and it exists because
+     * the watch cannot know it guessed wrong: a hike started with the Spaziergang
+     * button is a walk for ever, and it drags a route's identity with it — type
+     * is a hard partition in clustering ([de.hecate.core.cluster.CoverageMetric]
+     * scores a cross-type pair at 1.0), so one mistyped session sits in the wrong
+     * cluster forming the wrong route.
+     *
+     * Targeted rather than an `@Update` of the row: everything else on a session
+     * is a fact about the recording, and an entity write would let a stale copy
+     * held by a screen quietly put the rest of them back.
+     */
+    @Query("UPDATE session SET exercise_type = :type WHERE id = :id")
+    suspend fun setExerciseType(id: String, type: ExerciseType)
+
     @Query("DELETE FROM session WHERE id = :id")
     suspend fun delete(id: String)
 

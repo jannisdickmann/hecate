@@ -92,6 +92,10 @@ data class RecorderUiState(
     val pendingUploads: Int = 0,
     val bundleVersion: Long = 0,
     val message: String? = null,
+    /** Set while a stored session is being replayed instead of recorded (§6.5).
+     *  Always null in a release build, and shown on the Live page so that a
+     *  screenshot of a replay can never be mistaken for one of a workout. */
+    val replayLabel: String? = null,
     /** When [message] was set, so the live screen can retire it once it has been
      *  on the wrist long enough to have been read. */
     val messageAtMs: Long = 0,

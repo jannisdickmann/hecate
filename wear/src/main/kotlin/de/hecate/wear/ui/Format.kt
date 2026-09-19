@@ -27,6 +27,16 @@ object Format {
         else String.format(DE, "%d:%02d", m, s)
     }
 
+    /**
+     * What [duration] just counted in, which is not always minutes.
+     *
+     * The string switches from `m:ss` to `h:mm:ss` at the hour, so one fixed
+     * unit would be a lie for half the workouts this app records — "5:12:35 min"
+     * for a walk that took five hours. The unit follows the format.
+     */
+    fun durationUnit(millis: Long): String =
+        if ((millis / 1000).coerceAtLeast(0) >= 3600) "h" else "min"
+
     /** Just the number of [distance], for the metric grid, which puts the unit
      *  on its own line. Kept beside [distanceUnit] so the two cannot disagree
      *  about where the kilometre boundary is. */
