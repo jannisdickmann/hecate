@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -463,6 +464,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
     val peakHr by vm.peakHr.collectAsStateWithLifecycle()
     val d = detail ?: return
     var confirmDelete by remember { mutableStateOf(false) }
+    var editingType by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -485,7 +487,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         )
         Spacer(Modifier.height(12.dp))
 
-        KeyValue("Art", d.summary.exerciseType.label)
+        ActivityTypeRow(d.summary.exerciseType) { editingType = true }
         KeyValue("Dauer (aktiv)", Format.duration(d.summary.activeDurationMs))
         KeyValue("Distanz", Format.distance(d.summary.totalDistanceM))
         KeyValue("Ø Herzfrequenz", "${Format.hr(d.summary.avgHr)} bpm")
@@ -554,6 +556,14 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
             Text("Aufzeichnung löschen")
         }
         Spacer(Modifier.height(24.dp))
+    }
+
+    if (editingType) {
+        ActivityTypeDialog(
+            current = d.summary.exerciseType,
+            onPick = { editingType = false; vm.setExerciseType(d.summary.id, it) },
+            onDismiss = { editingType = false },
+        )
     }
 
     if (confirmDelete) {
@@ -1083,6 +1093,90 @@ private fun ActivityIcon(
         contentDescription = type.label,
         modifier = modifier,
         tint = tint,
+    )
+}
+
+/**
+ * The "Art" row, and the one fact on this screen that can be corrected.
+ *
+ * The watch records what it was told to record, so the button pressed at the
+ * trailhead is the only thing about a workout that cannot be fixed afterwards —
+ * and it is the easiest to get wrong, Spaziergang and Wandern being one tap
+ * apart. Shaped like the [KeyValue] rows around it rather than lifted into a
+ * control of its own: it is read far more often than it is changed, and a row
+ * that already says "Art · Wandern" only has to become touchable.
+ */
+@Composable
+private fun ActivityTypeRow(current: ExerciseType, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Art",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(current.label, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Filled.Edit,
+                contentDescription = "Art ändern",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Pick the sport a recording should have been filed under.
+ *
+ * All five are offered rather than only the confusable pairs, because which
+ * pairs are confusable is a fact about somebody's morning and not about this
+ * app. Choosing applies immediately and closes — there is no second confirm
+ * step, since the change is reversible by making it again, which is not true of
+ * the delete below it.
+ *
+ * The note underneath is not a warning. Re-clustering is what the edit is *for*,
+ * not a consequence of it, and the only part the user cannot infer is that it
+ * travels: the rebuilt bundle goes to the watch, and Health Connect is rewritten
+ * to agree.
+ */
+@Composable
+private fun ActivityTypeDialog(
+    current: ExerciseType,
+    onPick: (ExerciseType) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Art der Aufzeichnung") },
+        text = {
+            Column {
+                ExerciseType.entries.forEach { type ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(type) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = type == current, onClick = { onPick(type) })
+                        Spacer(Modifier.width(4.dp))
+                        ActivityIcon(type, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(12.dp))
+                        Text(type.label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Quiet(
+                    "Routen werden je Art getrennt gebildet, deshalb werden sie neu berechnet. " +
+                        "Das neue Bündel geht an die Uhr, der Eintrag in Health Connect wird " +
+                        "überschrieben.",
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }
 

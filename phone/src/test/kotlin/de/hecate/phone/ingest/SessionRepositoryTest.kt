@@ -2,6 +2,7 @@ package de.hecate.phone.ingest
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionSource
@@ -185,5 +186,46 @@ class SessionRepositoryTest {
         // The foreign key is only enforced because the database asks for it; a
         // build that stopped asking would leak a row per sample per deletion.
         assertEquals(0, db.sessions().samples("s-1").size)
+    }
+
+    /**
+     * Refiling a recording under another sport, which is the one field a user may
+     * correct after the fact. Worth a test although it is a one-line UPDATE: the
+     * column is an enum stored by name through a non-null converter, so a value
+     * that fails to round trip throws on read rather than quietly coming back as
+     * something else.
+     */
+    @Test
+    fun `a recording can be refiled under another sport`(): Unit = runBlocking {
+        repository.ingest(Fixtures.recorded("s-type", type = ExerciseType.WALKING))
+        assertEquals(ExerciseType.WALKING, db.sessions().byId("s-type")?.exerciseType)
+
+        db.sessions().setExerciseType("s-type", ExerciseType.HIKING)
+
+        assertEquals(ExerciseType.HIKING, db.sessions().byId("s-type")?.exerciseType)
+    }
+
+    /**
+     * And it changes nothing else. The type is a correction to one fact about the
+     * workout; the samples, the source and the times are facts about the
+     * recording and are not the user's to revise.
+     */
+    @Test
+    fun `refiling leaves the rest of the recording alone`(): Unit = runBlocking {
+        repository.ingest(Fixtures.recorded("s-keep", type = ExerciseType.WALKING, sampleCount = 30))
+        val before = db.sessions().byId("s-keep")
+        assertNotNull(before)
+
+        db.sessions().setExerciseType("s-keep", ExerciseType.HIKING)
+
+        val after = db.sessions().byId("s-keep")
+        assertNotNull(after)
+        assertEquals(before.startedAtUtc, after.startedAtUtc)
+        assertEquals(before.activeDurationMs, after.activeDurationMs)
+        assertEquals(before.totalDistanceM, after.totalDistanceM)
+        assertEquals(before.source, after.source)
+        assertEquals(before.tzOffsetMinutes, after.tzOffsetMinutes)
+        assertEquals(before.hcWriteState, after.hcWriteState)
+        assertEquals(30, db.sessions().samples("s-keep").size)
     }
 }
