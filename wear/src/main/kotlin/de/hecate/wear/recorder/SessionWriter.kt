@@ -5,6 +5,7 @@ import android.util.Log
 import de.hecate.core.Tuning
 import de.hecate.core.io.SessionCodec
 import de.hecate.core.io.SessionRecord
+import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEvent
@@ -46,6 +47,10 @@ class SessionWriter(val file: File) {
     fun writeEvent(event: SessionEvent) = write(SessionRecord.EventLine(event), forceSync = true)
 
     fun writeMatch(entry: MatchLogEntry) = write(SessionRecord.MatchLine(entry))
+
+    /** One heart-rate reading, at the time the sensor took it. Not synced on its
+     *  own: a rate is worth a line, not a flush. */
+    fun writeRate(rate: HeartRate) = write(SessionRecord.RateLine(rate))
 
     fun writeFooter(footer: SessionFooter) = write(SessionRecord.Footer(footer), forceSync = true)
 

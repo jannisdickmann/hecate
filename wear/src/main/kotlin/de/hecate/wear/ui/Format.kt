@@ -94,11 +94,19 @@ object Format {
         else String.format(DE, "%s%d s", sign, a)
     }
 
-    /** Wall-clock arrival time, "Ankunft 18:42". */
-    fun arrival(nowMs: Long, secondsFromNow: Double?): String {
-        if (secondsFromNow == null || !secondsFromNow.isFinite() || secondsFromNow < 0) return "–"
-        val at = nowMs + (secondsFromNow * 1000).toLong()
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = at }
+    /**
+     * Wall-clock arrival time, "18:42", from the instant it was worked out for.
+     *
+     * Takes an instant rather than "seconds from now" for a reason that cost a
+     * real ride its credibility: the display turned seconds into a clock time on
+     * every recomposition, so an arrival that had stopped being updated — after
+     * the matcher was disabled — walked a minute further into the future for
+     * every minute the user looked at it. A fixed instant is either right or
+     * visibly stale, which are the only two honest options.
+     */
+    fun arrival(atUtcMs: Long?): String {
+        if (atUtcMs == null || atUtcMs <= 0) return "–"
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = atUtcMs }
         return String.format(
             DE, "%02d:%02d",
             cal.get(java.util.Calendar.HOUR_OF_DAY),

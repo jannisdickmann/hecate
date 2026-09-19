@@ -105,7 +105,7 @@ object Fixtures {
     fun route(
         id: Long,
         name: String,
-        priority: Int = 5,
+        priority: Int = de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY,
         medoidSessionId: String,
         nameIsCustom: Boolean = true,
     ) = RouteEntity(

@@ -236,12 +236,27 @@ interface HeatmapDao {
     suspend fun put(heatmap: HeatmapEntity)
 
     @Query("SELECT * FROM heatmap WHERE id = :id")
-    suspend fun get(id: Int = HeatmapEntity.SINGLETON): HeatmapEntity?
+    suspend fun get(id: Int = HeatmapEntity.CARD): HeatmapEntity?
 
     /** Observed by the routes screen so the picture refreshes itself when a
      *  re-clustering finishes, rather than on the next visit to the panel. */
     @Query("SELECT * FROM heatmap WHERE id = :id")
-    fun watch(id: Int = HeatmapEntity.SINGLETON): Flow<HeatmapEntity?>
+    fun watch(id: Int = HeatmapEntity.CARD): Flow<HeatmapEntity?>
+}
+
+/**
+ * The meta keys that hold a user preference rather than bookkeeping.
+ *
+ * In `meta` rather than in a `DataStore` or a `SharedPreferences` file because
+ * it is one number and the app already has a key/value table that the backup
+ * archive carries: a setting stored anywhere else would be a setting that does
+ * not survive a restore, and finding that out costs the user the setting.
+ */
+object Settings {
+    /** The heart rate the intensity zones are measured against [bpm]. Absent
+     *  until the user changes it; [de.hecate.core.Tuning.DEFAULT_PEAK_HR_BPM]
+     *  stands in until then. */
+    const val PEAK_HR_BPM = "peak_hr_bpm"
 }
 
 @Dao
@@ -251,6 +266,13 @@ interface MetaDao {
 
     @Query("SELECT value FROM meta WHERE key = :key")
     suspend fun get(key: String): String?
+
+    /** As [get], watched, so a setting changed on one screen recolours another
+     *  without either knowing about the other. A list because the row may not
+     *  exist, and a query for a missing single value is an empty result rather
+     *  than a null one. */
+    @Query("SELECT value FROM meta WHERE key = :key")
+    fun watch(key: String): Flow<List<String>>
 
     /** Every row, for the backup archive. */
     @Query("SELECT * FROM meta")

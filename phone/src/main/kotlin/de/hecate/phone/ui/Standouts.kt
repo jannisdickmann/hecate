@@ -13,7 +13,7 @@ data class Standout(val fast: Boolean = false, val highHr: Boolean = false) {
 }
 
 /**
- * Marks the upper quartile of speed and of average heart rate, per route.
+ * Marks the top of the range of speed and of average heart rate, per route.
  *
  * Pure Kotlin with no Android in it, in the spirit of NFR-4 — it is the only
  * arithmetic in the phone UI, and the kind whose bugs are invisible because a
@@ -22,20 +22,31 @@ data class Standout(val fast: Boolean = false, val highHr: Boolean = false) {
 object Standouts {
 
     /**
-     * Recordings a route needs before its upper quartile means anything.
+     * Recordings a route needs before ranking within it means anything.
      *
-     * A route exists at three members (§5.6), and the 75th percentile of three
-     * values is "the best one" wearing a statistician's hat. Four is the first
-     * count at which the top quartile is genuinely a quarter — and even then it
-     * is one recording, so this marks a personal best against the route and is
-     * not claiming more than that.
+     * A route exists at three members (§5.6), and a percentile of three values is
+     * "the best one" wearing a statistician's hat. Four is the first count at
+     * which the threshold falls between two recordings rather than on one — and
+     * even then only the best of them clears it, so this marks a personal best
+     * against the route and is not claiming more than that.
      */
     const val MIN_MEMBERS = 4
 
-    /** Where "stands out" begins. 0.75 marks roughly the best in four; raise it
-     *  to 0.9 if a quarter of the list turns out to be too many to mean
-     *  anything — see OPEN-POINTS §3.7. */
-    const val QUARTILE = 0.75
+    /**
+     * Where "stands out" begins.
+     *
+     * The 85th percentile, raised from the 75th: a quarter of a long route's
+     * history was too many to mean anything — on a commute ridden sixty times,
+     * fifteen rows were emphasised and the eye stopped reading the emphasis as
+     * emphasis at all. 0.85 marks roughly the best in seven, which is a mark
+     * often enough to be worth noticing and rare enough to notice.
+     *
+     * Fewer marks would be invisible if they stayed a shade of colour and a
+     * heavier weight, which is why the arrow came with the change: a mark that
+     * appears on one row in seven has to be findable by scanning rather than by
+     * comparing two rows side by side.
+     */
+    const val PERCENTILE = 0.85
 
     /**
      * Group by route, rank within it, keyed by recording id.
@@ -50,14 +61,14 @@ object Standouts {
         for ((routeId, members) in sessions.groupBy { it.matchedRouteId }) {
             if (routeId == null || members.size < MIN_MEMBERS) continue
 
-            val fastCut = percentile(members.mapNotNull(::speedOf), QUARTILE)
+            val fastCut = percentile(members.mapNotNull(::speedOf), PERCENTILE)
 
             // Heart rate is ranked only over the members that have one, and only
             // if enough of them do: a route half of whose recordings predate a
             // heart rate strap must not let those absences drag the threshold
             // down to where everything qualifies.
             val hrs = members.mapNotNull { it.avgHr }
-            val hrCut = if (hrs.size >= MIN_MEMBERS) percentile(hrs, QUARTILE) else null
+            val hrCut = if (hrs.size >= MIN_MEMBERS) percentile(hrs, PERCENTILE) else null
 
             for (m in members) {
                 val fast = fastCut != null && speedOf(m).let { it != null && it >= fastCut }

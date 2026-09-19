@@ -1,5 +1,6 @@
 package de.hecate.core.io
 
+import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
@@ -37,6 +38,17 @@ sealed interface SessionRecord {
     @Serializable
     @SerialName("f")
     data class Footer(val v: SessionFooter) : SessionRecord
+
+    /**
+     * One heart-rate reading at its own time.
+     *
+     * Separate from [SampleLine] because the sensors are separate: a rate that
+     * arrives between two positions, or in a delivery that carried none, used to
+     * have nowhere to go and was dropped. See [HeartRate].
+     */
+    @Serializable
+    @SerialName("r")
+    data class RateLine(val v: HeartRate) : SessionRecord
 }
 
 /**
@@ -80,6 +92,7 @@ object SessionCodec {
         val samples = ArrayList<Sample>()
         val events = ArrayList<SessionEvent>()
         val matches = ArrayList<MatchLogEntry>()
+        val rates = ArrayList<HeartRate>()
         for (line in lines) {
             when (val r = decodeLineOrNull(line)) {
                 is SessionRecord.Header -> if (header == null) header = r.v
@@ -87,12 +100,14 @@ object SessionCodec {
                 is SessionRecord.EventLine -> events.add(r.v)
                 is SessionRecord.MatchLine -> matches.add(r.v)
                 is SessionRecord.Footer -> footer = r.v
+                is SessionRecord.RateLine -> rates.add(r.v)
                 null -> Unit
             }
         }
         val h = header ?: return null
         samples.sortBy { it.tOffsetMs }
-        return RecordedSession(h, samples, events, footer, matches)
+        rates.sortBy { it.tOffsetMs }
+        return RecordedSession(h, samples, events, footer, matches, rates)
     }
 
     fun encodeSession(session: RecordedSession): String = buildString {
@@ -100,6 +115,7 @@ object SessionCodec {
         for (s in session.samples) appendLine(encodeLine(SessionRecord.SampleLine(s)))
         for (e in session.events) appendLine(encodeLine(SessionRecord.EventLine(e)))
         for (m in session.matchLog) appendLine(encodeLine(SessionRecord.MatchLine(m)))
+        for (r in session.heartRates) appendLine(encodeLine(SessionRecord.RateLine(r)))
         session.footer?.let { appendLine(encodeLine(SessionRecord.Footer(it))) }
     }
 }

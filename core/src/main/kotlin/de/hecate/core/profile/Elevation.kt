@@ -19,8 +19,16 @@ import de.hecate.core.model.Sample
  */
 object Elevation {
 
-    /** One point of the profile: how far along, and how high. */
-    data class Point(val distanceM: Double, val altM: Double)
+    /**
+     * One point of the profile: how far along, how high, and how hard.
+     *
+     * [hrBpm] is along for the ride rather than part of the arithmetic — nothing
+     * here reads it — and it is here so that thinning the series for a chart
+     * cannot separate a point from the effort that was being made at it. The
+     * screen colours the profile by heart rate (A.21), and a parallel list would
+     * have to be thinned in lock-step with this one by every caller.
+     */
+    data class Point(val distanceM: Double, val altM: Double, val hrBpm: Double? = null)
 
     /**
      * What the detail screens show beside the chart.
@@ -122,7 +130,7 @@ object Elevation {
             previous = here
             val alt = cleaned[i]
             if (alt.isNaN()) continue
-            out.add(Point(travelled, alt))
+            out.add(Point(travelled, alt, usable[i].hrBpm?.takeIf { it > 0 }?.toDouble()))
         }
         return out
     }
@@ -161,25 +169,8 @@ object Elevation {
      * The other rounding worth knowing about is a sharp apex, which a median
      * clips by about half a window's worth of climb — 3 m on a 300 m hill.
      */
-    fun despike(alts: DoubleArray, window: Int = Tuning.ELEVATION_MEDIAN_WINDOW): DoubleArray {
-        val n = alts.size
-        if (n < 3 || window < 3) return alts
-        val w = minOf(window, n)
-        val out = DoubleArray(n)
-        val scratch = DoubleArray(w)
-        for (i in 0 until n) {
-            if (alts[i].isNaN()) { out[i] = Double.NaN; continue }
-            // Centred where there is room, slid inward at the ends, always w wide.
-            val from = (i - w / 2).coerceIn(0, n - w)
-            var k = 0
-            for (j in from until from + w) if (!alts[j].isNaN()) scratch[k++] = alts[j]
-            if (k == 0) { out[i] = alts[i]; continue }
-            val slice = scratch.copyOf(k)
-            slice.sort()
-            out[i] = if (k % 2 == 1) slice[k / 2] else (slice[k / 2 - 1] + slice[k / 2]) / 2.0
-        }
-        return out
-    }
+    fun despike(alts: DoubleArray, window: Int = Tuning.ELEVATION_MEDIAN_WINDOW): DoubleArray =
+        Series.rollingMedian(alts, window)
 
     /**
      * A route's profile from the per-bin medians [ProfileBuilder] produced.
@@ -188,39 +179,24 @@ object Elevation {
      * the chart draws what is known, and a gap in the middle of a route is a fact
      * about the data worth seeing.
      */
-    fun ofBins(medianAltM: List<Double?>, binM: Double): List<Point> =
+    fun ofBins(
+        medianAltM: List<Double?>,
+        binM: Double,
+        medianHr: List<Double?> = emptyList(),
+    ): List<Point> =
         medianAltM.mapIndexedNotNull { i, alt ->
-            alt?.takeIf { it.isFinite() }?.let { Point(i * binM, it) }
+            alt?.takeIf { it.isFinite() }?.let {
+                Point(i * binM, it, medianHr.getOrNull(i)?.takeIf { hr -> hr.isFinite() && hr > 0 })
+            }
         }
 
     /**
      * Thin a series down to at most [max] points for drawing.
      *
-     * An hour-long ride is 3600 samples and a phone chart is a few hundred pixels
-     * wide, so most of them land on a pixel that is already painted. Every bucket
-     * keeps its *highest* and *lowest* point rather than an average, because the
-     * shape of a ridge is the whole reason to look at the chart and averaging is
-     * exactly what flattens it.
+     * [Series.thin] does the work, and does it for every chart in the app; this
+     * only says that the thing being plotted is the altitude and the thing that
+     * orders it is the distance.
      */
-    fun simplify(points: List<Point>, max: Int): List<Point> {
-        if (points.size <= max || max < 4) return points
-        val buckets = max / 2
-        val per = points.size.toDouble() / buckets
-        val out = ArrayList<Point>(max)
-        for (b in 0 until buckets) {
-            val from = (b * per).toInt()
-            val to = (((b + 1) * per).toInt()).coerceAtMost(points.size)
-            if (from >= to) continue
-            var lo = points[from]
-            var hi = points[from]
-            for (i in from until to) {
-                val p = points[i]
-                if (p.altM < lo.altM) lo = p
-                if (p.altM > hi.altM) hi = p
-            }
-            // In the order they were travelled, so the line never doubles back.
-            if (lo.distanceM <= hi.distanceM) { out.add(lo); out.add(hi) } else { out.add(hi); out.add(lo) }
-        }
-        return out
-    }
+    fun simplify(points: List<Point>, max: Int): List<Point> =
+        Series.thin(points, max, { it.altM }, { it.distanceM })
 }

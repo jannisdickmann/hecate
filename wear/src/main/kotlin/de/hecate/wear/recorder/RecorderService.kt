@@ -16,8 +16,12 @@ import androidx.health.services.client.data.LocationAccuracy
 import androidx.health.services.client.data.LocationAvailability
 import androidx.health.services.client.data.LocationData
 import androidx.health.services.client.data.SampleDataPoint
+import de.hecate.core.Tuning
+import de.hecate.core.display.RouteBelief
+import de.hecate.core.display.RouteBeliefKind
+import de.hecate.core.display.routeBelief
 import de.hecate.core.model.ExerciseType
-import de.hecate.core.model.MatchPhase
+import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchState
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
@@ -29,6 +33,7 @@ import de.hecate.wear.AppGraph
 import de.hecate.wear.notify.Haptics
 import de.hecate.wear.notify.OngoingNotification
 import de.hecate.wear.ui.Format
+import de.hecate.wear.ui.Wording
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +42,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.TimeZone
 import java.util.UUID
 
@@ -79,6 +86,60 @@ class RecorderService : Service() {
     private var lastNotificationUpdateMs = 0L
     private var sawFirstLocation = false
     private var samplesWritten = 0
+
+    /**
+     * How much of this session has been spent paused, and since when, both in
+     * the session's own monotonic offset.
+     *
+     * The active duration Health Services reports is a *checkpoint* — a value
+     * that was true at some instant — and it does not arrive with every batch.
+     * Stamping it on a sample therefore stamped hundreds of consecutive samples
+     * with the same number, and after an auto-pause with a smaller one than
+     * before: four fifths of the intervals in a real ride had no time in them,
+     * and the clock stepped backwards three times. The total was always right,
+     * because the footer is written at the end from a checkpoint that is current
+     * by then; the *series* never was, and the series is what a speed chart and
+     * a route's per-bin median times are made of.
+     *
+     * So each sample's active time is now derived here from the sample's own
+     * offset, which comes from the monotonic clock and cannot jump, minus what
+     * these two fields know about pauses. The phone repairs older recordings the
+     * same way on the way out (`ActiveClock`); this is so that new ones do not
+     * need repairing.
+     */
+    private var pausedTotalMs = 0L
+    private var pausedSinceMs: Long? = null
+
+    /**
+     * The last heart rate Health Services delivered, and when.
+     *
+     * A sample is written per *position*, and the rate stamped on it used to be
+     * whatever rate happened to arrive in the same batch — so on two real rides
+     * only 28 % and 36 % of samples carried one, and the phone drew a ride whose
+     * effort looked unmeasured for two thirds of its length. The sensor had not
+     * stopped; the batches simply do not line up.
+     *
+     * A rate is therefore carried forward onto later samples for as long as it
+     * is still a fair description of the effort
+     * ([de.hecate.core.Tuning.HR_HOLD_MS]), and no longer: past that the strap
+     * really has lost contact, and a sample with no rate is the honest record of
+     * it. The phone holds older recordings the same way on the way out.
+     */
+    private var lastHrBpm: Int? = null
+    private var lastHrAtMs = 0L
+
+    /** The last reading written, and how many — the second only so the log can
+     *  say at the end what the sensor actually gave, which is the number nobody
+     *  had until a ride came back with a fifth of it. */
+    private var lastRateAtMs = -1L
+    private var ratesWritten = 0
+
+    /** The last speed Health Services delivered, and when, in session time. */
+    private var lastSpeedKmh: Double? = null
+    private var lastSpeedAtMs = 0L
+
+    /** Serialises [endSession]; see there for what happens without it. */
+    private val endLock = Mutex()
 
     private val bus get() = AppGraph.recorder
 
@@ -159,6 +220,12 @@ class RecorderService : Service() {
         // day and the hour (§5.6), so replaying Tuesday's commute as a Sunday
         // afternoon would ask it a different question than the one under test.
         startedElapsedNs = SystemClock.elapsedRealtimeNanos()
+        pausedTotalMs = 0L
+        pausedSinceMs = null
+        lastHrBpm = null
+        lastHrAtMs = 0L
+        lastRateAtMs = -1L
+        ratesWritten = 0
         val startedAtUtcMs = header?.startedAtUtcMs ?: System.currentTimeMillis()
         val tzOffsetMinutes = header?.tzOffsetMinutes
             ?: (TimeZone.getDefault().getOffset(startedAtUtcMs) / 60_000)
@@ -188,19 +255,33 @@ class RecorderService : Service() {
         }
         if (matcher?.disabled == true) recordEvent(SessionEventType.MATCHER_DISABLED)
 
+        val canLocate = source.canRecordLocation()
         bus.update {
             RecorderUiState(
                 // A replay has no sensor to warm up and no fix to wait for.
                 phase = if (replay == null) RecorderPhase.PREPARING else RecorderPhase.ACTIVE,
                 exerciseType = exerciseType,
                 sessionId = id,
+                startedAtUtcMs = startedAtUtcMs,
                 bundleVersion = bundle.version,
                 pendingUploads = it.pendingUploads,
+                // A replay needs no permission and has nothing to ask for one.
+                locationPermission = canLocate || replay != null,
+                // The header is a write, and dating the first one from here is
+                // what keeps "nothing has been written for a minute and a half"
+                // from being true of every session before its first sample.
+                lastWriteAtMs = System.currentTimeMillis(),
                 replayLabel = replay?.label,
+                // Its first fix is dated from now for the same reason the first
+                // write is, and more urgently: [startedAtUtcMs] is the
+                // *recording's* start, so the health line's "never had a fix, so
+                // measure from the beginning" fallback would open every replay of
+                // a week-old session by reporting a week without GPS.
                 gpsReady = replay != null,
-                locationAvailable = replay != null,
+                lastFixAtMs = if (replay != null) System.currentTimeMillis() else 0L,
             )
         }
+        if (matcher?.disabled == true) disableMatcher()
 
         if (replay != null) {
             Haptics.tick(this)
@@ -211,8 +292,8 @@ class RecorderService : Service() {
         // PREPARING: warm the sensors and wait for a fix before the session starts,
         // so the first few hundred metres — the ones the matcher needs most — are
         // not spent acquiring GNSS.
-        if (!source.canRecordLocation()) {
-            bus.update { it.copy(message = getString(de.hecate.wear.R.string.no_location_permission)) }
+        if (!canLocate) {
+            say(getString(de.hecate.wear.R.string.no_location_permission))
             Log.w(TAG, "Keine Standortberechtigung — Aufzeichnung ohne GPS")
         }
         runCatching { source.prepare(type) }
@@ -223,7 +304,7 @@ class RecorderService : Service() {
                 // said it was recording. Say so, and let the timeout below start
                 // the session anyway.
                 Log.w(TAG, "prepareExercise fehlgeschlagen", it)
-                bus.update { s -> s.copy(message = getString(de.hecate.wear.R.string.warmup_failed)) }
+                say(getString(de.hecate.wear.R.string.warmup_failed))
             }
         Haptics.tick(this)
         armPrepareTimeout(id)
@@ -248,7 +329,7 @@ class RecorderService : Service() {
             if (sessionId != id || bus.state.value.phase != RecorderPhase.PREPARING) return@launch
             Log.w(TAG, "Kein Fix nach ${PREPARE_TIMEOUT_MS / 1000}s — Start ohne GPS")
             recordEvent(SessionEventType.GPS_LOST, "kein Fix beim Start")
-            bus.update { it.copy(message = getString(de.hecate.wear.R.string.started_without_gps)) }
+            say(getString(de.hecate.wear.R.string.started_without_gps))
             startExercise()
         }
     }
@@ -260,7 +341,7 @@ class RecorderService : Service() {
             .onSuccess { bus.update { it.copy(phase = RecorderPhase.ACTIVE) } }
             .onFailure {
                 Log.e(TAG, "startExercise fehlgeschlagen", it)
-                bus.update { s -> s.copy(message = "Start fehlgeschlagen") }
+                say("Start fehlgeschlagen")
                 endSession(SessionEndReason.SERVICE_DIED)
             }
     }
@@ -334,10 +415,30 @@ class RecorderService : Service() {
         maybeUpdateNotification()
     }
 
-    private suspend fun endSession(reason: SessionEndReason) {
-        val id = sessionId ?: return
+    /**
+     * Close the session file, decide whether it was worth keeping, and hand it
+     * to the uploader.
+     *
+     * **Single-flight, and that is not defensive programming.** Two things end a
+     * recording — the user pressing Beenden, and Health Services reporting the
+     * exercise ended — and on a real stop both arrive. The old guard read
+     * `sessionId` at the top and cleared it eight lines and three suspension
+     * points later, so both callers walked straight past it on different
+     * threads; the first consumed the sample counter and zeroed it, the second
+     * then read zero, concluded the recording was empty, and *deleted the file*.
+     * Seen on the emulator with 82 positions and 100 heart rates in it.
+     *
+     * The lock closes the window and clearing the id inside it makes the second
+     * call a no-op rather than a second ending.
+     */
+    private suspend fun endSession(reason: SessionEndReason) = endLock.withLock {
+        val id = sessionId ?: return@withLock
+        // Claimed before the first suspension point: anything else that arrives
+        // now finds nothing to end.
+        sessionId = null
         val replaying = feed != null
-        // Null when a replay is ending itself, having just run out of samples.
+        // Null when a replay is ending itself, having just run out of samples;
+        // cancelling here would then cancel the coroutine doing the ending.
         replayJob?.cancel()
         replayJob = null
         bus.update { it.copy(phase = RecorderPhase.ENDING) }
@@ -359,22 +460,33 @@ class RecorderService : Service() {
         writer = null
         matcher = null
         feed = null
-        sessionId = null
         lastState = null
         sawFirstLocation = false
 
+        // What the two sensors actually gave, side by side. The heart rate is
+        // here because nobody had that number until a ride came back with a
+        // fifth of one, and a count in the log is how the next ride says so
+        // without anyone having to unpack a backup to find out.
+        //
         // A recording with no positions in it is not a recording. Offering it to
         // the phone is worse than useless: ingest refuses anything under two
         // samples, a refusal is deliberately not acknowledged so that a bug here
         // cannot throw data away, and the file therefore stays on the watch and
         // is re-offered for ever. Three of these had accumulated before anyone
-        // noticed. Nothing is lost by dropping it — there was nothing in it.
+        // noticed. Nothing is lost by dropping it — there was nothing in it,
+        // which is a claim this code has to be *sure* of: see the lock above.
+        //
+        // Never for a replay, which is surer still: it opened no file, and the id
+        // it runs under is the stored session's own, so discarding "its" file
+        // would delete the recording being replayed.
+        Log.i(TAG, "Sitzung $id: $samplesWritten Messpunkte, $ratesWritten Pulswerte")
         val empty = samplesWritten < MIN_USEFUL_SAMPLES && !replaying
         samplesWritten = 0
+        ratesWritten = 0
         if (empty) {
             Log.w(TAG, "Sitzung $id ohne Messpunkte — verworfen statt hochgeladen")
             AppGraph.sessions.discard(id)
-            bus.update { it.copy(message = getString(de.hecate.wear.R.string.nothing_recorded)) }
+            say(getString(de.hecate.wear.R.string.nothing_recorded))
         }
 
         Haptics.tick(this)
@@ -394,8 +506,29 @@ class RecorderService : Service() {
         w.writeEvent(SessionEvent(tOffsetMs = nowOffsetMs(), type = type, note = note))
     }
 
+    /**
+     * Put something in front of the user.
+     *
+     * Every one of these used to be rendered on the *start* screen only, so a
+     * warm-up that failed, a start that failed, or a recording running without
+     * location permission was something the user found out about after they had
+     * finished. The live screen renders it too now, and the timestamp is what
+     * lets it retire itself once it has been on the wrist long enough to be read.
+     */
+    private fun say(text: String) {
+        bus.update { it.copy(message = text, messageAtMs = System.currentTimeMillis()) }
+    }
+
     private fun nowOffsetMs(): Long =
         (SystemClock.elapsedRealtimeNanos() - startedElapsedNs) / 1_000_000
+
+    /** Active time at a sample taken [tOffsetMs] into the session. A batch can
+     *  arrive after a pause began, so the pause in progress counts only from
+     *  where it started — and never to less than zero. */
+    private fun activeAt(tOffsetMs: Long): Long {
+        val inProgress = pausedSinceMs?.let { (tOffsetMs - it).coerceAtLeast(0) } ?: 0L
+        return (tOffsetMs - pausedTotalMs - inProgress).coerceAtLeast(0)
+    }
 
     // ----------------------------------------------------------------- callback
 
@@ -404,7 +537,7 @@ class RecorderService : Service() {
 
         override fun onRegistrationFailed(throwable: Throwable) {
             Log.e(TAG, "Health Services Registrierung fehlgeschlagen", throwable)
-            bus.update { it.copy(message = "Health Services nicht verfügbar") }
+            say("Health Services nicht verfügbar")
         }
 
         override fun onUpdate(update: ExerciseUpdate) {
@@ -416,7 +549,7 @@ class RecorderService : Service() {
                 val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
                     availability == LocationAvailability.ACQUIRED_UNTETHERED
                 val was = bus.state.value.gpsReady
-                bus.update { it.copy(gpsReady = ready, locationAvailable = ready) }
+                bus.update { it.copy(gpsReady = ready) }
                 if (!was && ready) {
                     recordEvent(SessionEventType.GPS_ACQUIRED)
                     if (bus.state.value.phase == RecorderPhase.PREPARING) {
@@ -456,6 +589,7 @@ class RecorderService : Service() {
                     exerciseState == ExerciseState.AUTO_PAUSING
                 if (bus.state.value.phase != RecorderPhase.PAUSED) {
                     recordEvent(if (auto) SessionEventType.PAUSE_AUTO else SessionEventType.PAUSE_MANUAL)
+                    pausedSinceMs = nowOffsetMs()
                 }
                 bus.update { it.copy(phase = RecorderPhase.PAUSED, autoPaused = auto) }
             }
@@ -465,6 +599,8 @@ class RecorderService : Service() {
                         if (bus.state.value.autoPaused) SessionEventType.RESUME_AUTO
                         else SessionEventType.RESUME_MANUAL,
                     )
+                    pausedSinceMs?.let { pausedTotalMs += (nowOffsetMs() - it).coerceAtLeast(0) }
+                    pausedSinceMs = null
                 }
                 bus.update { it.copy(phase = RecorderPhase.ACTIVE, autoPaused = false) }
             }
@@ -513,13 +649,45 @@ class RecorderService : Service() {
         val locations = runCatching { metrics.getData(DataType.LOCATION) }.getOrDefault(emptyList())
         val hrPoints = runCatching { metrics.getData(DataType.HEART_RATE_BPM) }.getOrDefault(emptyList())
         val distance = runCatching { metrics.getData(DataType.DISTANCE_TOTAL)?.total }.getOrNull()
+        // Speed as the platform measures it, in metres per second.
+        //
+        // The live screen has always had a cell for this, and the cell has always
+        // been the *session average* in disguise: nothing ever assigned
+        // `speedKmh`, so the display fell through to distance-over-time for the
+        // whole workout — a number that, an hour in, barely moves whatever the
+        // user does. Asking for the data type is the whole fix.
+        val speed = runCatching {
+            metrics.getData(DataType.SPEED).lastOrNull()?.value
+        }.getOrNull()?.takeIf { it.isFinite() && it >= 0 }
 
-        val hr = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
-        if (hr != null || distance != null) {
+        // Every reading, at its own time — not one per delivery. Health Services
+        // batches, and a batch can carry a minute of them; keeping only the last
+        // wrote 161 readings for a 47-minute ride and lost the rest, which is
+        // the whole reason the series is its own record now. See [HeartRate].
+        writeRates(hrPoints)
+
+        val measured = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
+        if (measured != null) {
+            lastHrBpm = measured
+            lastHrAtMs = nowOffsetMs()
+        }
+        val hr = measured
+            ?: lastHrBpm?.takeIf { nowOffsetMs() - lastHrAtMs <= Tuning.HR_HOLD_MS }
+        if (speed != null) {
+            lastSpeedKmh = speed * 3.6
+            lastSpeedAtMs = nowOffsetMs()
+        }
+        // Held only as long as a position fix would be: speed is a location
+        // product, and once the fix is stale this is not a current speed but a
+        // souvenir. The display then falls back to the session average, which it
+        // labels as an average rather than passing it off as this one.
+        val shownSpeed = lastSpeedKmh?.takeIf { nowOffsetMs() - lastSpeedAtMs <= Tuning.FIX_STALE_MS }
+        if (hr != null || distance != null || speed != null) {
             bus.update {
                 it.copy(
                     heartRateBpm = hr ?: it.heartRateBpm,
                     distanceM = distance ?: it.distanceM,
+                    speedKmh = shownSpeed,
                     activeDurationMs = activeMs,
                 )
             }
@@ -532,15 +700,42 @@ class RecorderService : Service() {
 
         val paused = bus.state.value.phase == RecorderPhase.PAUSED
         for (point in locations.sortedBy { it.timeDurationFromBoot.toMillis() }) {
-            val sample = toSample(point, activeMs, hr, distance, paused) ?: continue
+            val sample = toSample(point, hr, distance, paused) ?: continue
             onSample(sample)
         }
         maybeUpdateNotification()
     }
 
+    /**
+     * Write each heart-rate reading of a delivery, at the time the sensor took
+     * it.
+     *
+     * Deduplicated by that time, because a batch can repeat what the previous
+     * one ended with, and a file with the same reading twice is a file that
+     * disagrees with itself about how often the sensor measured.
+     */
+    private fun writeRates(points: List<SampleDataPoint<Double>>) {
+        val w = writer ?: return
+        var wrote = false
+        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+            val bpm = point.value.toInt().takeIf { it in 20..250 } ?: continue
+            val tOffsetMs = point.timeDurationFromBoot.toMillis() - startedElapsedNs / 1_000_000
+            if (tOffsetMs < 0 || tOffsetMs <= lastRateAtMs) continue
+            w.writeRate(HeartRate(tOffsetMs = tOffsetMs, bpm = bpm))
+            lastRateAtMs = tOffsetMs
+            ratesWritten++
+            wrote = true
+        }
+        // A heart rate is a write too: a workout whose GNSS has died but whose
+        // strap is fine is degraded, not dead, and only a file that nothing at
+        // all reaches is "Keine Aufzeichnung". Published once per delivery
+        // rather than once per reading — a batch can carry a minute of them, and
+        // sixty identical state updates are sixty recompositions.
+        if (wrote) bus.update { it.copy(lastWriteAtMs = System.currentTimeMillis()) }
+    }
+
     private fun toSample(
         point: SampleDataPoint<LocationData>,
-        activeMs: Long,
         hr: Int?,
         distance: Double?,
         paused: Boolean,
@@ -553,7 +748,9 @@ class RecorderService : Service() {
         sawFirstLocation = true
         return Sample(
             tOffsetMs = tOffsetMs,
-            activeMs = activeMs,
+            // This sample's own offset, less every pause before it — not the
+            // checkpoint the live display uses. See [pausedTotalMs].
+            activeMs = activeAt(tOffsetMs),
             lat = d.latitude,
             lon = d.longitude,
             // LocationData.ALTITUDE_UNAVAILABLE is documented as NaN, which
@@ -582,26 +779,76 @@ class RecorderService : Service() {
     private fun onSample(sample: Sample) {
         writer?.writeSample(sample)
         samplesWritten++
+        // The two facts the health line is made of, both wall-clock because the
+        // user's question is "how long has this been going on". The fix age is
+        // taken from a sample that actually passed [Sample.usable] rather than
+        // from a LocationAvailability callback: the callback fires on
+        // transitions, and a fix that quietly degrades to 200 m of error — the
+        // failure that used to look like the runner slowing down — never
+        // produces one.
+        val now = System.currentTimeMillis()
+        bus.update {
+            it.copy(
+                lastWriteAtMs = now,
+                lastFixAtMs = if (sample.usable) now else it.lastFixAtMs,
+                lastAccuracyM = sample.accuracyM ?: it.lastAccuracyM,
+            )
+        }
 
         val state = matcher?.update(sample)
         if (matcher?.disabled == true && !bus.state.value.matcherDisabled) {
             recordEvent(SessionEventType.MATCHER_DISABLED)
-            bus.update { it.copy(matcherDisabled = true) }
+            disableMatcher()
         }
         if (state != null) applyMatch(state)
     }
 
-    private fun applyMatch(state: MatchState) {
-        lastState = state
-        val name = state.committedRouteId?.let { routeNames[it] }
+    /**
+     * The matcher is out of the session; take its numbers with it.
+     *
+     * [MatcherHost.update] returns null once disabled, so without this the last
+     * belief simply stayed on screen: a route name the app no longer stood
+     * behind, an ahead/behind figure frozen mid-workout, and an arrival time
+     * that drifted a minute later for every minute the user kept looking at it.
+     * The headline says the matcher is off; nothing below it may keep implying
+     * otherwise.
+     */
+    private fun disableMatcher() {
+        lastState = null
         bus.update {
             it.copy(
-                matchPhase = state.phase,
-                routeName = if (state.phase == MatchPhase.COMMITTED) name else null,
-                routeByPriority = state.committedByPriority,
-                remainingM = state.remainingM,
-                etaSecondsFromNow = state.etaSecondsFromNow,
+                matcherDisabled = true,
+                belief = RouteBelief(RouteBeliefKind.MATCHER_OFF),
+                remainingM = null,
+                arrivalAtUtcMs = null,
+                deltaVsMedianS = null,
+                deltaScaleS = null,
+                progressFraction = null,
+                positionStale = false,
+            )
+        }
+    }
+
+    private fun applyMatch(state: MatchState) {
+        lastState = state
+        val belief = routeBelief(state, matcherDisabled = false) { routeNames[it] }
+        // The arrival time is fixed here, against the one wall clock reading it
+        // is allowed to have. The matcher deals only in seconds-from-now because
+        // it may not touch a clock at all (§5.6 determinism); turning that into
+        // an instant at every recomposition, which is what the display used to
+        // do, made a stale ETA walk forwards for ever.
+        val arrival = state.etaSecondsFromNow
+            ?.takeIf { it.isFinite() && it >= 0 }
+            ?.let { System.currentTimeMillis() + (it * 1000).toLong() }
+        bus.update {
+            it.copy(
+                belief = belief,
+                remainingM = if (belief.hasRoute) state.remainingM else null,
+                arrivalAtUtcMs = if (belief.hasRoute) arrival else null,
+                progressFraction = if (belief.hasRoute) state.progressFraction else null,
                 deltaVsMedianS = state.deltaVsMedianS,
+                deltaScaleS = state.deltaScaleS,
+                positionStale = state.positionStaleMs > Tuning.STALE_POSITION_MS,
                 offRoute = state.offRoute,
             )
         }
@@ -618,12 +865,11 @@ class RecorderService : Service() {
         if (now - lastNotificationUpdateMs < NOTIFICATION_INTERVAL_MS) return
         lastNotificationUpdateMs = now
         val s = bus.state.value
-        val title = when {
-            s.offRoute -> "Abweichung"
-            s.matchPhase == MatchPhase.COMMITTED && s.routeName != null -> s.routeName
-            s.matchPhase == MatchPhase.UNKNOWN -> "Unbekannt"
-            else -> "Suche…"
-        }
+        // One wording for the wrist and the watch face: both go through
+        // [Wording], so the notification cannot say "Suche…" over a screen
+        // showing a route name, which is what two hand-rolled title mappings
+        // used to manage between them.
+        val title = if (s.offRoute) "Abweichung" else Wording.route(s.belief)
         OngoingNotification.update(
             this,
             title,

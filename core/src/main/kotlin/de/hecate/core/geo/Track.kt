@@ -53,7 +53,11 @@ class Track(
 
         /** Build a track from a recorded session. Returns null if too little is usable. */
         fun of(session: RecordedSession, spacingM: Double = Tuning.RESAMPLE_M): Track? {
-            val runs = splitRuns(session.samples)
+            // The repaired clock, not the recorded one: [timeS] below is the
+            // whole reason this class exists beside a list of points, and on a
+            // watch recording the recorded clock stands still for minutes at a
+            // time and then steps backwards. See `ActiveClock`.
+            val runs = splitRuns(session.timedSamples)
             if (runs.isEmpty()) return null
 
             val points = ArrayList<LatLon>()

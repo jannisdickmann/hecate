@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -35,6 +37,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,12 +74,15 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.Intensity
 import de.hecate.core.profile.Elevation
+import de.hecate.core.profile.Timeline
 import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
@@ -259,9 +265,13 @@ private fun titleOf(screen: Screen): String = when (screen) {
 
 @Composable
 private fun RecordingsScreen(vm: HecateViewModel) {
-    val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val all by vm.sessions.collectAsStateWithLifecycle()
+    val sessions by vm.filteredSessions.collectAsStateWithLifecycle()
+    val types by vm.activityTypes.collectAsStateWithLifecycle()
+    val filter by vm.activityFilter.collectAsStateWithLifecycle()
     val standouts by vm.standouts.collectAsStateWithLifecycle()
-    if (sessions.isEmpty()) {
+
+    if (all.isEmpty()) {
         Empty(
             "Noch keine Aufzeichnungen.\n\nWas die Uhr aufnimmt, erscheint hier automatisch. " +
                 "Unter „Einstellungen“ lassen sich TCX-Dateien aus Google Health einlesen, " +
@@ -269,13 +279,67 @@ private fun RecordingsScreen(vm: HecateViewModel) {
         )
         return
     }
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    Column(Modifier.fillMaxSize()) {
+        // The filter never empties the list: an activity is only offered while
+        // it occurs, and one that stops occurring stops applying — see
+        // [HecateViewModel.activityFilter].
+        ActivityFilterRow(types, filter) { vm.setActivityFilter(it) }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(sessions, key = { it.id }) { s ->
+                // Against the whole history, not against what is on screen: a
+                // recording is fast compared to the others on its route, and
+                // narrowing the list does not change which those are.
+                RecordingRow(s, standouts[s.id] ?: Standout()) { vm.show(Screen.SessionDetail(s.id)) }
+            }
+        }
+    }
+}
+
+/**
+ * The activity filter above the recordings list.
+ *
+ * **Only the activities that occur.** A chip for a sport the user has never
+ * recorded can do exactly one thing — empty the list — and reads as a promise
+ * the app cannot keep. The row therefore comes from the history rather than from
+ * the enum, and disappears entirely when there is only one kind of recording to
+ * filter, because a filter with one option and an "Alle" beside it is two ways
+ * of saying the same thing.
+ *
+ * Pinned above the list rather than scrolling with it: it is a control, and a
+ * control that has scrolled away is a control the user has to hunt for after
+ * exactly the action — scrolling through a long history — that makes them want
+ * it.
+ */
+@Composable
+private fun ActivityFilterRow(
+    types: List<ExerciseType>,
+    selected: ExerciseType?,
+    onSelect: (ExerciseType?) -> Unit,
+) {
+    if (types.size < 2) return
+    LazyRow(
+        Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(sessions, key = { it.id }) { s ->
-            RecordingRow(s, standouts[s.id] ?: Standout()) { vm.show(Screen.SessionDetail(s.id)) }
+        item(key = "all") {
+            FilterChip(
+                selected = selected == null,
+                onClick = { onSelect(null) },
+                label = { Text("Alle") },
+            )
+        }
+        items(types, key = { it.name }) { type ->
+            FilterChip(
+                selected = selected == type,
+                onClick = { onSelect(if (selected == type) null else type) },
+                label = { Text(type.label) },
+                leadingIcon = { ActivityIcon(type, Modifier.size(18.dp)) },
+            )
         }
     }
 }
@@ -330,21 +394,36 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
 }
 
 /**
- * One figure in a recording row, emphasised when it is in the upper quartile for
- * its route (US-8).
+ * One figure in a recording row, emphasised when it is in the top of the range
+ * for its route (US-8).
  *
- * Emphasis is colour *and* weight, never colour alone: the two marks sit side by
- * side in the same row, and have to be tellable apart by someone who cannot
- * separate the hues. Each figure keeps its unit for the same reason.
+ * Emphasis is colour, weight **and** an arrow, never colour alone: the two marks
+ * sit side by side in the same row, and have to be tellable apart by someone who
+ * cannot separate the hues. Each figure keeps its unit for the same reason.
+ *
+ * The arrow arrived with the threshold moving from the 75th percentile to the
+ * 85th. A mark on a quarter of the rows is found by comparing two rows; a mark
+ * on one row in seven has to be findable by scanning a screen, and a shade of
+ * colour with a slightly heavier weight is not — see [Standouts.PERCENTILE].
  */
 @Composable
 private fun Standing(text: String, standout: Boolean, accent: Color) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = if (standout) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = if (standout) FontWeight.Bold else FontWeight.Normal,
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (standout) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (standout) FontWeight.Bold else FontWeight.Normal,
+        )
+        if (standout) {
+            Icon(
+                painter = painterResource(R.drawable.ic_arrow_up),
+                contentDescription = "über dem Üblichen für diese Route",
+                tint = accent,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -356,7 +435,12 @@ private fun Quiet(text: String) {
     )
 }
 
-/** The name of the route a recording was matched to. */
+/**
+ * The name of the route a recording was matched to.
+ *
+ * Shortened to [Format.MAX_ROUTE_NAME_CHARS]: the pill is as wide as what is in
+ * it, and a route carrying a long name pushed the figures beside it off the row.
+ */
 @Composable
 private fun RoutePill(name: String) {
     Surface(
@@ -365,7 +449,7 @@ private fun RoutePill(name: String) {
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
-            name,
+            Format.routeName(name),
             style = MaterialTheme.typography.labelMedium,
             maxLines = 1,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -376,6 +460,7 @@ private fun RoutePill(name: String) {
 @Composable
 private fun RecordingDetailScreen(vm: HecateViewModel) {
     val detail by vm.sessionDetail.collectAsStateWithLifecycle()
+    val peakHr by vm.peakHr.collectAsStateWithLifecycle()
     val d = detail ?: return
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -389,8 +474,15 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
             )
         }
         Spacer(Modifier.height(12.dp))
-        PolylineView(d.geometry)
-        ElevationSection(d.elevation, d.elevationStats)
+        PolylineView(d.geometry, peakHrBpm = peakHr)
+        ElevationSection(d.elevation, d.elevationStats, peakHr)
+        SpeedSection("Geschwindigkeit", d.speed, d.speedStats, peakHr)
+        HeartRateSection("Herzfrequenz", d.heartRate, d.heartRateStats, peakHr)
+        IntensityLegend(
+            d.geometry.any { it.hrBpm != null } ||
+                d.elevation.any { it.hrBpm != null } ||
+                d.speed.any { it.hrBpm != null },
+        )
         Spacer(Modifier.height(12.dp))
 
         KeyValue("Art", d.summary.exerciseType.label)
@@ -493,6 +585,15 @@ private fun RoutesScreen(vm: HecateViewModel) {
         )
         return
     }
+    // Hoisted above the list: the raster is built off the main thread and kept
+    // while the screen lives, so scrolling the card out of the LazyColumn and
+    // back does not rebuild it.
+    var expanded by remember { mutableStateOf(false) }
+    val raster = heatmap?.let { rememberHeatmapRaster(it.grid) }
+    // The full-screen picture is a different raster of different ground, and it
+    // is read only while the dialog is up — see [HecateViewModel.openHeatmap].
+    val full by vm.fullHeatmap.collectAsStateWithLifecycle()
+
     Column(Modifier.fillMaxSize()) {
         // Shown here as well as in Settings, because a re-clustering is most
         // visible by its effect on this list: it is about to rearrange itself,
@@ -508,7 +609,7 @@ private fun RoutesScreen(vm: HecateViewModel) {
             // which is what you want once you are reading the list itself.
             heatmap?.let { h ->
                 item(key = "heatmap") {
-                    HeatmapCard(h)
+                    HeatmapCard(h, raster) { expanded = true; vm.openHeatmap() }
                     Spacer(Modifier.height(4.dp))
                 }
             }
@@ -517,39 +618,69 @@ private fun RoutesScreen(vm: HecateViewModel) {
             }
         }
     }
+
+    if (expanded) {
+        HeatmapFullScreen(
+            state = full,
+            // The full picture's own numbers, and they differ from the card's:
+            // it covers ground the card leaves out, so it leaves less out.
+            caption = full?.let { heatmapCaption(it) } ?: "Wird geladen…",
+            onDismiss = { expanded = false; vm.closeHeatmap() },
+        )
+    }
 }
 
 /**
- * The heatmap, with a line underneath saying what it is made of.
+ * The heatmap, with a line underneath saying what it is made of, and a tap to
+ * see it properly.
  *
  * The caption exists because the radius filter is otherwise invisible: a route
  * that was left out is a route missing from a picture, with nothing to say it
  * was ever considered.
+ *
+ * The card is a thumbnail — 15 m cells over a town is a raster several thousand
+ * cells wide, and a card on a phone shows perhaps a thousand of them. Tapping it
+ * opens the full-screen view, where the rest of that resolution is (A.21).
  */
 @Composable
-private fun HeatmapCard(state: HeatmapState) {
+private fun HeatmapCard(
+    state: HeatmapState,
+    raster: androidx.compose.ui.graphics.ImageBitmap?,
+    onExpand: () -> Unit,
+) {
     Card(
-        Modifier.fillMaxWidth(),
+        onClick = onExpand,
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        HeatmapView(state.grid, state.routes)
+        HeatmapView(state.grid, state.routes, raster, Modifier.fillMaxWidth())
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Quiet(
-                buildString {
-                    append("${state.grid.sessionsUsed} Aufzeichnungen")
-                    append(" · ${state.routes.size} Routen")
-                    if (state.grid.isEmpty) append(" · keine Messpunkte im Ausschnitt")
-                },
-            )
-            val discarded = state.grid.routesDiscarded + state.grid.sessionsDiscarded
-            if (discarded > 0) {
-                Quiet(
-                    "$discarded außerhalb von " +
-                        "${(de.hecate.core.Tuning.HEATMAP_MAX_RADIUS_M / 1000).toInt()} km — nicht gezeichnet",
-                )
-            }
+            Quiet(heatmapCaption(state))
+            Quiet("Antippen für Vollbild")
         }
     }
+}
+
+/** What the picture is made of, in one line — under the card and again under the
+ *  full-screen view, which has no room for a second one.
+ *
+ *  Both ways of not being in the picture are named, because they are different
+ *  and because neither is visible: too far from home to be believed, and inside
+ *  the radius but off the ground this picture covers. An undrawn recording looks
+ *  exactly like one that was never made. */
+private fun heatmapCaption(state: HeatmapState): String = buildString {
+    append("${state.grid.sessionsUsed} Aufzeichnungen")
+    append(" · ${state.routes.size} Routen")
+    if (state.grid.isEmpty) append(" · keine Messpunkte im Ausschnitt")
+    val discarded = state.grid.routesDiscarded + state.grid.sessionsDiscarded
+    if (discarded > 0) {
+        append(
+            " · $discarded außerhalb von " +
+                "${(Tuning.HEATMAP_MAX_RADIUS_M / 1000).toInt()} km",
+        )
+    }
+    val offPicture = state.grid.sessionsOutsideExtent
+    if (offPicture > 0) append(" · $offPicture außerhalb des Ausschnitts")
 }
 
 @Composable
@@ -573,9 +704,11 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
                     append(r.medianDurationMs?.let { Format.duration(it) } ?: "–")
                     append(" · Beste ")
                     append(r.bestDurationMs?.let { Format.duration(it) } ?: "–")
-                    // Only worth the pixels when the user has actually said something.
-                    if (r.priority != de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY) {
-                        append(" · Prio ${r.priority}")
+                    // Only worth the pixels when the user has actually said
+                    // something, which on a scale centred at zero is exactly
+                    // "not zero".
+                    if (r.priority != Tuning.DEFAULT_ROUTE_PRIORITY) {
+                        append(" · Prio ${Format.priority(r.priority)}")
                     }
                 },
             )
@@ -587,6 +720,7 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
 @Composable
 private fun RouteDetailScreen(vm: HecateViewModel) {
     val detail by vm.routeDetail.collectAsStateWithLifecycle()
+    val peakHr by vm.peakHr.collectAsStateWithLifecycle()
     val d = detail ?: return
     var editing by remember { mutableStateOf(false) }
     var draft by remember(d.id) { mutableStateOf(d.name) }
@@ -617,8 +751,17 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         }
 
         Spacer(Modifier.height(8.dp))
-        PolylineView(d.geometry)
-        ElevationSection(d.elevation, d.elevationStats)
+        PolylineView(d.geometry, peakHrBpm = peakHr)
+        ElevationSection(d.elevation, d.elevationStats, peakHr)
+        // "Median" in both titles, because that is what a route is: the middle
+        // of everything its members did here, not any one ride.
+        SpeedSection("Geschwindigkeit (Median)", d.speed, d.speedStats, peakHr)
+        HeartRateSection("Herzfrequenz (Median)", d.heartRate, d.heartRateStats, peakHr)
+        IntensityLegend(
+            d.geometry.any { it.hrBpm != null } ||
+                d.elevation.any { it.hrBpm != null } ||
+                d.speed.any { it.hrBpm != null },
+        )
         Spacer(Modifier.height(16.dp))
 
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
@@ -630,24 +773,6 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         KeyValue("Median-Zeit", d.medianDurationMs?.let { Format.duration(it) } ?: "–")
         KeyValue("Beste Zeit", d.bestDurationMs?.let { Format.duration(it) } ?: "–")
         KeyValue("Schlechteste", d.worstDurationMs?.let { Format.duration(it) } ?: "–")
-
-        if (d.splits.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            // The splits are stored as the seconds each kilometre took, which is
-            // the natural measurement; km/h is what gets shown. "Beste" is still
-            // the fastest kilometre — the smallest time is the largest speed.
-            SectionHeader("Kilometer-Splits (km/h)")
-            Spacer(Modifier.height(4.dp))
-            MonoRow("km", "Median", "Beste", "Schlecht.", header = true)
-            for (s in d.splits) {
-                MonoRow(
-                    s.km.toString(),
-                    Format.speed(Format.speedOverKm(s.medianS)),
-                    Format.speed(Format.speedOverKm(s.bestS)),
-                    Format.speed(Format.speedOverKm(s.worstS)),
-                )
-            }
-        }
 
         Spacer(Modifier.height(16.dp))
         SectionHeader("Aufzeichnungen")
@@ -692,6 +817,7 @@ private fun SettingsScreen(
 ) {
     val clustering by vm.clustering.collectAsStateWithLifecycle()
     val hc by vm.healthConnect.collectAsStateWithLifecycle()
+    val peakHr by vm.peakHr.collectAsStateWithLifecycle()
 
     // Both the grant and its removal can happen in Health Connect's own settings,
     // so the switch is re-read every time this panel appears rather than trusted
@@ -728,6 +854,11 @@ private fun SettingsScreen(
                 }
             }
         }
+
+        Spacer(Modifier.height(20.dp))
+        SectionHeader("Belastung")
+        Spacer(Modifier.height(8.dp))
+        SettingsCard { PeakHrField(peakHr) { vm.setPeakHr(it) } }
 
         Spacer(Modifier.height(20.dp))
         SectionHeader("Health Connect")
@@ -803,6 +934,68 @@ private fun SettingsCard(content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * The peak heart rate the intensity bands are measured against.
+ *
+ * A number the user types, because there is nothing to derive it from: the app
+ * has never measured a resting rate, and `220 − age` is out by more than a whole
+ * zone for one person in three (see [Tuning.DEFAULT_PEAK_HR_BPM]). Anybody who
+ * has finished a hard climb knows their own figure.
+ *
+ * The draft is local and only committed once it is a plausible rate, which is
+ * what makes typing work at all: committing every keystroke would store 1, then
+ * 19, then 190 — and since the stored value is clamped into the range, the field
+ * would be rewritten to "100" under the user's fingers after the first digit.
+ * The effect [LaunchedEffect] exists for is the other direction: a value that
+ * changes elsewhere, a restored backup being the only way that happens, still
+ * reaches the field.
+ *
+ * The bands are listed underneath in bpm, because that is the question the
+ * setting is actually answering: not "what is my maximum" but "where does
+ * intensiv start".
+ */
+@Composable
+private fun PeakHrField(current: Int, onChange: (Int) -> Unit) {
+    var draft by remember { mutableStateOf(current.toString()) }
+    LaunchedEffect(current) { if (draft.toIntOrNull() != current) draft = current.toString() }
+
+    Text("Maximalpuls", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(4.dp))
+    Quiet(
+        "Die Grundlage der Farben auf Streckenzeichnung und Höhenprofil. " +
+            "Der eigene Höchstwert, nicht „220 minus Alter“ — der liegt bei jedem Dritten " +
+            "um eine ganze Zone daneben.",
+    )
+    Spacer(Modifier.height(12.dp))
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { text ->
+            draft = text.filter { it.isDigit() }.take(3)
+            draft.toIntOrNull()
+                ?.takeIf { it in Tuning.MIN_PEAK_HR_BPM..Tuning.MAX_PEAK_HR_BPM }
+                ?.let(onChange)
+        },
+        label = { Text("bpm") },
+        supportingText = {
+            Quiet("${Tuning.MIN_PEAK_HR_BPM}–${Tuning.MAX_PEAK_HR_BPM}")
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+    )
+    Spacer(Modifier.height(10.dp))
+    for (band in Intensity.entries) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .background(HecateIntensityColors.of(band), MaterialTheme.shapes.extraSmall),
+            )
+            Spacer(Modifier.width(8.dp))
+            Quiet("${band.label}: ab ${Format.hr(band.lowerFraction * current)} bpm")
+        }
+    }
+}
+
 /** A named action with a sentence saying what it does, the whole row tappable. */
 @Composable
 private fun SettingsAction(title: String, body: String, onClick: () -> Unit) {
@@ -842,11 +1035,15 @@ private fun ClusteringBanner() {
  * existed. A chart of a flat line at zero would be a claim about the ground.
  */
 @Composable
-private fun ElevationSection(points: List<Elevation.Point>, stats: Elevation.Stats?) {
+private fun ElevationSection(
+    points: List<Elevation.Point>,
+    stats: Elevation.Stats?,
+    peakHrBpm: Int,
+) {
     if (points.size < 2 || stats == null) return
     Spacer(Modifier.height(4.dp))
     SectionHeader("Höhenprofil")
-    ElevationView(points)
+    ElevationView(points, peakHrBpm = peakHrBpm)
     // Climb and drop first: they are what the ground cost, and the one pair a
     // rider compares between days. The band underneath says how high up all of
     // this happened, without which "+240 m" could be a dyke or an alp.
@@ -919,49 +1116,129 @@ private fun ConfirmDialog(
 }
 
 /**
- * The manual route ranking, 1..10.
+ * The manual route ranking, −2..2.
  *
  * Only matters where two routes share the same ground and the matcher therefore
  * refuses to choose between them (US-4). Raise one above the other and the watch
  * will assume that one — with its name, its remaining distance and its ETA —
  * from the start, instead of showing "Suche…" until the paths part. Leaving
- * everything at 5 keeps the cautious behaviour.
+ * everything at 0 keeps the cautious behaviour.
  *
- * Two segmented rows of five rather than one of ten: ten segments across a phone
- * squeezes each below the 48dp touch target, and the break at five gives the
- * scale a middle you can aim for without counting.
+ * One row of five rather than two rows of five out of ten. Only the *order* of
+ * the numbers has ever mattered — nothing multiplies by a priority — so the old
+ * range asked for a precision it could not use, and asking someone to choose
+ * between a 6 and a 7 for a route is asking a question with no answer. Five
+ * options fit one row at a comfortable touch target.
+ *
+ * The numbers stand on their own. Each used to carry a phrase above the row —
+ * "0 · keine Meinung", "+1 · eher schon" — and five buttons on a centred scale
+ * do not need naming twice: the row already reads left to right as less to
+ * more, and the caption under it says what the scale is for. Nor did the
+ * caption's second sentence, about a tie leaving the watch on "Suche…", earn
+ * its line: it described what happens when the user does nothing, which is what
+ * they are already looking at.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                "Priorität",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text("$current", style = MaterialTheme.typography.labelLarge)
-        }
-        Spacer(Modifier.height(6.dp))
-        for (row in 0..1) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                for (i in 0..4) {
-                    val v = row * 5 + i + 1
-                    SegmentedButton(
-                        selected = v == current,
-                        onClick = { onChange(v) },
-                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 5),
-                    ) { Text("$v") }
-                }
-            }
-            if (row == 0) Spacer(Modifier.height(4.dp))
-        }
-        Spacer(Modifier.height(6.dp))
-        Quiet(
-            "Entscheidet nur zwischen Routen, die sich denselben Weg teilen. " +
-                "Bei Gleichstand bleibt die Anzeige auf „Suche…“.",
+        Text(
+            "Priorität",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(6.dp))
+        val values = (Tuning.MIN_ROUTE_PRIORITY..Tuning.MAX_ROUTE_PRIORITY).toList()
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            values.forEachIndexed { index, v ->
+                SegmentedButton(
+                    selected = v == current,
+                    onClick = { onChange(v) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = values.size),
+                ) { Text(Format.priority(v)) }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Quiet("Entscheidet nur zwischen Routen, die sich denselben Weg teilen.")
+    }
+}
+
+/**
+ * Speed against time, and the range it covered.
+ *
+ * Under the altitude profile rather than above it, because the ground is what
+ * explains the speed: the reader has just seen the hill that the slow stretch is
+ * on. Coloured by heart rate for the same reason — 30 km/h in blue is a descent
+ * and 30 km/h in orange is work.
+ *
+ * The line underneath is the *range*, never an average: both screens already
+ * carry an average of their own (distance over active time; the route's median
+ * duration), and a second "Ø" computed another way and disagreeing with it by a
+ * tenth would be worse than no number at all.
+ */
+@Composable
+private fun SpeedSection(
+    title: String,
+    points: List<Timeline.Point>,
+    stats: Timeline.Stats?,
+    peakHrBpm: Int,
+) {
+    if (points.size < 2 || stats == null) return
+    Spacer(Modifier.height(4.dp))
+    SectionHeader(title)
+    SpeedView(points, peakHrBpm = peakHrBpm)
+    Quiet(Format.speedRange(stats.min, stats.max))
+}
+
+/**
+ * Heart rate against time, and the range it covered.
+ *
+ * Absent rather than flat when there is no rate to draw: a recording made
+ * without a strap, or a route none of whose members wore one, gets no chart at
+ * all. A line at zero would be a claim about a heart.
+ */
+@Composable
+private fun HeartRateSection(
+    title: String,
+    points: List<Timeline.Point>,
+    stats: Timeline.Stats?,
+    peakHrBpm: Int,
+) {
+    if (points.size < 2 || stats == null) return
+    Spacer(Modifier.height(4.dp))
+    SectionHeader(title)
+    HeartRateView(points, peakHrBpm = peakHrBpm)
+    Quiet("${Format.hr(stats.min)}–${Format.hr(stats.max)} bpm")
+}
+
+/**
+ * The four intensity bands and their names, under a chart that is coloured by
+ * them.
+ *
+ * Shown only where there is a heart rate to have coloured anything: on a
+ * recording without one the chart is a single plain line, and a legend for four
+ * colours that are not on the screen is an invitation to look for them.
+ */
+@Composable
+private fun IntensityLegend(visible: Boolean) {
+    if (!visible) return
+    Spacer(Modifier.height(6.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        for (band in Intensity.entries) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .background(HecateIntensityColors.of(band), MaterialTheme.shapes.extraSmall),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    band.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

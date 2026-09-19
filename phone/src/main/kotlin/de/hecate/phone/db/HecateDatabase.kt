@@ -27,7 +27,7 @@ import java.time.ZoneId
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -145,6 +145,63 @@ abstract class HecateDatabase : RoomDatabase() {
         }
 
         /**
+         * v7 rescales the manual route priority from 1..10 to −2..2.
+         *
+         * Every route is reset to 0 rather than mapped onto the new scale, and
+         * that is deliberate: the old default was 5, so all but a handful of
+         * routes are sitting on a number the user never chose, and there is no
+         * way to tell those apart from a deliberate 5. Mapping would turn a
+         * value nobody picked into a value nobody picked on a different scale.
+         * Resetting asks the handful of users of this feature to say it again on
+         * a scale where saying nothing is the honest zero.
+         *
+         * The table is rebuilt rather than updated in place, because the column
+         * default itself changes and SQLite has no `ALTER COLUMN`. This is the
+         * "12-step" rebuild from the SQLite manual, minus the steps that only
+         * apply to tables with indices or triggers on them, of which `route` has
+         * neither. Foreign keys are off while Room runs a migration, so dropping
+         * the parent table does not cascade into `route_point`, `route_profile`
+         * and `route_member`, and the rename does not rewrite their `REFERENCES`
+         * clauses — which is what makes them still point at the right table
+         * afterwards. `MigrationTest` replays exactly this and then reads the
+         * children back, because every clause of that sentence is a thing that
+         * would fail silently.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS route_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        name_is_custom INTEGER NOT NULL,
+                        exercise_type TEXT NOT NULL,
+                        length_m REAL NOT NULL,
+                        member_count INTEGER NOT NULL,
+                        medoid_session_id TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        active INTEGER NOT NULL,
+                        priority INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO route_new (
+                        id, name, name_is_custom, exercise_type, length_m,
+                        member_count, medoid_session_id, created_at, active, priority
+                    )
+                    SELECT id, name, name_is_custom, exercise_type, length_m,
+                           member_count, medoid_session_id, created_at, active, 0
+                      FROM route
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE route")
+                db.execSQL("ALTER TABLE route_new RENAME TO route")
+            }
+        }
+
+        /**
          * Every migration, in one place.
          *
          * The list used to be spelled out twice — here and again in
@@ -157,6 +214,7 @@ abstract class HecateDatabase : RoomDatabase() {
          */
         val MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+            MIGRATION_6_7,
         )
 
         @Volatile

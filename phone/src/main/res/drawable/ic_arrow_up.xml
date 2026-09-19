@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material Symbols "arrow_upward", taken from google/material-design-icons.
+
+  Same shape and the same reason as the activity icons beside it: a translated
+  group rather than a rewritten path, and a file of its own rather than
+  material-icons-extended, which ships every unused icon given
+  isMinifyEnabled = false (§6.3) — see Appendix A.11. `Icons.Filled` has no
+  upward arrow; the core icon set is deliberately small.
+
+  This one is not an activity. It marks a recording that is near the top of its
+  route's range (A.21), where colour and weight alone were too quiet to find by
+  scanning once the threshold moved to the 85th percentile.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z" />
+    </group>
+</vector>

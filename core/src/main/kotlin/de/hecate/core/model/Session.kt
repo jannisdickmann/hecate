@@ -151,6 +151,24 @@ enum class SessionEndReason {
     IMPORTED,
 }
 
+/**
+ * One heart-rate reading, with the time it was taken.
+ *
+ * Its own record because the sensor has its own clock. A [Sample] is written per
+ * *position*, and a rate that arrives between two of them — or in a batch that
+ * carried no position at all — has nowhere to go: on one real 47-minute ride the
+ * recorder kept one reading per delivery and wrote 161 of them, which is a
+ * reading every seventeen seconds for a sensor that measures every second. What
+ * was thrown away is not in the file and cannot be got back from it, which is
+ * the whole argument for writing the series as the sensor gives it and joining
+ * it to the positions later (see `HeartRates.merge`).
+ */
+@Serializable
+data class HeartRate(
+    @SerialName("t") val tOffsetMs: Long,
+    @SerialName("hr") val bpm: Int,
+)
+
 /** Written as the last line of a session file. Its absence means the recording was
  *  interrupted; such a file is still uploaded and ingested (NFR-1). */
 @Serializable
@@ -171,11 +189,27 @@ data class RecordedSession(
     val events: List<SessionEvent> = emptyList(),
     val footer: SessionFooter? = null,
     val matchLog: List<MatchLogEntry> = emptyList(),
+    /** Every reading the sensor gave, at its own times. Empty for a session
+     *  recorded before the watch wrote them, and for every import — a takeout
+     *  or a TCX carries one rate per position and nothing between. */
+    val heartRates: List<HeartRate> = emptyList(),
 ) {
     val id: String get() = header.sessionId
 
+    /**
+     * The same samples on a clock that only ever advances — see [ActiveClock]
+     * for why [Sample.activeMs] as recorded cannot be read as a series.
+     *
+     * Anything that asks *when* rather than *how long in total* should read
+     * this. Computed once and kept, because a track is built from it and a
+     * profile is built from the track, and those must be on the same clock as
+     * the heart rates looked up beside them.
+     */
+    val timedSamples: List<Sample> by lazy(LazyThreadSafetyMode.NONE) { ActiveClock.repair(samples) }
+
     /** Active duration from the footer when present, otherwise from the samples.
-     *  An interrupted recording still has a usable duration. */
+     *  An interrupted recording still has a usable duration — and it is read off
+     *  the repaired clock, since the raw one can end lower than it started. */
     val activeDurationMs: Long
-        get() = footer?.activeDurationMs ?: samples.lastOrNull()?.activeMs ?: 0L
+        get() = footer?.activeDurationMs ?: timedSamples.lastOrNull()?.activeMs ?: 0L
 }

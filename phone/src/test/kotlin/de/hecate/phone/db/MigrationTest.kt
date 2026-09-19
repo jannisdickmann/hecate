@@ -182,6 +182,81 @@ class MigrationTest {
         assertTrue(sessions.isEmpty())
     }
 
+    // ------------------------------------------------------------------ v6→v7
+
+    /**
+     * v7 rebuilds the `route` table to change one column's default, which is the
+     * riskiest shape a migration has in this app: a parent table with three
+     * children cascading off it. Every clause of "drop the parent, rename the
+     * copy, and the children are still attached to the right table" is a thing
+     * that fails silently, so this puts rows in all three and reads them back.
+     */
+    @Test
+    fun `v7 resets every priority and keeps the route and its children`() {
+        SchemaFixture.create(file, 6)
+        insertRouteV6(id = 7, name = "Zur Arbeit", priority = 9)
+
+        val dao = open().routes()
+        runBlocking {
+            val route = dao.byId(7)
+            assertNotNull(route)
+            assertEquals("Zur Arbeit", route.name, "the user's own name did not survive the rebuild")
+            assertEquals(0, route.priority, "priority was not reset to the new scale's zero")
+            assertEquals(1, dao.points(7).size, "route_point lost its rows")
+            assertEquals(1, dao.profile(7).size, "route_profile lost its rows")
+            assertEquals(1, dao.members(7).size, "route_member lost its rows")
+        }
+    }
+
+    /** The other half: a route deleted after the migration must still take its
+     *  children with it, which is only true if their foreign keys still point at
+     *  a table called `route` — the one the rename produced. */
+    @Test
+    fun `the rebuilt route table still cascades its deletes`() {
+        SchemaFixture.create(file, 6)
+        insertRouteV6(id = 7, name = "Feierabendrunde", priority = 2)
+
+        val dao = open().routes()
+        runBlocking {
+            dao.delete(7)
+            assertTrue(dao.points(7).isEmpty(), "route_point rows outlived their route")
+            assertTrue(dao.profile(7).isEmpty(), "route_profile rows outlived their route")
+        }
+    }
+
+    /** A route at the v6 schema, with one row in each table that hangs off it. */
+    private fun insertRouteV6(id: Long, name: String, priority: Int) {
+        android.database.sqlite.SQLiteDatabase.openDatabase(
+            file.path,
+            null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READWRITE,
+        ).use { raw ->
+            raw.execSQL(
+                """
+                INSERT INTO route (id, name, name_is_custom, exercise_type, length_m,
+                                   member_count, medoid_session_id, created_at, active, priority)
+                VALUES (?, ?, 1, 'RUNNING', 5000.0, 3, 's-1', 0, 1, ?)
+                """.trimIndent(),
+                arrayOf<Any>(id, name, priority),
+            )
+            raw.execSQL(
+                "INSERT INTO route_point (route_id, seq, lat, lon, cum_dist_m) VALUES (?, 0, 50.1, 8.9, 0.0)",
+                arrayOf<Any>(id),
+            )
+            raw.execSQL(
+                """
+                INSERT INTO route_profile (route_id, bin, median_cum_time_s, p25_s, p75_s, median_hr, median_alt_m)
+                VALUES (?, 0, 0.0, 0.0, 0.0, 140.0, 120.0)
+                """.trimIndent(),
+                arrayOf<Any>(id),
+            )
+            raw.execSQL(
+                "INSERT INTO route_member (route_id, session_id) VALUES (?, 's-1')",
+                arrayOf<Any>(id),
+            )
+        }
+    }
+
     // --------------------------------------------------------------- plumbing
 
     /** The real thing: the same migration list the app registers. */

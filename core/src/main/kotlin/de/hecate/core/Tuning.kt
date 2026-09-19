@@ -155,10 +155,17 @@ object Tuning {
      *  The default is the middle of the range and is the same for every route, so
      *  until the user actually differentiates two routes nothing changes: equal
      *  priorities tie, and a tie decides nothing. The feature is opt-in by
-     *  construction rather than by a flag. */
-    const val MIN_ROUTE_PRIORITY: Int = 1
-    const val MAX_ROUTE_PRIORITY: Int = 10
-    const val DEFAULT_ROUTE_PRIORITY: Int = 5
+     *  construction rather than by a flag.
+     *
+     *  Only the *order* matters — nothing multiplies by a priority — so the range
+     *  is as small as it can be while still saying the four things a person means:
+     *  never this one, rather not, no opinion, rather this one, always this one.
+     *  Signed and centred on zero, because "no opinion" is what almost every route
+     *  should be, and a scale whose neutral value is 5 out of 10 invites the user
+     *  to spend the other nine. */
+    const val MIN_ROUTE_PRIORITY: Int = -2
+    const val MAX_ROUTE_PRIORITY: Int = 2
+    const val DEFAULT_ROUTE_PRIORITY: Int = 0
 
     /** Commitment additionally requires every other live candidate to be at least
      *  this much further [m] from the current position than the leader is.
@@ -283,14 +290,75 @@ object Tuning {
      */
     const val HEATMAP_MAX_RADIUS_M: Double = 100_000.0
 
-    /** Heatmap raster size. 16:9, and deliberately coarser than the phone screen
-     *  it is drawn on — this counts GPS samples, and a cell finer than the noise
-     *  in those samples resolves nothing but the noise. */
-    const val HEATMAP_WIDTH: Int = 192
-    const val HEATMAP_HEIGHT: Int = 108
+    /**
+     * Edge length [m] of one heatmap cell, on the ground.
+     *
+     * A fixed *physical* size, which is the whole point: the raster used to be
+     * 192x108 cells whatever it covered, so a cell was 40 m across a town and
+     * 400 m across a county, and the same two tracks a street apart merged into
+     * one blob or stayed separate depending on where else the user had been. A
+     * constant here means a constant on the ground, and the raster's dimensions
+     * follow from the extent instead of the other way round.
+     *
+     * 15 m is the GNSS error this app already assumes ([GPS_SIGMA_M]) and below
+     * the spacing of adjacent streets — which sounds like resolving noise, and
+     * would be if a cell were painted as a cell. It is not:
+     * [HEATMAP_BLUR_SIGMA_CELLS] spreads each track over its neighbours before
+     * anything is drawn, so the cell is the sampling grid of a continuous
+     * density, not a pixel. Sampling at the scale of the noise is what lets that
+     * density come out smooth rather than blocky.
+     */
+    const val HEATMAP_CELL_M: Double = 15.0
 
-    /** Breathing room around the routes' own bounding box, as a fraction of its
-     *  larger side. */
+    /**
+     * The shape the card's extent is grown to, wide:high.
+     *
+     * The picture above the routes list is a card in a scrolling list, so its
+     * shape is a layout decision rather than a fact about the ground: taller
+     * than 16:9 and it pushes the routes themselves off their own screen. The
+     * extent is *grown* to it, never cropped — a route drawn out of proportion
+     * is a route you no longer recognise.
+     *
+     * The full-screen picture has no such constraint and is therefore not grown
+     * to any shape at all: it covers what it covers, and what the screen cannot
+     * fit, panning reaches. See `Heatmap.Extent`.
+     */
+    const val HEATMAP_ASPECT: Double = 16.0 / 9.0
+
+    /**
+     * Ceiling on the number of cells, whatever [HEATMAP_CELL_M] would ask for.
+     *
+     * The extent is bounded — nothing beyond [HEATMAP_MAX_RADIUS_M] of home is
+     * drawn at all — but the bound is 100 km, and 15 m cells over that much
+     * ground would be sixty million of them. Above this count the cell size
+     * doubles until it fits, so the physical size stays constant *per doubling*
+     * rather than sliding continuously with the extent, and the cells of two
+     * rasters always line up.
+     *
+     * Three million is a 2300x1300 raster: 12 MB as counts, another 12 to blur
+     * it and 12 more as the bitmap it is drawn from, and it takes an extent of
+     * about 35 x 20 km before the first doubling. Everything a person rides
+     * from one home is inside that; a second home 60 km away is what buys 30 m
+     * cells, and a picture of two towns is not a picture of a street anyway.
+     */
+    const val HEATMAP_MAX_CELLS: Int = 3_000_000
+
+    /**
+     * Standard deviation [cells] of the blur applied to the counts before they
+     * are coloured.
+     *
+     * This is what makes the picture read as density rather than as a
+     * spreadsheet, and it is a blur rather than a coarser grid because the two
+     * are not the same thing: a coarse grid quantises, a blur spreads. One and
+     * a half cells at [HEATMAP_CELL_M] is about 22 m of ground — one GNSS error
+     * — so a drawn track is as wide as the uncertainty about where it was,
+     * which is the honest thickness for it to have. Wider than that and two
+     * streets a block apart merge into one smear.
+     */
+    const val HEATMAP_BLUR_SIGMA_CELLS: Double = 1.5
+
+    /** Breathing room around the ground the picture covers, as a fraction of
+     *  its larger side. Without it the outermost track is the frame. */
     const val HEATMAP_PADDING_FRACTION: Double = 0.08
 
     /** Smallest extent the heatmap will draw [m]. Stops a single route, or one
@@ -367,4 +435,217 @@ object Tuning {
      */
     const val MIN_ALTITUDE_M: Double = -1_000.0
     const val MAX_ALTITUDE_M: Double = 10_000.0
+
+    // ---------------------------------------------------------------- intensity
+
+    /**
+     * The heart rate the zones are measured against [bpm], when the user has not
+     * said otherwise.
+     *
+     * Their own peak, not a formula. `220 − age` is the best known number in
+     * amateur sport and one of the worst: its standard deviation across people
+     * is 10-12 bpm, so for one person in three it is out by more than a whole
+     * zone. Anybody who has ever finished a hard climb knows their own figure
+     * better than arithmetic on their birthday does, so this is a default to be
+     * replaced in settings rather than a model to be trusted.
+     *
+     * 180 is roughly the peak of a fit adult in their thirties and is chosen to
+     * be *plausible*, not accurate. Being wrong here recolours a chart; it
+     * changes no stored data and no decision the app makes.
+     */
+    const val DEFAULT_PEAK_HR_BPM: Int = 180
+
+    /** What the settings field will accept [bpm]. Wide enough for a well-trained
+     *  teenager and a well-rested seventy-year-old, narrow enough that a typo of
+     *  one digit too many is refused rather than stored. */
+    const val MIN_PEAK_HR_BPM: Int = 100
+    const val MAX_PEAK_HR_BPM: Int = 240
+
+    /**
+     * Width, in samples, of the rolling median applied to heart rate before it
+     * is turned into a band.
+     *
+     * Not for spikes, which is what the altitude filter is for — for boundaries.
+     * An effort a few beats under the line between Mittel and Intensiv reaches
+     * over it every few seconds, and the drawing would alternate between two
+     * colours every few pixels: noise rendered at the resolution of a decision.
+     * Fifteen seconds at the 1 Hz everything here samples at, and a median rather
+     * than a mean for the reason [de.hecate.core.profile.Series] gives — a real
+     * effort ramping up is a monotonic run, and a median leaves those exactly
+     * alone.
+     *
+     * It settles a reading that is *mostly* one side of a line, which is what a
+     * heart rate does. A reading balanced exactly on one has no band and no
+     * filter can invent it one; that case alternates, and honestly so.
+     */
+    const val HR_MEDIAN_WINDOW: Int = 15
+
+    /**
+     * How long a heart rate stays true after the last reading [ms].
+     *
+     * The watch stamps a rate on a sample only when the sensor delivered one in
+     * the same batch as the position, which on two real rides was 28 % and 36 %
+     * of the samples — with holes of two to four seconds between readings and a
+     * handful of genuine minute-long ones where the strap lost contact. Read
+     * literally, that is a chart of forty disconnected bars and a track drawn in
+     * the "no reading" colour for two thirds of its length, about a ride whose
+     * effort was in fact measured all the way along.
+     *
+     * Thirty seconds is chosen from both sides: it covers every ordinary hole
+     * between readings with room to spare, and a heart rate half a minute old is
+     * still the right band for the effort — the bands are ten percent of a peak
+     * wide, and nobody crosses one and comes back inside thirty seconds without
+     * the next reading saying so. Longer holes are left as holes, and the chart
+     * draws the gap.
+     */
+    const val HR_HOLD_MS: Long = 30_000L
+
+    /**
+     * How near in time a heart-rate reading has to be to a position for the two
+     * to be about the same moment [ms].
+     *
+     * The sensors run on their own schedules — a position a second, a rate
+     * whenever the optics settle — so joining them is a question of tolerance
+     * rather than of equality. Five seconds is comfortably wider than either
+     * cadence and far narrower than the thirty seconds a reading is allowed to
+     * *stand* for on a chart ([HR_HOLD_MS]): the first is "these two describe
+     * the same moment", the second is "nothing better has arrived since". Both
+     * exist because conflating them is how a reading from a climb ends up
+     * colouring a descent.
+     */
+    const val HR_MERGE_TOLERANCE_MS: Long = 5_000L
+
+    /**
+     * Window [samples] of the rolling median over a recording's speed.
+     *
+     * Speed is the one quantity on these screens that is a *derivative*, and the
+     * noise therefore arrives multiplied: two consecutive fixes 15 m apart in
+     * the wrong direction are 54 km/h of sprint that never happened. Fifteen
+     * seconds at 1 Hz removes every excursion shorter than seven of them, which
+     * covers the whole family — a fix that jumped, a tunnel, the second after a
+     * dropout — while leaving a real acceleration untouched, because a median is
+     * the identity on a monotonic run.
+     *
+     * The same width as [HR_MEDIAN_WINDOW], and that is not laziness: both are
+     * "about as long as a person can meaningfully vary either", and two charts
+     * side by side under two different smoothings would disagree about where an
+     * effort began.
+     */
+    const val SPEED_MEDIAN_WINDOW: Int = 15
+
+    /**
+     * How many bins a route's speed is measured across.
+     *
+     * A route's profile holds, per bin, the *median* cumulative time its members
+     * took to get there — and each of those medians is taken independently, so
+     * the sequence is only monotone on average. Two neighbouring bins can end up
+     * a hundredth of a second apart, which over a ten metre bin is four thousand
+     * kilometres an hour, and one such bin is enough to make the whole chart a
+     * flat line under one spike. That is not a spike to be filtered out
+     * afterwards: it is a difference taken over too short a baseline.
+     *
+     * So the speed at a bin is the distance across [ROUTE_SPEED_WINDOW_BINS] of
+     * them over the time across the same, centred, which at [RESAMPLE_M] is
+     * 150 m — tens of seconds of riding, long enough that the medians' own
+     * scatter is small against it and short enough to keep a hill.
+     */
+    const val ROUTE_SPEED_WINDOW_BINS: Int = 15
+
+    /**
+     * Where one intensity zone ends and the next begins, as a fraction of the
+     * peak heart rate.
+     *
+     * Four zones, not five or seven: this colours a line on a chart, and a
+     * reader distinguishes four colours at a glance and seven never. The cuts
+     * are the conventional ones — 70 / 80 / 90 % of maximum — which is where
+     * every zone model puts its boundaries whatever it calls the bands, because
+     * the physiology behind them (aerobic, threshold, anaerobic) does not move
+     * with the naming.
+     *
+     * Fractions of the peak rather than of the reserve (Karvonen): the reserve
+     * needs a resting heart rate, this app has never measured one, and asking
+     * for a second number to colour a chart is a poor trade.
+     */
+    const val HR_ZONE_MODERATE_FRACTION: Double = 0.70
+    const val HR_ZONE_HARD_FRACTION: Double = 0.80
+    const val HR_ZONE_PEAK_FRACTION: Double = 0.90
+
+    // ---------------------------------------------------------- live display
+
+    /**
+     * The weight one route needs before the watch says its name without being
+     * committed to it.
+     *
+     * The matcher commits on evidence that has *held* ([COMMIT_WEIGHT] for
+     * [COMMIT_HOLD_SAMPLES] samples over [COMMIT_MIN_M]); the display has a
+     * weaker job, which is to stop claiming ignorance it does not have. A route
+     * holding half the belief is the app's best current answer and saying so —
+     * marked as provisional — beats "Suche…", which reads as a malfunction and
+     * throws away a name the matcher is already carrying.
+     *
+     * Below [COMMIT_WEIGHT] on purpose, and deliberately not near it: this
+     * number decides what a *label* says, never what the session file records.
+     */
+    const val LEADER_MIN_WEIGHT: Double = 0.50
+
+    /**
+     * How long the matcher's idea of where the user is may go unrefreshed before
+     * the display stops trusting anything derived from it.
+     *
+     * Unusable samples (accuracy beyond [MAX_USABLE_ACCURACY_M], or none arriving
+     * at all) leave the projected position where it was while elapsed time keeps
+     * running, so ahead/behind drifts steadily worse for a reason that has
+     * nothing to do with the user. Past this the delta is frozen at its last
+     * honest value and the display dims it, which is a statement about the
+     * measurement rather than about the runner.
+     */
+    const val STALE_POSITION_MS: Long = 20_000L
+
+    /**
+     * Full-scale deflection of the ahead/behind bar, as a multiple of the
+     * route's own interquartile spread at the finish.
+     *
+     * A bar needs a scale, and the only defensible one is the route's own
+     * history: being a minute down means something quite different on a
+     * fifteen-minute commute that never varies than on a two-hour ride that
+     * varies by ten. Two IQRs pins the bar at "further outside your usual spread
+     * than three quarters of your attempts ever get".
+     *
+     * Taken at the *end* of the route, not at the current position, so the scale
+     * is one number for the whole workout: a bar whose scale moved underneath it
+     * would swing while the user held a steady pace, which is the opposite of
+     * what it is for.
+     */
+    const val DELTA_SCALE_IQR_MULTIPLE: Double = 2.0
+
+    /** Floor under [DELTA_SCALE_IQR_MULTIPLE] as a fraction of the route's median
+     *  total time, for a route whose members are so alike — or so few — that its
+     *  quartiles almost touch. Without it a metronomic commute produces a bar
+     *  that slams to full scale over a few seconds of traffic light. */
+    const val DELTA_SCALE_MIN_FRACTION: Double = 0.04
+
+    /** Absolute bounds on the bar's scale [s]. The floor keeps a short route's
+     *  bar from being a hair trigger; the ceiling keeps a long one's from being
+     *  a bar that never visibly moves. */
+    const val DELTA_SCALE_MIN_S: Double = 45.0
+    const val DELTA_SCALE_MAX_S: Double = 900.0
+
+    /**
+     * How long since the last usable position fix before the watch says so.
+     *
+     * [FIX_STALE_MS] is "GPS is struggling", which is worth knowing but changes
+     * nothing you would do; [FIX_LOST_MS] is "this recording is currently a
+     * stopwatch with a heart rate monitor", which is worth interrupting for.
+     * Both are measured from the last sample that actually passed
+     * [Sample.usable][de.hecate.core.model.Sample.usable], not from a system
+     * availability callback, because the callback fires on transitions and a fix
+     * that quietly goes to 200 m of error never produces one.
+     */
+    const val FIX_STALE_MS: Long = 20_000L
+    const val FIX_LOST_MS: Long = 60_000L
+
+    /** Nothing written to the session file for this long while the exercise is
+     *  active. The recorder is then not recording, whatever the screen says, and
+     *  that is the one thing the watch must never be quiet about. */
+    const val NO_WRITE_MS: Long = 90_000L
 }

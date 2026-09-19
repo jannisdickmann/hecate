@@ -3,6 +3,7 @@ package de.hecate.phone.archive
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
@@ -86,10 +87,24 @@ class ArchiveRepositoryTest {
         // argument for the archive existing.
         val routes = target.routes().all().associateBy { it.id }
         assertEquals("Zur Arbeit", routes.getValue(1).name)
-        assertEquals(9, routes.getValue(1).priority)
+        assertEquals(2, routes.getValue(1).priority)
         assertTrue(routes.getValue(1).nameIsCustom)
         assertEquals("Feierabendrunde", routes.getValue(2).name)
-        assertEquals(2, routes.getValue(2).priority)
+        assertEquals(-2, routes.getValue(2).priority)
+    }
+
+    @Test
+    fun `a priority from the old scale is clamped rather than left unreachable`(): Unit = runBlocking {
+        seed(source)
+        // 9 is what an archive written before schema v7 carries. Nothing crashes
+        // on it — priority is an integer the matcher only ever compares — but the
+        // picker has no button for a 9, so the route would show no priority at
+        // all and could not be changed without first choosing a different one.
+        source.routes().upsert(Fixtures.route(1, "Von früher", priority = 9, medoidSessionId = "s-1"))
+        ArchiveRepository(context, source).export(uri())
+        ArchiveRepository(context, target).restore(uri())
+
+        assertEquals(Tuning.MAX_ROUTE_PRIORITY, target.routes().byId(1)!!.priority)
     }
 
     @Test
@@ -185,13 +200,13 @@ class ArchiveRepositoryTest {
         // The same session under the same id, but renamed route and a different
         // priority — the local copy is the one the user is looking at.
         seed(target)
-        target.routes().upsert(Fixtures.route(1, "Mein Name", priority = 3, medoidSessionId = "s-1"))
+        target.routes().upsert(Fixtures.route(1, "Mein Name", priority = -1, medoidSessionId = "s-1"))
 
         val report = ArchiveRepository(context, target).restore(uri())
         assertEquals(3, report.sessionsSkipped)
         assertEquals(2, report.routesSkipped)
         assertEquals("Mein Name", target.routes().byId(1)!!.name)
-        assertEquals(3, target.routes().byId(1)!!.priority)
+        assertEquals(-1, target.routes().byId(1)!!.priority)
     }
 
     @Test
@@ -263,8 +278,8 @@ class ArchiveRepositoryTest {
             ),
         )
 
-        db.routes().upsert(Fixtures.route(1, "Zur Arbeit", priority = 9, medoidSessionId = "s-1"))
-        db.routes().upsert(Fixtures.route(2, "Feierabendrunde", priority = 2, medoidSessionId = "s-2"))
+        db.routes().upsert(Fixtures.route(1, "Zur Arbeit", priority = 2, medoidSessionId = "s-1"))
+        db.routes().upsert(Fixtures.route(2, "Feierabendrunde", priority = -2, medoidSessionId = "s-2"))
         db.routes().insertMembers(
             listOf(RouteMemberEntity(1, "s-1"), RouteMemberEntity(1, "s-3"), RouteMemberEntity(2, "s-2")),
         )

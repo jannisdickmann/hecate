@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RecordedSession
@@ -223,7 +224,13 @@ class ArchiveRepository(
                 }
                 db.withTransaction {
                     db.sessions().insert(row.toEntity())
-                    db.sessions().insertSamples(session.samples.map { it.toEntity(row.id) })
+                    // The same join the live ingest does: an archive carries the
+                    // two series exactly as the watch wrote them, so a restore
+                    // has to put them together too. A session without a separate
+                    // series comes through unchanged.
+                    db.sessions().insertSamples(
+                        HeartRates.merge(session.samples, session.heartRates).map { it.toEntity(row.id) },
+                    )
                     if (session.matchLog.isNotEmpty()) {
                         db.sessions().upsertMatchLog(matchLogEntity(row.id, session.matchLog))
                     }
@@ -408,7 +415,14 @@ class ArchiveRepository(
             medoidSessionId = medoidSessionId,
             createdAt = createdAt,
             active = active,
-            priority = priority,
+            // Clamped on the way in, because an archive written before the scale
+            // was rescaled (schema v7) carries 1..10. Nothing would crash on a 9
+            // — it is an integer the matcher only ever compares — but the picker
+            // has no button for it, so the route would show no priority at all
+            // and the only way to change it would be to pick a different one
+            // first. A 9 becomes the top of the new scale, which is what it
+            // meant.
+            priority = priority.coerceIn(Tuning.MIN_ROUTE_PRIORITY, Tuning.MAX_ROUTE_PRIORITY),
         )
 
         fun Sample.toEntity(sessionId: String) = SampleEntity(

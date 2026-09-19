@@ -82,9 +82,10 @@ data class RouteEntity(
     @ColumnInfo(name = "medoid_session_id") val medoidSessionId: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "active") val active: Boolean = true,
-    /** The user's manual ranking, 1..10. Breaks ties the evidence cannot break:
-     *  see RouteEntry.priority in :core. Survives re-clustering, like the name. */
-    @ColumnInfo(name = "priority", defaultValue = "5")
+    /** The user's manual ranking, −2..2, zero meaning "no opinion". Breaks ties
+     *  the evidence cannot break: see RouteEntry.priority in :core. Survives
+     *  re-clustering, like the name. */
+    @ColumnInfo(name = "priority", defaultValue = "0")
     val priority: Int = de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY,
 )
 
@@ -210,16 +211,18 @@ data class SessionEventsEntity(
 }
 
 /**
- * The precomputed heatmap raster, one row for the whole database.
+ * A precomputed heatmap raster: one row per picture, and there are two of them
+ * ([CARD] and [FULL]).
  *
  * A blob rather than a table of cells: it is written whole, read whole, and
- * never queried — 20,736 counts as rows would be a table nothing ever selects
- * from. Recomputed by `ClusterWorker` on the same trigger as the routes, because
- * it is derived from exactly the same two things and would otherwise drift.
+ * never queried — millions of counts as rows would be a table nothing ever
+ * selects from. Recomputed by `ClusterWorker` on the same trigger as the routes,
+ * because it is derived from exactly the same two things and would otherwise
+ * drift.
  */
 @Entity(tableName = "heatmap")
 data class HeatmapEntity(
-    @PrimaryKey @ColumnInfo(name = "id") val id: Int = SINGLETON,
+    @PrimaryKey @ColumnInfo(name = "id") val id: Int = CARD,
     @ColumnInfo(name = "payload", typeAffinity = ColumnInfo.BLOB) val payload: ByteArray,
     @ColumnInfo(name = "computed_at_utc") val computedAtUtc: Long,
 ) {
@@ -230,8 +233,20 @@ data class HeatmapEntity(
     override fun hashCode(): Int = 31 * id + payload.contentHashCode()
 
     companion object {
-        /** There is only ever one heatmap, and this is its id. */
-        const val SINGLETON = 0
+        /**
+         * The card on the routes list: the routes' own extent, 16:9.
+         *
+         * Two rows rather than one, because there are two pictures of two
+         * different pieces of ground (`Heatmap.Extent`), and the routes screen
+         * must not pay for inflating the big one to show the small one. Two rows
+         * and not two tables or two columns, because the schema already has an
+         * id here — so this costs no migration at all.
+         */
+        const val CARD = 0
+
+        /** The full-screen view: everything inside the radius, in its own shape.
+         *  Read only when that view is opened. */
+        const val FULL = 1
     }
 }
 

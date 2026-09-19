@@ -15,9 +15,10 @@ import androidx.wear.compose.material3.dynamicColorScheme
  *  - **Scheme colours** (buttons, cards, body text) come from the watch face via
  *    `dynamicColorScheme`, so the app looks like it belongs on this watch. They
  *    carry no meaning; they are whatever the user picked.
- *  - **Status colours** ([HecateStatus]) are fixed. "Faster than usual" must be
- *    green on every watch face, not green-unless-your-watch-face-is-orange, so
- *    these deliberately opt out of dynamic theming.
+ *  - **Status colours** ([RouteTone], [DeltaTone], [HealthTone]) are fixed.
+ *    "Faster than usual" must be green on every watch face, not
+ *    green-unless-your-watch-face-is-orange, so these deliberately opt out of
+ *    dynamic theming.
  */
 @Composable
 fun HecateWearTheme(content: @Composable () -> Unit) {
@@ -32,25 +33,50 @@ fun HecateWearTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * Colours that mean something, held constant across watch faces.
+ * What the app knows about the route.
+ *
+ * Split from [HealthTone] on purpose, and the split is the point: these two used
+ * to share one palette, so "two routes still plausible" — a healthy matcher
+ * doing its job — was drawn in the same warning orange as "no GPS fix". Nothing
+ * in this object is allowed to look like a problem, because none of it is one.
  *
  * Chosen against a black background at the contrast the wrist needs in daylight:
  * these are read at a glance, mid-stride, through sweat.
  */
-object HecateStatus {
+object RouteTone {
     /** A route the matcher worked out from today's track (§5.6). */
-    val Matched = Color(0xFF6EE7A8)
+    val Confirmed = Color(0xFF6EE7A8)
 
     /** A route assumed from the user's own ranking, not from the track. A
      *  different colour because it is a setting, not a finding (US-4). */
     val Assumed = Color(0xFF7FB8F5)
 
-    /** Ahead of the median. Same green as [Matched] on purpose: both are "good". */
-    val Ahead = Matched
+    /** The leading candidate, named before there is a commitment to it. Plain
+     *  bright text: it is neither a finding nor a fault, just the current best
+     *  answer. */
+    val Likely = Color(0xFFF2F2F7)
+}
 
-    /** Behind the median, off route, or otherwise wrong. */
+/** Today against the route's own history. Green and red here mean fast and slow,
+ *  never good and broken — the health line owns that meaning. */
+object DeltaTone {
+    val Ahead = RouteTone.Confirmed
     val Behind = Color(0xFFFF8A80)
+}
 
-    /** Working on it: searching for a route, waiting for GPS, paused. */
-    val Pending = Color(0xFFFFCC80)
+/**
+ * Whether the recording is working. The only colours on the live screen that are
+ * allowed to alarm, and the reason the route line no longer can.
+ */
+object HealthTone {
+    /** Everything is landing on disk. Drawn, not omitted: "fine" has to look
+     *  different from "this line is broken". */
+    val Ok = RouteTone.Confirmed
+
+    /** Working, but with something worth knowing: paused, warming up, a poor
+     *  fix, no heart rate permission. */
+    val Degraded = Color(0xFFFFCC80)
+
+    /** Off route, no fix at all, or nothing reaching the file. */
+    val Failed = DeltaTone.Behind
 }

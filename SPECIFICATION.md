@@ -100,13 +100,21 @@ as one of my routes.*
 *As the user, some minutes into my workout the watch tells me which route I am
 on — and honestly says "unknown" when it does not know.*
 
-- Display states: `Suche…` (searching) → `Weg zur Arbeit` (committed) →
-  `Unbekannt` (null hypothesis dominant).
-- Commitment must not occur while two or more routes remain plausible; a shared
-  start segment leaves the display in `Suche…` for as long as the paths coincide.
-- Commitment is revocable: if evidence collapses, the display returns to
-  `Suche…` rather than showing a wrong name.
+- Display states, revised in A.27: `Noch am Vergleichen` (nothing decided yet) →
+  `Arbeit · Waldrunde` (several indistinguishable) → `≈ Weg zur Arbeit` (a
+  leader, named provisionally) → `Weg zur Arbeit` (committed) → `Neue Strecke`
+  (null hypothesis dominant). The original wording — `Suche…` and `Unbekannt` —
+  described the same states as failures and threw away a named favourite the
+  matcher was already carrying.
+- Commitment must not occur while two or more routes remain plausible; neither
+  may the provisional naming above. A shared start segment shows both names for
+  as long as the paths coincide.
+- Commitment is revocable: if evidence collapses, the display falls back to the
+  weaker claims above rather than showing a wrong name.
 - Never commits on a genuinely novel path.
+- No state of the matcher may be drawn in a warning colour. Whether the app
+  knows the route and whether the recording is working are separate questions
+  with separate lines (US-11).
 
 ### US-5 — Ahead/behind, before the route is known (must)
 
@@ -116,18 +124,27 @@ possible, even before the route is identified.*
 - While uncommitted, ahead/behind is computed against the pooled history of all
   still-plausible candidates (they share the traversed prefix, so they share its
   history).
-- Displayed as signed seconds vs. the median at the current position.
-- Suppressed only when the null hypothesis dominates.
+- Displayed as signed seconds vs. the median at the current position, and as a
+  bar down the right edge of the screen whose full-scale deflection is a
+  multiple of the route's own interquartile spread at the finish (A.27).
+- Suppressed only when the null hypothesis dominates, and frozen — not
+  recomputed — while the projected position is stale, so that a GNSS outage is
+  never charged to the user as lateness.
+- Where there is nothing to compare against, the cell shows the session's
+  average speed rather than a dash.
 
 ### US-6 — Remaining distance and arrival time (must)
 
 *As the user, once the route is known I see how far is left and when I will
 arrive.*
 
-- Remaining distance = route length − current position.
+- Remaining distance = route length − current position, also drawn as a
+  progress bar down the left edge of the screen (A.27).
 - ETA derived from the per-position median pace profile, scaled by today's
-  observed performance ratio.
-- Both suppressed while uncommitted (they are meaningless without a route).
+  observed performance ratio, and published as an absolute arrival instant so a
+  stale figure cannot walk forwards.
+- Both suppressed while there is no single route behind them. An unambiguous
+  leader counts, marked as provisional; a tie does not (A.4b, A.27).
 
 ### US-7 — Deviation alert (must)
 
@@ -145,8 +162,8 @@ the watch.*
 
 - Route list: name, length, number of recordings, median time, best time.
 - Route detail: table of all recordings (date, time, active duration, avg HR),
-  median/best/worst splits per kilometre, a plain polyline drawing of the route
-  geometry.
+  and a plain polyline drawing of the route geometry. Per-kilometre splits were
+  specified here, built, and removed again — see A.21.
 - Session detail: the same table row plus which route it matched, coverage
   score, and where commitment occurred.
 
@@ -287,9 +304,11 @@ dependency list.
   survives without one (matcher simply reports `Unbekannt`).
 - `Uploader` — on stop, and on service start (to catch reboot leftovers), puts
   each unacked session file as a `DataClient` Asset.
-- UI: three pager pages — **Live** (current metrics), **Route** (name, remaining,
-  ETA, ahead/behind), **Control** (pause/stop). Ongoing Activity notification
-  mirrors the key metric.
+- UI: two pager pages — **Live** (metrics, route belief, the two edge bars and
+  one health line) and **Control** (pause/stop). Layout adapts to the two watch
+  sizes at the platform's large-round breakpoint (`screenWidthDp >= 225`).
+  Ongoing Activity notification mirrors the key metric and takes its route
+  wording from the same place the screen does.
 
 Recorder state machine: `IDLE → PREPARING → ACTIVE ⇄ PAUSED → ENDING → IDLE`.
 `PREPARING` calls `prepareExercise()` and waits for a GNSS fix before
@@ -438,7 +457,7 @@ mismatch, an uninstall, and the loss of any un-uploaded session on the watch.
 | `:core` unit tests | metric, clustering, projection, profile maths | JUnit, synthetic geometries (5° divergence, self-intersecting loop, injected jitter) |
 | Replay harness | matcher decisions on real tracks | `ReplayMain` over a fixture set of stored sessions, golden-file assertions |
 | Wear emulator | service lifecycle, permissions, UI layout, Ongoing Activity | Emulator synthetic data — plumbing only; it emits a **single default route** with identical values every run, so it can never test matching |
-| Replay on the emulator | what the watch *shows* while matching: commitment, deviation, ahead/behind | `tools/emu replay` — a stored session fed to the recorder in place of the sensors, so the decisions are the matcher's own (A.20). Debug builds only; writes nothing, uploads nothing |
+| Replay on the emulator | what the watch *shows* while matching: commitment, deviation, ahead/behind | `tools/emu replay` — a stored session fed to the recorder in place of the sensors, so the decisions are the matcher's own (A.28). Debug builds only; writes nothing, uploads nothing |
 | Event injection | auto-pause handling | `adb shell am broadcast -a "whs.AUTO_PAUSE_DETECTED" com.google.android.wearable.healthservices` |
 | On-wrist | real GNSS noise, ambient batching, battery | Log to file, `adb pull` afterwards; no debugger survives a run |
 
@@ -605,14 +624,19 @@ these are correct and unhelpful: on a route family sharing 3 km of a 5 km run,
 the watch shows `Suche…` — and no remaining distance and no ETA — for most of
 the workout. The matcher is right that it cannot know. The user usually does.
 
-Implemented: every route carries an integer priority, 1..10, settable on the
+Implemented: every route carries an integer priority, −2..2, settable on the
 route detail screen and stored alongside the name. Where two or more routes are
 *contenders* — live, being tracked, and within `COMMIT_SEPARATION_M` of the
 nearest one — and exactly one of them outranks the rest, the matcher commits to
 that one and reports remaining distance and ETA from it. A tie at the top
 decides nothing and leaves the display searching, so the default (every route at
-5) reproduces the previous behaviour exactly; the feature is opt-in by
+0) reproduces the previous behaviour exactly; the feature is opt-in by
 construction rather than by a flag.
+
+The range was 1..10 until schema v7 rescaled it (A.21): only the *order* of
+these numbers has ever mattered, so ten values offered a precision the mechanism
+cannot use, and a neutral value of 5 out of 10 invited the user to spend the
+other nine.
 
 Priority does not touch the probabilistic weights, and cannot make the matcher
 believe the user is somewhere they demonstrably are not:
@@ -671,7 +695,8 @@ the `route_member` table, which is not in §5.5.
   Rows written before v2 keep NULL, because the value cannot be reconstructed.
 - `route.name_is_custom` — distinguishes an auto-generated name, which may be
   regenerated, from one the user chose, which may not.
-- `route.priority` — see A.4b. Like the name, preserved across re-clustering.
+- `route.priority` — see A.4b, and A.21 for the rescaling to −2..2. Like the
+  name, preserved across re-clustering.
 - `sample.active_ms` — §5.5 stores only `t_offset_ms`. Splits, ahead/behind and
   the profile all need elapsed *active* time, which cannot be reconstructed from
   the wall-clock offset once a session contains pauses.
@@ -713,7 +738,7 @@ prevent. See OPEN-POINTS.md §1.1.
 ### A.8 Scope not reached
 
 - §6.5's emulator layer has been exercised across every screen (A.19) and can
-  now be pointed at the matcher as well (A.20). What it still cannot reach is
+  now be pointed at the matcher as well (A.28). What it still cannot reach is
   anything needing two paired nodes — the Data Layer and Health Connect — for
   which see OPEN-POINTS §2.9.
 - §6.5's on-wrist layer has been exercised once:
@@ -737,15 +762,14 @@ anywhere shows pace.**
 
 - The watch's metrics page shows `10,8 km/h` where it showed `5:32 /km`.
 - The phone's session detail shows `Ø Geschwindigkeit … km/h`.
-- The per-kilometre splits table is headed `Kilometer-Splits (km/h)` and its
-  Median / Beste / Schlechteste columns are speeds. "Beste" still means the
-  fastest kilometre; the smallest time is the largest speed, so the column
-  picks the same member it always did.
+- The per-kilometre splits table was headed `Kilometer-Splits (km/h)` and its
+  Median / Beste / Schlechteste columns were speeds, "Beste" still meaning the
+  fastest kilometre. That table has since been removed altogether (A.21); the
+  rule it illustrated holds for everything that remains.
 
 This is a presentation change and nothing more. The stored measurement is
-unchanged — the route profile holds cumulative *time* per bin (§5.7), splits are
-the seconds a kilometre took, and `deltaVsMedianS` is still seconds against the
-median (A.2 of the open points has the sign convention). Speed is derived at the
+unchanged — the route profile holds cumulative *time* per bin (§5.7), and
+`deltaVsMedianS` is still seconds against the median (A.2 of the open points has the sign convention). Speed is derived at the
 formatter and never persisted, so no database column, no bundle field and no
 wire constant moves, and existing sessions need no migration.
 
@@ -1023,19 +1047,19 @@ compile error rather than a blank space at run time — which is what it used to
 be, back when the icon was chosen by matching the string `"RUNNING"`.
 
 **Fast and hard recordings are marked.** A recording is marked fast when its
-average speed is at or above the 75th percentile of the recordings on the same
-route, and marked for effort when its average heart rate is. Three decisions
-worth naming:
+average speed is at or above the 85th percentile of the recordings on the same
+route — the 75th until A.21 raised it and gave the mark an arrow — and marked
+for effort when its average heart rate is. Three decisions worth naming:
 
 - **Per route, or not at all.** A recording with no matched route has nothing to
   be fast against and is never marked. Ranking is within the route, so the best
   climb of a slow hilly route is marked even though every recording of the flat
   route beat it.
-- **Four members minimum.** A route exists at three (§5.6), and the 75th
-  percentile of three values is "the best one" wearing a statistician's hat.
-  Four is the first count at which the top quartile is genuinely a quarter, and
-  even then it is one recording — this marks a personal best against the route
-  and claims no more.
+- **Four members minimum.** A route exists at three (§5.6), and a percentile of
+  three values is "the best one" wearing a statistician's hat. Four is the first
+  count at which the threshold falls between two recordings rather than on one,
+  and even then only the best of them clears it — this marks a personal best
+  against the route and claims no more.
 - **Speed and heart rate rank independently**, because a hard effort on a slow
   day is worth seeing precisely when the two come apart. Heart rate ranks only
   over the members that have one, and only if at least four do: a route whose
@@ -1061,7 +1085,7 @@ different words: not installed, too old, or simply not granted yet. The state is
 re-read on every `onResume` and whenever the panel appears, since both the grant
 and its removal can happen outside this app.
 \n
-### A.14 A heatmap of everything, drawn inside the routes' own extent
+### A.14 A heatmap of everything, drawn around the routes' own extent
 
 Not in the specification. §4 rejected every maps SDK and §8.5 defers charts; this
 is neither. It is the app's own tracks drawn against an empty ground, with no
@@ -1074,19 +1098,25 @@ history — the same pass the clusterer already makes over the same data — so
 `ClusterWorker` builds it and stores it, and the routes screen reads a row. It
 runs last in that worker, after the bundle is pushed, so a failure while drawing
 can never cost the watch its routes. Schema v4 holds it as one gzipped blob:
-written whole, read whole, never queried, and 20,736 counts as rows would be a
-table nothing ever selects from.
+written whole, read whole, never queried, and a raster's worth of counts as rows
+would be a table nothing ever selects from. (A.21 made the raster a great deal
+larger and run-length encoded the blob; everything else here still holds.)
 
-**The extent comes from the routes, never from the recordings.** This is the
+**The extent is anchored on the routes, never on the recordings.** This is the
 whole reason the feature needed thinking about. One trip to another city is a
 recording, not a route, and if it got a vote on the bounding box then everything
 you actually run would be squashed into a corner of the picture by a thing you
-did once. So the box is the routes' box, padded by 8% and then *grown* — never
-cropped, never stretched — to the raster's 16:9. Recordings still contribute
-their heat wherever they cross that box; they simply do not get to move it. A
-sample outside the box is dropped rather than clamped, because clamping piles
-every distant point onto the border cells and draws a hot frame around a map
-with nothing at its edges.
+did once. So the box starts as the routes' box, padded, and is *grown* — never
+cropped, never stretched. A sample outside it is dropped rather than clamped,
+because clamping piles every distant point onto the border cells and draws a hot
+frame around a map with nothing at its edges.
+
+(A.22 stretched that box until it held the recordings too, because one that
+stops at the routes cuts real tracks off at an invisible line. A.23 replaced
+that compromise with two boxes: this one, unchanged and 16:9, for the card, and
+a second covering everything inside the radius for the view that pans. Both
+paragraphs below describe the card; the full-screen extent is `Extent.EVERYTHING`
+and leaves nothing out at all.)
 
 **The radius filter is about believing coordinates.** Any route or recording
 with a point more than `HEATMAP_MAX_RADIUS_M` (100 km, configurable) from the
@@ -1606,7 +1636,653 @@ app. Both now use `HecateDatabase.MIGRATIONS`. A.16 exists because a migration
 nobody replays is a crash on a real phone; a test that replays a different list
 from the app's is the same hazard wearing a passing badge.
 
-### A.20 Replaying an activity into the recorder
+### A.21 A filter, a louder mark, a heatmap worth looking at, and one table fewer
+
+Six changes, all from using the phone app against a real history. Four of them
+are about *reading* a screen rather than about what is on it.
+
+**The recordings list has an activity filter, offering only activities that
+exist.** A chip row above the list, from `ExerciseType.entries` intersected with
+the history — a chip for a sport the user has never recorded can do exactly one
+thing, empty the list, and reads as a promise the app cannot keep. The row hides
+itself entirely below two kinds of recording, because a filter with one option
+and an "Alle" beside it says the same thing twice.
+
+The filter lives in the view model rather than in the screen, so that a trip
+into a recording and back does not silently drop it — the list is restored to
+where it was scrolled (A.13), and coming back to that scroll position in a
+differently filtered list is worse than not restoring it at all. It is *derived*
+rather than stored: what the user picked, unless that activity has since stopped
+occurring. Delete the last ski tour while filtered to skiing and the alternative
+is an empty list, no chip selected, and — once one activity is left and the row
+hides — no way back out of a state with no visible cause. Marking stays over the
+whole history: a recording is fast against the others on its route, and
+narrowing what is on screen does not change which those are.
+
+**The standout mark is rarer and louder.** The threshold moves from the 75th
+percentile to the 85th, which is roughly the best in seven rather than the best
+in four; on a commute ridden sixty times, fifteen emphasised rows had stopped
+being emphasis. Rarer needs louder, and the two are one change rather than two:
+a mark on a quarter of the rows is found by comparing two rows, while a mark on
+one row in seven has to be findable by scanning, and a shade of colour with a
+slightly heavier weight is not. So the figure now carries an upward arrow —
+`res/drawable/ic_arrow_up.xml`, one more Material Symbol beside the activity
+icons, for the reason A.11 gives: `Icons.Filled` has no upward arrow and
+`material-icons-extended` would ship every icon that is not this one. The
+constant is `Standouts.PERCENTILE`; §3.7 of the open points was the prediction
+that a quarter would be too many.
+
+**The heatmap is a heatmap now.** It looked like a spreadsheet with the numbers
+hidden, and three separate things were responsible.
+
+- **A cell is now a fixed size on the ground.** The raster was 192×108 whatever
+  it covered, so a cell was 40 m across a town and 400 m across a county: how
+  much detail the picture had depended on where else the user had been. It is
+  now `HEATMAP_CELL_M` = 15 m always, and the raster is as many cells as the
+  extent needs — a few hundred thousand for a town, and capped at
+  `HEATMAP_MAX_CELLS` = 3 million, past which the cell *doubles* until it fits.
+  Doubling rather than scaling to fit, so the cell stays a fixed physical size
+  per zoom level and two rasters of the same ground line up. The cap is reached
+  at an extent of about 35 × 20 km, and the extent can never exceed the 100 km
+  radius filter, so the worst case is bounded and known.
+- **The raster counts passes, not samples.** A sample is a second of somebody's
+  life, so counting samples measured how *slowly* the ground was covered: five
+  minutes waiting at a level crossing outshouted a route ridden sixty times, in
+  one cell. Each recording now contributes at most one count per cell it passes
+  through, and the segment between consecutive samples is drawn rather than its
+  endpoints — which is also what stops a 15 m cell going empty because nobody's
+  receiver happened to fire inside it. A gap beyond
+  `MAX_INTERPOLATION_GAP_M` is a dropout and is not bridged, the same rule and
+  the same constant resampling a track already uses.
+- **A Gaussian blur before the colour ramp.** This is what turns counts into
+  density, and it is a blur rather than a coarser grid because the two are not
+  the same thing: a coarse grid quantises, a blur spreads. σ is 1.5 cells, about
+  22 m of ground — one GNSS error — so a drawn track is as wide as the
+  uncertainty about where it was. Wider merges streets a block apart. It is
+  applied at drawing time rather than stored, so the counts stay what was
+  measured and changing σ costs a redraw rather than a re-clustering of the
+  whole history. The ramp normalises against the *blurred* peak, since a blur
+  lowers the peak it spreads.
+
+Two consequences followed. The blob is run-length encoded: the raster is now
+millions of cells, almost all of them zero, and gzip compresses those perfectly
+well but a decoder does not survive four million JSON integers. The reader still
+accepts the old shape — every cell as an integer, and no cell size, which is its
+extent over its width — because the alternative is a routes screen with no
+picture on it until the next clustering, over a file this code can plainly
+understand. And the work moved off the main thread — the stored raster is decoded with `flowOn`, and the
+bitmap is built in a `produceState` on `Dispatchers.Default`; the blur alone is
+about 300 ms on a laptop at the cap.
+
+**The heatmap opens full screen, and drags.** The card is a thumbnail of a
+raster far finer than a card can show. Tapping it opens a `Dialog` with the
+platform width rule off — covering the system bars, rather than becoming a
+fourth entry in the screen enum, which would put a picture into the back stack
+beside the panels and the details. Pinch to zoom to 8×, drag to pan, and the pan
+is clamped against the *drawn* picture rather than the window: the picture is
+16:9 inside a taller screen, and clamping against the window lets it be dragged
+off the edge and lost. Both views share one bitmap.
+
+**Priority is −2..2 in a single button group.** Only the order of these numbers
+has ever mattered — nothing multiplies by a priority — so ten values asked for a
+precision the mechanism cannot use, and choosing between a 6 and a 7 for a route
+is a question with no answer. Five values, centred on zero, each of which is a
+sentence a person can mean: ganz hinten, eher nicht, keine Meinung, eher schon,
+ganz vorn. A neutral value of 5 out of 10 also invited the user to spend the
+other nine; a neutral value of 0 does not. (Those five sentences were printed
+above the picker until A.22, which took them off: a centred row of five already
+reads as less to more.)
+
+Schema v7 rescales it, and **resets every route to 0** rather than mapping the
+old value on. The old default was 5, so all but a handful of routes hold a
+number nobody chose, and nothing distinguishes those from a deliberate 5 —
+mapping would turn a value nobody picked into a value nobody picked on a
+different scale. The table is rebuilt rather than updated, because the column
+default changes and SQLite has no `ALTER COLUMN`: the twelve-step rebuild from
+the SQLite manual, minus the steps for indices and triggers that `route` does
+not have. Foreign keys are off while Room runs a migration, so dropping the
+parent does not cascade into `route_point`, `route_profile` and `route_member`,
+and the rename does not rewrite their `REFERENCES` clauses. Every clause of that
+sentence fails silently, so `MigrationTest` now puts rows in all three children,
+migrates, reads them back, and then deletes the route to prove the cascade still
+works. A restore clamps what it reads, since an archive written before v7
+carries 1..10 — a 9 is not a crash, it is a route whose priority the picker has
+no button for and therefore cannot be changed.
+
+**Both drawings are coloured by effort.** The track on both detail screens, and
+the altitude profile under it, are drawn in four bands: Leicht, Mittel, Intensiv
+and Höchstleistung, at 70 / 80 / 90 % of the user's peak heart rate. The
+boundaries are the conventional ones and are fractions of the peak rather than
+of the heart-rate reserve, which would need a resting rate this app has never
+measured. Four bands because this exists to be seen, and a reader tells four
+colours apart at a glance and seven never; blue → green → orange → red because
+that is the order every heart-rate display in the sport uses and it runs cool to
+hot, which is the one ordering of hues a person infers without a legend. The
+colours are fixed rather than scheme roles, for the reason the start and end
+markers are: a wallpaper must not be able to turn a maximal effort into the
+colour of an easy day.
+
+The peak rate is a setting, defaulting to 180 bpm. Not `220 − age`, which is the
+best known number in amateur sport and one of the worst — its spread across
+people is 10-12 bpm, so for one person in three it is out by more than a whole
+band. It lives in the `meta` table, which the backup archive already carries: a
+setting stored anywhere else is a setting that does not survive a restore.
+Changing it recolours every chart already on screen, because the screens read it
+as a flow rather than at load.
+
+Where the heart rate comes from differs by screen and is worth writing down. A
+recording's is its own samples, carried along with the position and with the
+altitude profile — `Elevation.Point` gained an `hrBpm` for exactly this, because
+a parallel list would have to be thinned in lock-step with the points by every
+caller, and the moment it is not, the colours slide along the line. A route's is
+the per-bin median over its members, which `route_profile.median_hr` has held
+since the beginning; a route point's distance along the route says which bin it
+is in, so it is a lookup rather than an interpolation. Consecutive segments in
+the same band are drawn as one path — two hours is seven thousand segments and,
+ordinarily, a handful of colour runs.
+
+"Ordinarily" is doing work there, and it is why the rate is passed through a
+15 s rolling median first. An effort a few beats under a boundary reaches over
+it every few seconds, and without smoothing the line would alternate between two
+colours every few pixels: noise rendered at the resolution of a decision, and
+also seven thousand paths where there should be six. A median rather than a mean
+because a real effort ramping up is a monotonic run and a median is the identity
+on those — the same property, and now literally the same function
+(`Series.rollingMedian`), that the altitude de-spiking in A.20 rests on. What it
+cannot do is settle a rate balanced exactly on a boundary: that case has no band,
+and no filter can invent it one. The profile draws its band twice: as the fill
+under the curve, which is what makes a profile read as ground, and as the line
+itself, which is exactly where the data is. (It was drawn a third time as a
+full-height band behind the chart; A.22 says what a real profile did to that
+argument.) A stretch with no reading gets no band at all rather than a grey one,
+so absence looks like absence rather than like a fifth band, and the legend
+appears only where there was something to colour.
+
+**The kilometre splits are gone from the route screen.** Removed on request, and
+with them the reconstruction behind them: every member of the route was
+projected onto the route geometry to find its crossings of each kilometre mark,
+which was the most expensive thing the route detail screen did. The route
+profile still holds the per-bin median times — it is what the matcher compares
+against live (§5.7) — so nothing the watch does changed. `Format.speedOverKm`
+went with the table; A.19 is the record of the day that table spent contradicting
+itself.
+
+### A.22 Six notes from the first hour with a real history on a screen
+
+A.21 was written against synthetic data and rasterised PNGs. This is what the
+same six screens looked like with 66 real recordings behind them on a phone
+emulator, and it is mostly about the difference between *correct* and *legible*.
+
+**The activity filter is ordered by frequency, commonest first.** It was in the
+enum's order, which is the order the five sports were added to the app — so on a
+history of 46 rides, 13 walks, 6 ski tours and one walk to the shops, the first
+chip after "Alle" was whichever sport happened to come first in a list in the
+source. The row now counts the history and sorts by it, ties keeping the enum's
+order so that two equally common activities do not swap places on every ingest.
+Nothing else about the filter changed; the derivation that hides an activity
+which has stopped occurring is still what decides *which* chips exist.
+
+**A matched route's name is cut to twenty characters.** The pill on a recording
+row is as wide as what is in it, and routes are named automatically — "Route 1
+(Rad früh, 16,9 km)" — so the pill grew until it pushed the distance off the
+row. `Format.routeName` cuts at 20 and adds one ellipsis character, trimming a
+trailing space first so the cut does not read as a typo. Twenty is about as much
+as anyone reads to recognise a route they named themselves, and the whole name
+is one tap away on a screen with a line to spare for it.
+
+**The heatmap was cut off, and it was cut off by its own extent.** (A.23 keeps
+the diagnosis and changes the cure: the card went back to the routes' own box
+and the full-screen view got an extent of its own. What follows is why the
+single extent was grown, which is still the reason there are now two.) The box came
+from the routes and stopped there (A.14), which is right about *where* the
+picture is and wrong about *how big*: on the history above, a fifth of all
+sample points lay outside it and were dropped, so tracks ended in mid-air at an
+invisible line. The rule is now that the routes anchor the extent and the
+recordings may extend it, out to `HEATMAP_EXTENT_REACH` — one route-span — past
+them. Beyond that a recording gets no vote at all, not even the edge it would
+have been clamped to: the 17 km-away ride in that history is a place, not a
+neighbourhood, and stretching the picture to reach it would squash the ground
+the picture is about. What that ride gets instead is a mention: the caption now
+says how many recordings are inside the radius but outside the picture, because
+a recording that is not drawn looks exactly like one that was never made.
+
+The extent also stopped being forced to 16:9. (A.23 put that back for the card
+and dropped it for the full picture — see there.) Growing a 4 × 14 km corridor to
+one fixed shape made it 25 km wide, nine tenths surface, and then cost a
+doubling of the cell size to stay under the cap — so the fixed ratio became a
+range, `HEATMAP_MIN_ASPECT`..`HEATMAP_MAX_ASPECT`, and inside it the picture is
+whatever shape the ground is. The bounds are what the two views can show:
+squarer than 1:1 is a card taller than it is wide, which pushes the routes list
+off its own screen, and wider than 16:9 is a letterbox. The same history that
+came out 29 × 16 km at 16:9 is 20 × 20 km now, covering more ground in fewer
+cells, still at 15 m.
+
+**The low end of the colour ramp was invisible.** Nearly everything on a heatmap
+is down there — the lane crossed twice is most of the picture by area, and the
+commute is a handful of cells — and the lowest step was 27 % alpha of a very
+pale blue on a near-white surface. Two things were wrong. The step itself is now
+a shade darker and half again as opaque, in both ramps, with the top of each
+ramp taken down by as much so the range between a lane and a commute is no
+smaller. And `LOW_FADE`, the share of the scale over which the lowest step fades
+in from nothing, came down from 0.18 to 0.06: it exists to keep the outermost
+ring of the blur from drawing a hard edge, and at 0.18 it was also halving the
+opacity of every lane on the picture. A cell crossed once lands at about t = 0.10
+on a history whose busiest cell has been crossed forty times, which is exactly
+the range that was being faded out.
+
+**The effort band on the altitude profile is under the line only.** It used to
+be drawn a third time as a 10 % band running the full height of the chart, on
+the argument that a hard stretch on flat ground leaves the curve too little to
+colour. Seen on a real profile, that argument loses: a band above the line
+colours sky, the sky is the one part of the picture where nobody was, and the
+eye — which reads a tint as the area under something — finds the curve in the
+middle of its own colour and stops reading the chart as ground. The fill under
+the curve went from 34 % to 42 % at its top to carry the band on its own, which
+is where the reader is looking anyway.
+
+**The priority picker lost its captions.** "0 · keine Meinung", "+1 · eher
+schon" — five buttons on a centred scale do not need naming twice, since the row
+already reads left to right as less to more and the line under it says what the
+scale decides. The second sentence of that line went too: it said that a tie
+leaves the watch on "Suche…", which is a description of what happens when the
+user does nothing, written above a control they are looking at *because* they
+are about to do something. The words themselves are not lost — §A.4b and the
+README still say what the five positions mean, which is where a sentence about
+the mechanism belongs.
+
+### A.23 Two pictures of the same ground, and one chart drawn four times
+
+Three changes, all of them from the same session with the app as A.22: one
+correction to what A.22 did, one gesture that was wrong in a way arithmetic can
+state exactly, and the two charts the screens had been missing.
+
+**The heatmap is two rasters now, not one.** A.22 grew the single extent until it
+held the recordings as well as the routes, and that was the wrong shape of answer
+— it made the card worse to make the full-screen view better. The two views are
+asking different questions. The card above the routes list is about the routes:
+their own box, grown to 16:9 because it is a card in a scrolling list, and a
+recording that wandered elsewhere colours what it crosses without getting a vote
+on where the box is. The full-screen view is about where you have been, so its
+box holds every recording the radius filter kept, in whatever shape that ground
+happens to be — it pans and zooms, so nothing has to be left out to make it fit
+and no ratio has to be imposed to make it a card.
+
+`Heatmap.build` therefore takes a `Heatmap.Extent`, and `ClusterWorker` runs it
+twice over the same coordinates, storing the two rasters as two rows of the
+`heatmap` table. Two rows rather than two columns or two tables because the
+schema has carried an id since v4 and never used it for anything: no migration,
+and the routes screen goes on inflating only the small one. The big one is read
+when the dialog opens and dropped when it closes, which is the other half of the
+same decision — it is the larger raster of the two and there is no reason for it
+to sit in memory behind a list.
+
+The caption differs between them and that is the point: on the card it can say
+"1 außerhalb des Ausschnitts", and on the full picture that number is zero by
+construction. An install that has not re-clustered since the second row existed
+has only the first, and the dialog falls back to it rather than waiting for a
+raster nobody has computed: the smaller ground is what the user was already
+looking at, and the next clustering replaces it. `HEATMAP_EXTENT_REACH` is gone, along with the aspect *range* A.22
+introduced; `HEATMAP_ASPECT` is back to being one ratio for the one picture that
+needs one.
+
+**Pinch zoom now has a place.** It scaled about the picture's own centre however
+far from the centre the fingers were — "it seems to zoom to some arbitrary
+point", and arbitrary is precise: the centroid had nothing to do with it. A
+point p is drawn at s·p + t; for whatever is under the centroid c to stay under
+it while s becomes k·s, the translation has to become
+
+    t' = c − k·(c − t) = c·(1 − k) + k·t
+
+with c measured from the centre the picture scales about. That is the whole fix.
+The clamp stays as it was — the picture may travel only as far as its own edge —
+and on an axis the picture does not yet fill there is nowhere to go, so the
+anchoring is given up there rather than dragging empty surface into view. Where
+it matters it holds exactly, and provably: the anchoring asks for |c|·(s − 1) of
+offset, the clamp allows (drawn·s − window)/2, and for a centroid inside a window
+the picture covers, the first is the smaller.
+
+It is `Viewport.pinched`, a pure function, for one reason: a wrong zoom centre is
+not a crash and not even a wrong picture. It is a gesture that works, magnifies
+the right amount, and magnifies the wrong place — invisible to anything that
+checks a screenshot, and exactly what a test can pin. Six of them do.
+
+**Speed and heart rate against time, on both detail screens.** Four charts exist
+now, and they are one composable: `BandedChart`, with `ElevationView`,
+`SpeedView` and `HeartRateView` as three-line adapters saying what their axes
+mean. The point of that arrangement is not brevity — it is that four charts
+maintained separately do not stay the same shape for a month, and "the same
+shape" here is specific: the same vertical exaggeration, the same four intensity
+colours in the same bands, the same fill under the line and nothing above it
+(A.22), the same thinning, the same treatment of a gap. The thinning moved to
+`Series.thin`, generic over the point type, for the same reason: it is the
+function that decides whether a peak survives being drawn, and two copies of it
+would eventually disagree about that.
+
+Both new charts are coloured by heart rate rather than by their own value, and on
+the speed chart that is the whole reason to have it: 30 km/h in blue is a
+descent, 30 km/h in orange is work, and no single-colour speed trace says which.
+On the heart-rate chart colouring by the value is not a tautology either — it is
+what puts the four zone boundaries onto the trace, so the chart answers "how long
+was I in the orange" with no axis to read.
+
+The numbers come from `Timeline`, in `:core` with the rest of the arithmetic. A
+recording's speed is measured over the travelled distance between consecutive
+samples, with a dropout left as a gap rather than averaged across — a straight
+line through unknown terrain is not a path anybody took — and then passed through
+the same rolling median as everything else, because speed is the one quantity on
+these screens that is a *derivative* and 15 m of GNSS noise in one second is
+54 km/h of sprint that never happened. The axis is active time, so a café stop
+closes up instead of spending a fifth of the chart saying nothing happened.
+
+A route's speed comes from the per-bin median times its profile has held since
+the first schema, and it needed one piece of care that only real data showed. The
+medians are taken per bin independently, so the sequence is monotone on average
+and not in fact: two adjacent bins came out a hundredth of a second apart, which
+over a ten metre bin is four thousand kilometres an hour, and the first real
+route drew exactly that — one spike, and a flat line underneath it. The
+difference is therefore taken across `ROUTE_SPEED_WINDOW_BINS` = 15 bins (150 m,
+tens of seconds of riding) rather than between neighbours, and the result goes
+through the rolling median as well, which removes what a window cannot: a single
+large jump spread thinly across every window containing it. 4418 km/h became
+40.8, which is a bicycle going downhill.
+
+Neither the range nor the average is written under these charts by accident.
+Both screens already carry an average of their own — a recording's distance over
+its active time, a route's median duration — and a second "Ø", computed
+differently and disagreeing by a tenth, would be worse than no number at all. So
+the line under each chart is the range, which is the fact the chart's own
+exaggerated axis is hiding.
+
+### A.24 The watch was writing a clock that stood still
+
+A.23's speed chart was right on every takeout import and nonsense on everything
+the watch had recorded, which is the most useful shape a bug can have: the two
+differ in exactly one thing, and it was not the chart.
+
+**`Sample.activeMs` from the watch is not a series.** Health Services reports the
+active duration as a *checkpoint* — a value that was true at a stated instant —
+and it does not arrive with every batch. The recorder stamped whatever it last
+had onto each sample, so on two real rides four fifths of all sample intervals
+contained no time at all, and after an auto-pause the number came back *smaller*
+than before: three backward steps in one ride, one of them by 34 minutes. A
+chart of distance over that is a chart of distance over zero, which is either no
+speed or an enormous one, and the ride drew both.
+
+Nothing had noticed because everything that read it read it as a **total**, and
+the total is right: the footer is written once at the end of a session from a
+checkpoint that is current by then, and it agrees with the wall clock to a
+quarter of a percent. What reads it as a series is new — A.23's speed chart, and
+before it the per-bin median times of a route profile, which is how "am I faster
+than usual" is answered.
+
+The clock is therefore rebuilt from the one field on a sample that cannot lie:
+`tOffsetMs`, taken from a monotonic clock. Time between consecutive samples
+counts unless either end is paused, or the hole between them is longer than
+`MAX_INTERPOLATION_GAP_MS` — an auto-pause writes no samples at all and appears
+only as such a hole, a receiver dropout appears the same way, and the app cannot
+tell them apart. Counting it would invent active seconds for a workout that may
+have been standing still; not counting it under-counts a genuine dropout by its
+own length, which is the smaller and quieter error, and it is what every other
+part of this app already does with a hole that size.
+
+`ActiveClock.repair` is not a guess, and it did not have to be: run over the 62
+sessions of a real backup it reproduces the stored per-sample clock of **every
+takeout import exactly**, to the millisecond, and lands within a quarter of a
+percent of the footer's own total on both watch recordings — where the last
+sample's own figure was out by a factor of four. On those two rides the speed
+series went from 429 usable points out of 2686, spanning 1.2 to 34.8 km/h, to
+2684 points spanning 9.4 to 29.4, against a recorded average of 22.5.
+
+It is applied on the way out, every time, exactly as the altimeter de-spiking of
+A.20 is: what the watch said stays in the database and in every backup, so this
+can be changed later without a migration and without anyone having to trust that
+it was right the first time. `RecordedSession.timedSamples` is where it happens,
+and `Track.of` reads that rather than the raw samples — which also puts the route
+profiles back on a real clock at the next clustering, and with them the watch's
+own ahead/behind.
+
+The recorder was fixed too, so that new recordings do not need repairing: each
+sample's active time is now its own offset less every pause recorded before it,
+which is the same arithmetic done where the pauses are known first-hand. The
+live display and the footer keep using Health Services' checkpoint, because that
+is its authority and it is demonstrably right.
+
+**Heart rate had the same shape of problem.** A sample is written per *position*,
+and the rate stamped on it was whatever arrived in the same batch — so on those
+two rides only 28 % and 36 % of samples carried one. The sensor had not stopped;
+the batches simply do not line up. Read literally, that is a heart-rate chart of
+forty disconnected bars and a track drawn in the no-reading colour for two
+thirds of its length, about a ride whose effort was measured all the way along.
+
+A reading is therefore carried forward onto later samples for `HR_HOLD_MS` = 30 s
+and no longer — `Series.hold` on the phone, for recordings already made, and the
+recorder itself for new ones. Thirty seconds is chosen from both sides: it covers
+every ordinary hole between readings (the median is two to three seconds) with
+room to spare, and a rate half a minute old is still the right band for the
+effort, since the bands are ten percent of a peak wide. The sixteen or so holes
+per ride that are longer than that are the strap genuinely losing contact, and
+they stay holes — the chart draws the gap, which is the honest picture of a wrist
+sensor on a bicycle.
+
+**And one thing that is now visible and is not fixed here:** these recordings
+carry no altitude at all, so a watch recording has no elevation profile while a
+takeout import of the same route does. That is a separate question about what
+Health Services offers on this watch, and §3.11 of the open points is where it
+now waits.
+
+### A.25 A chart of a seven-hour walk
+
+A.24 fixed the clock underneath the speed chart, and the chart was still wrong —
+on a takeout import this time, which ruled out everything A.24 had just done. A
+25 km hike over seven and a half hours drew as two hundred disconnected bars,
+with a range that began "−−".
+
+**The thinning was eating the gaps.** `Series.thin` reduces a series to what a
+chart can draw, and the chart decided where the line stopped by asking how far
+apart two points were in time: more than a dropout's worth, and the line broke.
+Both rules are right and together they are nonsense. Twenty-seven thousand
+samples thinned to four hundred points leaves *two minutes* between neighbours
+on an ordinary continuous walk — so every step was a gap, and every pair of kept
+points became its own little bar. On a 45-minute ride the same arithmetic leaves
+twelve seconds between points and nothing showed.
+
+A hole is known while the whole series is in hand and cannot be recovered
+afterwards, so it is written down there: `Timeline.simplify` cuts the series at
+its holes, thins each piece in proportion to its own length, and marks the first
+point of each piece. The chart breaks where a point says to, not where it
+guesses. The gap threshold is gone from the drawing code entirely.
+
+**And the thinning was drawing noise it could not resolve.** Every bucket keeps
+its highest and lowest sample, which is exactly right for an altitude profile —
+the peaks are the ground — and exactly wrong for a rate at this scale: a hundred
+and forty samples per drawn point, of a walk that stops at every junction, is a
+solid band between standing still and nine kilometres an hour. True, and it says
+nothing about the walk. So a time series is now smoothed to the scale it will be
+*drawn* at, with a median as wide as the number of samples behind one point. A
+sustained effort is a monotonic run and passes through a median untouched, so
+what survives is what lasted long enough to be visible at all; a one-second GNSS
+excursion does not, and should not. Elevation keeps its peaks, and the asymmetry
+is the point: a position's extremes are the ground, a rate's extremes at an
+invisible scale are noise.
+
+The range under the chart now comes from the *drawn* series rather than the raw
+one. A caption naming a peak that is nowhere on the picture above it is a caption
+about a different chart.
+
+**"−−9,0 km/h"** was the third thing, and the smallest: `Format.speed` renders
+anything at or below zero as "–", which is right for an average nobody could
+compute and wrong for the slowest moment of a walk. Standing at a junction is a
+speed, and on a hike it is most of the interesting part of the range.
+`Format.speedRange` writes it as 0,0.
+
+### A.26 One reading per delivery is not a heart rate
+
+A.24 said the heart-rate coverage of a watch recording — 28 % of samples on one
+ride, 36 % on another — was a batching artefact, and held that the phone could
+repair it by holding each reading for thirty seconds. Both halves were wrong in
+the same place, and the number that shows it is this: that 47-minute ride
+contains **161 distinct readings**. One every seventeen seconds, from a sensor
+that measures every second, on a wrist that never left the handlebars.
+
+The recorder wrote one sample per *position* and stamped it with
+`hrPoints.lastOrNull()` — the last reading of whatever delivery had just
+arrived. Health Services batches, so a delivery can carry a minute of readings;
+every one but the last was discarded. Holding a reading for thirty seconds
+cannot bring back what was never written, and on that ride thirty of its
+forty-seven minutes sit inside holes longer than the hold. The charts were not
+lying. The file really is that empty.
+
+**A heart rate is its own series now.** It has its own sensor, its own clock and
+its own delivery schedule, so it gets its own record in the session file —
+`{"k":"r","v":{"t":…,"hr":…}}` — written for every reading in every delivery,
+deduplicated by time. Nothing else about the format changes, and the format's
+existing promise does the rest: a reader that has never heard of the record
+drops the line, so an older build reads a newer file as it always did.
+
+The two series are joined on the way into the phone's database
+(`HeartRates.merge`), where everything downstream wants one row per position
+carrying the effort being made at it. The join is by time and bounded:
+`HR_MERGE_TOLERANCE_MS` = 5 s, which is wider than either sensor's cadence and
+far narrower than the thirty seconds a reading is allowed to *stand* for on a
+chart. The two constants are different questions — "these describe the same
+moment" and "nothing better has arrived since" — and conflating them is how a
+reading from a climb ends up colouring a descent.
+
+What the merge cannot place, it drops: a reading taken while the receiver had no
+position has no row to live on. That is the same trade the app makes everywhere
+else about a dropout, and it is bounded by the same thing — positions arrive
+every second while a recording is running.
+
+**The recorder now says what it got.** At the end of a session the log carries
+`N Messpunkte, M Pulswerte`, because nobody had that second number until a ride
+came back with a fifth of one, and finding it out cost unpacking a backup and
+counting. The phone's ingest log says the same from its side, including how many
+readings found a position to sit on.
+
+**And absence stopped shouting.** A stretch with no reading was drawn in the
+scheme's primary colour, which under dynamic colour is frequently the brightest
+thing on the screen — so on a recording that is mostly coloured by effort, the
+eye went straight to the stretches where nothing had been measured. They are now
+the surface's own grey at 45 % alpha: the quietest thing on the picture, which is
+what "nothing was measured here" should look like. A drawing with no readings at
+all is unchanged — that is not a hole, it is simply a track.
+
+**And the count found something else.** With the numbers in the log, the very
+first test recording ended like this:
+
+```
+Sitzung bb65cc4c: 82 Messpunkte, 100 Pulswerte
+Sitzung bb65cc4c: 82 Messpunkte, 100 Pulswerte
+Sitzung bb65cc4c ohne Messpunkte — verworfen statt hochgeladen
+```
+
+Two threads, the same session, and then a file with 82 positions in it deleted
+for being empty. `endSession` is reached by two paths — the user pressing
+Beenden, and Health Services reporting the exercise ended — and on a real stop
+both arrive. Its guard read `sessionId` at the top and cleared it eight lines and
+three suspension points later, so both callers walked past it; the first consumed
+the sample counter and zeroed it, and the second read zero, concluded the
+recording was empty, and discarded it. The window had been there since the
+counter was introduced and is invisible without a number to print: every log line
+says what the *first* caller saw.
+
+It is a `Mutex` and one moved assignment — the id is cleared inside the lock,
+before the first suspension point, so a second ending finds nothing to end. Worth
+noting for what it says about §1 of the open points: the thing that can cost a
+recording was not the keystore or the link, it was two events arriving at once at
+the end of a workout.
+
+**The two rides already recorded cannot be repaired from their own files.** Their
+missing readings were never written. The only copies that still exist are
+Google's: the workout is in Google Health with its own heart-rate series, which
+means a future takeout export contains it, and Health Connect may hold it too.
+Reading either back into an existing recording is a feature this app does not
+have — §3.12 of the open points says what it would take and why it is worth
+deciding rather than assuming.
+
+### A.27 A watch that says what it knows
+
+The specification gave US-4 three display states — `Suche…`, the route name,
+`Unbekannt` — and the implementation drew the first and the last of them in the
+same warning colours it uses for a missing GNSS fix and a pause. Two of those
+decisions were wrong, and they were wrong in opposite directions: the watch
+sounded broken when it was working, and said nothing at all when it was not.
+
+**The words.** `Suche…` describes a search that might fail. What the matcher is
+actually doing is comparing today's track against routes it already knows, and
+from the very first sample it holds a weighted, named candidate list — seeded by
+how often each route is taken on this weekday at this hour (§5.6, "Priors at
+start"). None of that reached the screen. `Unbekannt` is worse: the null
+hypothesis winning is a *finding*, and a useful one — this is not one of your
+routes, run it a few more times and it becomes one. The states are now
+`Noch am Vergleichen`, `Arbeit · Waldrunde` (both names, while they are
+genuinely indistinguishable), `≈ Weg zur Arbeit` (the leader, named and hedged),
+the bare name once committed, and `Neue Strecke`. `Noch keine Routen` is now
+distinct from `Neue Strecke`: a bundle with no route of this exercise type is a
+fact about the phone, not about today, and the matcher reports the two
+separately.
+
+**The colours.** Nothing about the route may be drawn in a warning colour any
+more. `RouteTone`, `DeltaTone` and `HealthTone` are three objects precisely so
+that the compiler makes it awkward to put the health palette on the knowledge
+line again.
+
+**The other half.** Splitting the channels exposed how little the old status line
+ever said about the recording itself. Every one of these was invisible on the
+live page: a GNSS fix lost mid-workout (the fix state was rendered on the
+*control* page, which you have to swipe to); a fix present but far beyond
+`MAX_USABLE_ACCURACY_M`, where samples are silently rejected, the matcher's
+projected position freezes, elapsed time keeps running, and the only visible
+symptom is the ahead/behind figure drifting worse — the app blaming the runner
+for the receiver; and every recorder message, which only the *start* screen
+rendered, so a failed warm-up or a recording running without location permission
+was something you found out about after you stopped. One of those messages
+could never be seen at all: `bus.reset()` ran four lines after
+"Nichts aufgezeichnet — verworfen" was set and wiped it.
+
+There is now one health line, ranked by how much each state changes what you
+should do next, and one marker beside it that is always drawn — because an empty
+status line and a broken status line look identical, and "everything is fine"
+deserves to be a state the screen shows rather than the absence of one. It keeps
+its own one-second clock, since the states that matter most are exactly the ones
+where nothing is arriving to trigger a redraw.
+
+**Two bars, and what sets their scale.** The left edge carries progress along the
+route, the right edge today against the route's median: green upwards from the
+three o'clock anchor for ahead, red downwards for behind. They are drawn on a
+canvas *behind* the text, which is why they were affordable at all — the live
+page's height budget (§A.4's 175 dp inside a 41 mm face) is untouched, and what
+they cost is width, paid for out of the gutter and, on the smaller watch, two
+points of the primary numerals.
+
+The interesting question was the right-hand bar's scale. Being a minute down
+means something entirely different on a commute that never varies than on a ride
+that varies by ten, so the scale is the route's own interquartile spread at the
+finish, doubled, floored at 4 % of its median total time for a route whose
+members barely differ, and clamped to 45…900 s. Taken at the *finish* rather
+than at the current position on purpose: a scale that moved as you ran would
+make the bar swing while you held a steady pace.
+
+**What became honest on the way.** The live screen's speed cell had never once
+shown current speed — `speedKmh` was declared and never assigned, so the cell
+fell through to distance-over-time for the whole workout while its own comment
+said "how fast it is going right now". `DataType.SPEED` is now requested (and
+dropped by the capability filter where an exercise type does not produce it, per
+A.17), and where the fallback is used the unit says `Ø km/h`. The arrival time
+is published as an instant rather than as seconds-from-now, because the display
+recomputed `now + eta` on every recomposition: an arrival that had stopped being
+updated — after the matcher was disabled, say — walked a minute further into the
+future for every minute you looked at it. And a disabled matcher now clears its
+numbers instead of leaving a route name, a delta and an ETA frozen on screen
+under a headline saying the matcher is off.
+
+**What did not change.** Commitment still refuses to choose between routes on
+the same ground, and so does the provisional naming: a leader is named only when
+it is the sole contender, so `Arbeit · Waldrunde` is what a shared prefix shows
+— the honest answer, and still more than `Suche…` ever was. Priority (A.4b)
+remains the only thing that breaks such a tie.
+
+### A.28 Replaying an activity into the recorder
 
 §6.5 gives the replay harness the matcher's *decisions* and the emulator the
 *plumbing*, and between those two sits the thing this app is: the screen finding

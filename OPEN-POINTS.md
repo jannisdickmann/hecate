@@ -181,8 +181,9 @@ either; it ingests into Room and keeps no raw JSONL.
 ### 2.3 Route priority in use
 
 Priority (Appendix A.4b) breaks ties between routes that share the same ground.
-One integer per route, compared only against other *contenders*, and not
-context-aware — see §4 for why that is settled rather than pending.
+One integer per route, −2..2 since schema v7 (A.21), compared only against other
+*contenders*, and not context-aware — see §4 for why that is settled rather than
+pending.
 
 Two things to watch once you are using it:
 
@@ -277,7 +278,7 @@ though a Play image is likely necessary there too and that has not been checked.
 
 **What it would not buy**: matching. The watch's sensor data would still come from
 the synthetic provider and its one default route. That gap is answered instead by
-`tools/emu replay` (Appendix A.20), which needs no pairing at all — which is
+`tools/emu replay` (Appendix A.28), which needs no pairing at all — which is
 exactly why this is a decision rather than a blocker.
 
 ## 3. Known gaps against the specification
@@ -315,7 +316,7 @@ single-user sideloaded app, but it does mean every regression in the list above
 will still be found by wearing it. One of the two is at least repeatable now:
 `tools/emu replay` plays a stored activity into the recorder, so Compose, the
 match display and the deviation haptic can be watched against a real track
-without leaving the desk (Appendix A.20). It is still a human looking at a
+without leaving the desk (Appendix A.28). It is still a human looking at a
 screen, not a test.
 
 The first session on real hardware produced three defects, and the suite was
@@ -482,61 +483,208 @@ Also unverified, and cheap to check at the same time: `TimeText` now draws a
 clock the app never had, and the `EdgeButton` on the control page is positioned
 by the scaffold rather than by this code.
 
-### 3.7 The quartile thresholds have never met a real history
+### 3.7 The standout threshold has been raised once, on one history
 
-The recordings list marks a recording whose speed or average heart rate is in
-the upper quartile for its route (Appendix A.13). The arithmetic is tested —
-eleven cases in `StandoutsTest`, including that each route ranks against itself
-and that missing heart rates do not drag the threshold down — but tests use
-invented numbers, and the only question that matters here is whether the marks
-are *useful* against a real history.
+The recordings list marks a recording whose speed or average heart rate is at or
+above the 85th percentile for its route (Appendix A.13). The arithmetic is
+tested — twelve cases in `StandoutsTest`, including that each route ranks against
+itself and that missing heart rates do not drag the threshold down — but tests
+use invented numbers, and the only question that matters here is whether the
+marks are *useful*.
 
-Two things to watch once there are enough recordings to tell.
+The threshold was 0.75 and was raised to 0.85 by A.21, which is one judgement
+against one history: a quarter of a sixty-ride commute carried a mark and the
+emphasis had stopped reading as emphasis. Two things to watch.
 
-- **Whether a quarter is too many.** On a route done weekly for a year, a
-  quarter of the rows carry a mark, which may read as decoration rather than as
-  a signal. If so the fix is the threshold, not the mechanism: 0.9 marks roughly
-  the best in ten. The constant is `Standouts.QUARTILE`.
-- **Whether four members is too few.** At exactly four, the upper quartile is
-  one recording, and that recording changes every time a faster one arrives.
-  That is arguably correct — it is a personal best against the route — but it
-  means a brand-new route immediately marks one of its own recordings, which may
-  look like a claim rather than a fact.
+- **Whether one in seven is now too few.** 0.85 marks roughly the best in seven,
+  and on a route with a dozen recordings that is two rows. If the mark now feels
+  absent rather than rare, the constant is `Standouts.PERCENTILE` and nothing
+  else has to move.
+- **Whether four members is too few.** At exactly four, only the best recording
+  clears the threshold, and it changes every time a faster one arrives. That is
+  arguably correct — it is a personal best against the route — but it means a
+  brand-new route immediately marks one of its own recordings, which may look
+  like a claim rather than a fact.
 
 Also unverified, and only visible on a device: whether the two marks can be told
 apart at a glance. They are distinguished by colour — primary for speed,
-tertiary for heart rate — plus bold weight, and both colours come from the
-wallpaper under dynamic theming. A wallpaper whose primary and tertiary land
-close together would leave weight and the unit suffix doing all the work.
+tertiary for heart rate — plus bold weight and an upward arrow, and both colours
+come from the wallpaper under dynamic theming. The arrow is the same on both, so
+a wallpaper whose primary and tertiary land close together would leave weight
+and the unit suffix doing all the work of telling them apart.
 
-### 3.8 The heatmap has been rendered, but not on a phone
+### 3.8 The heatmap has been seen on an emulator, not on a phone
 
-The picture above the routes list (Appendix A.14) was checked by rasterising it
-off-device — `Heatmap.build` is pure JVM — against synthetic data with a commute
-ridden sixty times, a loop ridden twelve, a ride done twice, wanderings that
-never became routes, a holiday outside the extent and a glitched fix. Seventeen
-tests pin the extent, the radius filter, the aspect ratio and which way up the
-raster is. None of that is the same as looking at it on a phone with a real
-history behind it.
+The picture above the routes list (Appendix A.14, rebuilt in A.21, corrected in
+A.22) was first checked by rasterising it off-device — `Heatmap.build` and
+`Heatmap.blur` are pure JVM — against synthetic data; the tests pin the extent,
+the radius filter, the cell size, the line drawing, the blur and which way up the
+raster is. It has since been looked at on a phone emulator with 66 real
+recordings and four real routes behind it, in both themes, which is what found
+the two faults A.22 fixes: an extent that cut a fifth of the sample points off at
+an invisible line, and a bottom step of the colour ramp that could not be seen.
 
-Three things to judge there.
+What that leaves.
 
-- **Whether the log scale separates the right things.** It is tuned so that a
-  route ridden twice is visible at all next to one ridden two hundred times. If
-  everything looks equally hot, the scale is too compressive; if the rare stuff
-  vanishes, not compressive enough. Both are one line in `rasterOf`.
-- **Whether 192×108 is the right raster.** At a 10 km extent each cell is about
-  50 m, which is roughly GPS noise. On a much larger extent — routes in two
-  towns — cells get coarse and everything merges into blobs; on a small one the
-  grid may start to show as squares despite the filtering.
-- **Whether the warm route lines are right.** They were chosen against a blue
-  ramp on a neutral surface. The surface here is wallpaper-derived, so a strongly
-  orange wallpaper would put the lines close to their own background.
+- **Whether the log scale separates the right things** now that the bottom of
+  the ramp is legible. On the history above, a lane crossed once and a commute
+  ridden forty times are both visible and plainly different, which is the whole
+  requirement; on a history with two orders of magnitude between them it may
+  want the other direction. It is one line in `rasterOf`.
+- **Whether 15 m cells and σ = 1.5 are the right pair.** They are meant to make
+  a track as wide as the uncertainty about where it was, roughly 22 m of ground.
+  Too wide and two streets a block apart merge; too narrow and the picture goes
+  back to being a line drawing. On the emulator at 20 × 20 km of extent they hold
+  up; a denser town is the case that would break them. They are two constants in
+  `Tuning` and a redraw, not a re-clustering.
+- **Whether the reach is the right bound.** `HEATMAP_EXTENT_REACH` is one
+  route-span, which on the history above puts a ride 17 km from home outside the
+  picture and says so in the caption. Whether that is the right place to stop is
+  a judgement only more histories can settle: the failure in one direction is a
+  picture that squashes what you do daily to fit in something you did once, and
+  in the other a caption that keeps mentioning recordings nobody can find.
+- **What the cap costs in practice.** Past about 35 × 20 km of extent the cell
+  doubles, and nothing here has been looked at in that state. A history with two
+  homes in it is the case: it is also the case where the picture is of two towns
+  rather than of a street, so coarser cells may be exactly right.
+- **Whether the full-screen view is usable one-handed, and whether the pinch
+  feels right.** Pinch to 8×, drag to pan, tap to close. The gesture now holds
+  the ground still under the fingers (A.23) and `ViewportTest` proves the
+  arithmetic, but *proves* is the strongest word available here: a pinch cannot
+  be injected into these emulators at all. `adb shell input` has no second
+  finger, and SELinux refuses `sendevent` on `/dev/input/*` on a production
+  system image, which every Play-enabled AVD is. So the clamp, the anchoring and
+  the feel of the whole thing have been reasoned about and unit-tested, and not
+  once felt. It is the first thing to try on the phone.
+- **Whether the two extents are the right two.** The card is the routes' box and
+  the full-screen view is everything inside the radius (A.23). On the history
+  this was built against that reads well; on one with a second home 60 km away
+  the full picture becomes two towns and a great deal of nothing, at a cell size
+  the cap will have doubled. Nobody has seen that.
+
+Also worth timing on a device: the bitmap is built on `Dispatchers.Default` and
+the blur alone is about 300 ms on a laptop at the cap, so the card may show its
+empty extent for a visible moment on a large history. If that reads as a bug
+rather than as loading, the answer is probably a placeholder rather than a
+faster blur.
 
 Not yet decided, and only answerable with a real history: whether the extent
 should follow the routes of the *selected activity type* rather than all of
 them. A cycling route of 60 km and a running loop of 5 km in one picture means
-the running loop is a smudge.
+the running loop is a smudge. The recordings list has an activity filter now
+(A.21); the routes list has none, and this is the reason it might want one.
+
+### 3.9 The intensity colours have been seen on an emulator, not on a wrist-worn history
+
+(A.26 found what §3.9 could not: the colours were fine and the data was not —
+the recorder kept one heart rate per delivery and threw the rest away.)
+
+Both drawings on both detail screens are coloured by effort (A.21), and every
+part of that is arithmetic that produces a picture rather than an error: a wrong
+boundary still colours something. `IntensityTest` pins the boundaries, the
+saturation above the peak and the difference between "no reading" and "an easy
+one"; what it cannot say is whether the result is legible. A phone emulator
+carrying 66 real recordings answered one of the three questions below and left
+the other two open.
+
+- **Whether the 15 s median is enough at a boundary.** An effort sitting a few
+  beats under 80 % settles to one colour after smoothing; one balanced exactly on
+  the line still alternates, because it genuinely has no band. If that reads as
+  noise on a real ride, the answer is hysteresis — remember the previous band and
+  require a margin to leave it — which is a change to `Intensity` and its tests
+  and to nothing else.
+- ~~Whether the full-height backdrop is too much.~~ Answered on the emulator:
+  yes, and worse than stripes — it coloured the sky above the line, where nobody
+  was. A.22 removed it, and the effort is now the line and the fill under it.
+- **Whether 180 bpm is a reasonable place to start.** It is a plausible figure
+  for a fit adult in their thirties and nothing more; the setting is under
+  Einstellungen → Belastung, and the bands are listed there in bpm precisely so
+  that a wrong default is obvious rather than invisible.
+
+Worth knowing: a route's colours come from `route_profile.median_hr`, which has
+been filled since the first schema but is null for any bin whose members carried
+no heart rate. A route whose recordings all predate a strap draws plain, like
+such a recording does.
+
+### 3.10 The speed chart is an inference, not a measurement
+
+(A.24 found the first thing this predicted: the chart was fine on imports and
+nonsense on watch recordings, because the clock underneath it was. What follows
+is what is left after that.)
+
+A.23 added speed and heart rate against time to both detail screens. The heart
+rate is a column being drawn. The speed is not: it is a derivative of the
+positions, and every decision behind it is visible only as a shape.
+
+- **Whether smoothing to the drawn scale hides something worth seeing.** A long
+  recording is now median-filtered at the width of one drawn point before it is
+  thinned (A.25), so a seven-hour walk is a line rather than a solid band. A
+  sustained effort survives a median and a one-second excursion does not, which
+  is the intent — but the width follows the *duration*, so the same sprint is
+  drawn on a 40-minute ride and smoothed away on a six-hour one. Whether that
+  ever matters is a question for a long ride with something real in it.
+- **Whether 15 s of rolling median is the right width for a recording.**
+  Narrower and a single wandering fix becomes a sprint; wider and a real sprint
+  becomes the average of what surrounds it. `Tuning.SPEED_MEDIAN_WINDOW`, and a
+  redraw rather than anything stored.
+- **Whether 150 m is the right baseline for a route.** The per-bin median times
+  are monotone only on average, and differencing neighbours produced 4418 km/h
+  on the first real route it met — `ROUTE_SPEED_WINDOW_BINS` is the fix and 40.8
+  km/h was the result, which is a bicycle going downhill but has not been
+  checked against what that descent actually is. A route with a genuinely fast
+  short stretch is the case that would say whether the window is too wide.
+- **Whether a chart of a route's *typical* speed is a thing anybody wants.** It
+  is the median of every ride there, so it is nobody's ride. It may turn out to
+  be the most useful chart on the screen — it is the one that says where this
+  route is slow — or it may turn out to be a shape with no reader.
+
+### 3.11 A watch recording has no altitude
+
+Both rides in the first real backup carry no altitude on any sample, while a
+takeout import of the same commute carries one on every sample. So the elevation
+profile, the ascent and descent figures and the height band — everything A.20
+built — are simply absent from a recording made on the wrist, and present on the
+same ground imported from Google Health.
+
+The recorder rejects an altitude that is not finite or that falls outside
+`MIN_ALTITUDE_M..MAX_ALTITUDE_M`, which was written for the emulator's synthetic
+provider sending `Double.MAX_VALUE` (A.18). Whether the watch is sending such a
+sentinel, sending nothing at all, or needs `DataType.ELEVATION_GAIN` requested
+alongside `LOCATION`, is not answerable from the data: a rejected value and an
+absent one look identical once written. The next thing to do is to log what
+`LocationData.altitude` actually contains on a real recording — one line, one
+ride — and then decide.
+
+Worth knowing before anyone spends time on it: a barometric altitude is what
+makes a profile worth having, and whether this watch exposes one through Health
+Services at all is the first question, not the last.
+
+### 3.12 Backfilling a heart rate the recorder never wrote
+
+The two rides recorded before A.26 carry 161 and 787 readings where the sensor
+measured thousands. Those readings are not in the files and no amount of
+processing will bring them back. Two other copies of the same rides plausibly
+exist, and reading either one into an existing recording is a feature that does
+not exist yet.
+
+- **Health Connect.** The phone already writes sessions there and holds the
+  write permission; what it has never asked for is `ReadHeartRateRecord`. If
+  Google Health or Fitbit syncs a continuous rate for the workout's window,
+  filling the holes is a query and a merge — the merge already exists
+  (`HeartRates.merge`), and the only new decisions are which source to trust
+  when both have a reading and how to mark a recording whose colours came from
+  somewhere else.
+- **A Google takeout.** The same workout appears in the export with its own
+  series, and the importer already parses exactly that. What it does today is
+  skip the whole workout as a duplicate of the recording it already has
+  (`isDuplicateImport`); what it would have to learn is to merge one field of a
+  duplicate rather than dropping it.
+
+Neither is hard. Both change a recording after the fact, which this app has so
+far refused to do — the file is what the watch said — so the question is not
+whether it can be done but whether a recording that borrows its heart rate from
+another app is still the recording. A visible mark ("Puls aus Health Connect")
+is probably the price of doing it at all.
 
 ---
 

@@ -662,18 +662,49 @@ adb -s <watch> shell dumpsys package de.hecate | grep -A8 "runtime permissions"
 
 Shortcuts and variants are independent routes that happen to share a prefix
 (§8.1), and while two routes are on the same ground the matcher will not guess
-between them — it shows `Suche…`, with no ETA, until the paths part. On a route
-family that shares most of its length, that is most of the run.
+between them — it shows both names, with no ETA, until the paths part. On a
+route family that shares most of its length, that is most of the run.
 
-Each route therefore carries a priority from 1 to 10, set on its detail screen.
-Where several routes currently coincide and exactly one outranks the rest, the
-watch assumes that one and gives you its name, remaining distance and ETA from
-the start. A tie decides nothing, so leaving everything at the default 5 keeps
-the cautious behaviour — the feature turns itself on when you first use it.
+Each route therefore carries a priority from −2 to +2, set on its detail screen
+as a row of five buttons — read them as ganz hinten, eher nicht, keine Meinung,
+eher schon, ganz vorn, though the app shows only the numbers. Where several
+routes currently coincide and exactly one outranks the rest, the watch assumes
+that one and gives you its name, remaining distance and ETA from the start. A
+tie decides nothing, so leaving everything at the default 0 keeps the cautious
+behaviour — the feature turns itself on when you first use it.
 
 It is a tie-breaker and nothing more. It cannot put you on a route you are not
 on: the moment the ground contradicts it, the evidence wins and the label
 switches. An assumed route shows blue on the watch, a worked-out one green.
+
+## Intensity colours and your peak heart rate
+
+The track drawing and the three charts on both detail screens — altitude against
+distance, speed against time, heart rate against time — are coloured by how hard
+you were working: **Leicht** (blue), **Mittel** (green),
+**Intensiv** (orange) and **Höchstleistung** (red), at 70 / 80 / 90 % of your
+peak heart rate. A recording is coloured from its own samples, a route from the
+median heart rate of its members at each point along it, and a stretch with no
+reading at all is drawn plain rather than as an easy one.
+
+On a recording the charts are its own samples. The heart rate is recorded as its
+own series, at whatever moments the sensor measured, and joined to the positions
+when the phone reads the session in; on a chart a reading is then held for up to
+half a minute after it was taken, since a rate half a minute old is still the
+right band for the effort. A stretch with no reading at all is drawn in a quiet
+grey rather than in a colour, because nothing measured should be the quietest
+thing on the picture. On a route they are the median over everything you have done there, so "Geschwindigkeit (Median)" is the speed
+that route is usually ridden at rather than any one ride. Under each chart is the
+range it covers, because the vertical axis is exaggerated — deliberately, since
+an hour held between 130 and 150 bpm drawn honestly is a straight line — and the
+range is what keeps that honest. Speed is smoothed before it is drawn: it is a
+derivative, and one second of GNSS noise is an imaginary sprint.
+
+The peak rate is under Einstellungen → Belastung and starts at 180 bpm. Set your
+own: `220 − age` is out by more than a whole band for about one person in three,
+and the app has nothing else to go on — it has never measured a resting rate.
+The setting only decides which colour a stretch is drawn in; nothing recorded
+changes, and it is carried in the backup archive.
 
 ## Tuning
 

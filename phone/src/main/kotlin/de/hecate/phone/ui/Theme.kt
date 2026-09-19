@@ -7,6 +7,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import de.hecate.core.model.Intensity
 
 /**
  * The phone theme.
@@ -68,6 +69,53 @@ object HecateMapColors {
      */
     val RouteOnHeatLight = Color(0xFFB4560F)
     val RouteOnHeatDark = Color(0xFFF0A868)
+}
+
+/**
+ * The four intensity bands, on the track drawing and the altitude profile.
+ *
+ * Fixed, like the start and end markers above and for the same reason: these
+ * carry meaning. Blue → green → orange → red is the order every heart-rate
+ * display in the sport uses, so it is already read correctly by anybody who has
+ * seen one, and it runs cool to hot, which is the one ordering of hues a person
+ * infers without a legend. A wallpaper must not be able to turn "Höchstleistung"
+ * into the colour of an easy day.
+ *
+ * A legend is still drawn under the chart, because four colours *in this order*
+ * is a convention rather than a fact, and because the bands have names the user
+ * set the boundaries of.
+ */
+object HecateIntensityColors {
+    val Easy = Color(0xFF1E88E5)
+    val Moderate = Color(0xFF2E9E5B)
+    val Hard = Color(0xFFEF6C00)
+    val Peak = Color(0xFFD32F2F)
+
+    /**
+     * The colour of an effort band, or of a stretch that has no reading.
+     *
+     * [unmeasured] decides the second, and it has to be given because the right
+     * answer depends on what is beside it. A drawing with no heart rate anywhere
+     * is just a drawing, and takes the scheme's line colour. A drawing that is
+     * *mostly* coloured has holes in it, and a hole drawn in the scheme's
+     * primary — which under dynamic colour can be the brightest thing on the
+     * screen — reads as a highlight: the eye is drawn to precisely the stretches
+     * where nothing was measured. Absence has to be the quietest thing on the
+     * picture, not the loudest.
+     */
+    @Composable
+    fun of(intensity: Intensity?, unmeasured: Color = routeLineColor): Color = when (intensity) {
+        Intensity.EASY -> Easy
+        Intensity.MODERATE -> Moderate
+        Intensity.HARD -> Hard
+        Intensity.PEAK -> Peak
+        null -> unmeasured
+    }
+
+    /** What a stretch with no reading looks like on a drawing that has readings
+     *  elsewhere: the surface's own quiet grey, dimmed further. */
+    val Unmeasured: Color
+        @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
 }
 
 /**
