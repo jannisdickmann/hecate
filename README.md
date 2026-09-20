@@ -8,6 +8,9 @@ you have done it. Single user, no cloud, no network, sideloaded.
 Google Health records workouts well but never learns that today's run is last
 Tuesday's run. Hecate does exactly that and not much else.
 
+Since A.29 one thing does leave the phone, on request: a bounding box, to fetch
+the OpenStreetMap streets drawn under your tracks. The watch stays offline.
+
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.
 [OPEN-POINTS.md](OPEN-POINTS.md) lists what still needs a human, a device, or a
@@ -628,6 +631,57 @@ The id column is only as long as it needs to be to name one session, and is what
 `extract --session` and `tools/emu replay` take. Without `--bundle`, a backup is
 listed from its database part alone — no samples are parsed, which for a few
 hundred sessions is the difference between instant and not.
+
+## The map behind the tracks
+
+Track drawings sit on a dim OpenStreetMap street network with town names
+(Appendix A.29). The data is fetched from the Overpass API, simplified and
+stored as local tiles under `filesDir/karte`, and **never fetched twice**.
+
+This is the one place the phone touches the network. The watch does not, and its
+manifest still declares no `INTERNET`. Requests carry a tile-grid-aligned
+bounding box and a generic `User-Agent` and nothing else — never a track, never
+a position, never a time.
+
+The app fills the map by itself: opening a route fetches the ground under it in
+the background, and „Einstellungen → Karte → Karte vorladen" does the whole
+history over WLAN. Doing it on a laptop instead is kinder to a volunteer service
+and to a mobile plan, and it is the only way to *look* at the result:
+
+```bash
+# What would be fetched, and what it would cost. Queries nothing.
+./gradlew :core:run --args="karte --archive backup.zip --dry-run"
+
+# Fetch it. Interrupting is safe: every finished tile is on disk, and
+# running it again fetches only what is still missing.
+./gradlew :core:run --args="karte --archive backup.zip --out map/"
+
+# One region by hand, without a backup
+./gradlew :core:run --args="karte --bbox 49.50,10.90,49.72,11.15 --out map/"
+
+# Look at it: one SVG per region, your own recordings in red over the map
+./gradlew :core:run --args="karteinfo --store map/ --archive backup.zip --svg map/preview --stats"
+
+# Pack it for the phone — „Einstellungen → Karte → Karte einlesen"
+./gradlew :core:run --args="karteinfo --store map/ --zip map/karte.zip"
+```
+
+`--dry-run` is the one to run first, and it costs nothing. On the real history it
+prints eleven regions and 3,334 km² — the recordings are not one area, and a
+single box round all of them would be fifty times larger.
+
+`karteinfo --svg` is how the map gets checked without a device. Open the SVG in a
+browser (not ImageMagick, whose built-in renderer drops `<polyline>` strokes):
+the streets, the town names, and your own tracks in red over them. Coverage,
+alignment and dimness are all visible there.
+
+Other flags worth knowing: `--level grob|fein|beide`, `--margin` and
+`--detail-radius` in kilometres, `--refresh` to re-fetch ground already stored,
+and `--offline`, which fails rather than reaching for the network. Several
+boxes go in **one** `--bbox`, separated by semicolons; a repeated `--bbox` is
+refused rather than silently reduced to its last value.
+
+`/map/` is git-ignored.
 
 ## Permissions to grant by hand after install
 

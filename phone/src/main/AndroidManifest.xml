@@ -2,9 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- NFR-7: no INTERNET permission. The phone talks to the watch over the
-         Wearable Data Layer and to Health Connect locally. Nothing leaves the
-         pair of devices. -->
+    <!-- NFR-7, as revised by Appendix A.29. The watch is still offline and its
+         manifest is untouched. The phone is not: it fetches OpenStreetMap data
+         for ground you have already run, on request, from the Overpass API.
+
+         What that costs, named rather than discovered: the Overpass operator
+         learns which squares of ground were asked for. It is bounded by asking
+         only in tile-grid-aligned rectangles — never a track, never a position,
+         never a time — and by sending nothing else but a generic User-Agent.
+         Nothing about a recording ever leaves this phone. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- So WorkManager can hold the prefetch job until the network is
+         unmetered. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

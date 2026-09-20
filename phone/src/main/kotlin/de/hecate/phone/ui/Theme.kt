@@ -7,6 +7,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import de.hecate.core.map.MapClass
 import de.hecate.core.model.Intensity
 
 /**
@@ -126,3 +127,102 @@ object HecateIntensityColors {
  */
 val routeLineColor: Color
     @Composable get() = MaterialTheme.colorScheme.primary
+
+/**
+ * The dim OpenStreetMap ground under every track drawing (Appendix A.29).
+ *
+ * **Fixed literals per light and dark, not scheme roles**, for the reason
+ * already written at the top of this file: dynamic colour can hand you a
+ * near-black or a neon primary, and a wallpaper must never be able to make the
+ * ground louder than the track. The loudest thing on this map is a mid grey at
+ * 40 % against a track drawn at full opacity.
+ *
+ * **There are two palettes**, and the difference is water. On the heatmap views
+ * the heat is a one-hue blue ramp, so a blue river crossing it would be read as
+ * a value on that scale — the same argument that already made the route lines
+ * warm ([HecateMapColors.RouteOnHeatLight]). There, water is drawn in the same
+ * neutral ink as the roads. On a route drawing there is no ramp, so water is
+ * blue and reads as water.
+ */
+data class BasemapColors(
+    val water: Color,
+    val waterway: Color,
+    val rail: Color,
+    val motorway: Color,
+    val primary: Color,
+    val minor: Color,
+    val service: Color,
+    val path: Color,
+    val urban: Color,
+    val label: Color,
+    val labelHalo: Color,
+    val dot: Color,
+) {
+    fun of(cls: MapClass): Color = when (cls) {
+        MapClass.WATER_AREA -> water
+        MapClass.WATERWAY -> waterway
+        MapClass.RAIL -> rail
+        MapClass.MOTORWAY -> motorway
+        MapClass.PRIMARY -> primary
+        MapClass.MINOR -> minor
+        MapClass.SERVICE -> service
+        MapClass.PATH -> path
+        MapClass.URBAN -> urban
+    }
+
+    /** Stroke weight [dp], so a road is the same width on every screen rather
+     *  than a hairline on a dense one. */
+    fun widthDpOf(cls: MapClass): Float = when (cls) {
+        MapClass.MOTORWAY -> 1.6f
+        MapClass.PRIMARY -> 1.2f
+        MapClass.WATERWAY -> 1.2f
+        MapClass.RAIL -> 1.0f
+        MapClass.MINOR -> 0.9f
+        MapClass.SERVICE -> 0.7f
+        else -> 0.6f
+    }
+
+    companion object {
+        /** Neutral ink: near-black on a light ground, near-white on a dark one.
+         *  Everything on the map is this colour at some alpha, which is what
+         *  makes the map read as one quiet layer rather than as a palette. */
+        private fun ink(dark: Boolean) = if (dark) Color(0xFFE9E6E0) else Color(0xFF1C1A17)
+
+        private fun halo(dark: Boolean) =
+            if (dark) Color(0xFF14130F).copy(alpha = 0.80f) else Color(0xFFFBFAF7).copy(alpha = 0.85f)
+
+        private fun base(dark: Boolean, water: Color, waterway: Color): BasemapColors {
+            val i = ink(dark)
+            return BasemapColors(
+                water = water,
+                waterway = waterway,
+                rail = i.copy(alpha = 0.30f),
+                motorway = i.copy(alpha = 0.40f),
+                primary = i.copy(alpha = 0.33f),
+                minor = i.copy(alpha = 0.23f),
+                service = i.copy(alpha = 0.16f),
+                path = i.copy(alpha = 0.14f),
+                urban = i.copy(alpha = 0.10f),
+                label = i.copy(alpha = 0.62f),
+                labelHalo = halo(dark),
+                dot = i.copy(alpha = 0.50f),
+            )
+        }
+
+        /** For `PolylineView`: water is blue, because nothing else on the
+         *  picture is. */
+        fun forTrack(dark: Boolean): BasemapColors = base(
+            dark,
+            water = if (dark) Color(0xFF2B4257).copy(alpha = 0.55f) else Color(0xFF9FC3DC).copy(alpha = 0.45f),
+            waterway = if (dark) Color(0xFF5E8FB3).copy(alpha = 0.55f) else Color(0xFF6A9EC4).copy(alpha = 0.50f),
+        )
+
+        /** For the heatmap views: water in the same ink as the roads, so it
+         *  cannot be mistaken for a step on the blue density ramp. */
+        fun forHeat(dark: Boolean): BasemapColors = base(
+            dark,
+            water = ink(dark).copy(alpha = 0.13f),
+            waterway = ink(dark).copy(alpha = 0.26f),
+        )
+    }
+}

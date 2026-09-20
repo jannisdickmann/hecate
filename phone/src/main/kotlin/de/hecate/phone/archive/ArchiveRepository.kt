@@ -28,6 +28,7 @@ import de.hecate.phone.db.RoutePointEntity
 import de.hecate.phone.db.RouteProfileEntity
 import de.hecate.phone.db.SampleEntity
 import de.hecate.phone.db.SessionEntity
+import de.hecate.phone.io.CacheFile
 import de.hecate.phone.work.Jobs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -187,7 +188,12 @@ class ArchiveRepository(
      * [isDuplicateImport] is for.
      */
     suspend fun restore(uri: Uri): Archive.RestoreReport = withContext(Dispatchers.IO) {
-        val temp = copyToCache(uri)
+        // ZIP needs random access and a `content://` Uri is a one-shot stream,
+        // so the archive is copied into the cache first and deleted afterwards.
+        // [CacheFile] rather than a private copy of it: „Karte einlesen" needs
+        // exactly the same thing (A.29), and two copies of a temp-file dance is
+        // two places to leak one.
+        val temp = CacheFile.copy(context, uri, "hecate-restore")
         try {
             ArchiveCodec.Reader(temp).use { reader -> restoreFrom(reader) }
         } catch (e: Archive.ArchiveException) {
@@ -323,21 +329,6 @@ class ArchiveRepository(
     }
 
     // ---------------------------------------------------------------- plumbing
-
-    /**
-     * ZIP needs random access and a `content://` Uri is a one-shot stream, so the
-     * archive is copied into the cache first and deleted afterwards.
-     */
-    private fun copyToCache(uri: Uri): File {
-        val temp = File.createTempFile("hecate-restore", ".zip", context.cacheDir)
-        val input = context.contentResolver.openInputStream(uri)
-            ?: run {
-                temp.delete()
-                throw Archive.ArchiveException("Datei konnte nicht geöffnet werden")
-            }
-        input.use { source -> temp.outputStream().use { source.copyTo(it) } }
-        return temp
-    }
 
     private fun appVersion(): String = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName

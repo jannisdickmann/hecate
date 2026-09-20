@@ -13,6 +13,7 @@ import de.hecate.core.heat.Heatmap
 import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.map.TileStore
 import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchLogEntry
@@ -371,6 +372,22 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /**
+     * Whether a map prefetch is under way.
+     *
+     * The same question the clustering banner answers, and asked the same way,
+     * but the answer means something different: a prefetch waits for an
+     * unmetered network, so ENQUEUED here can mean "later tonight" rather than
+     * "in a moment". The card says so.
+     */
+    val mapPrefetching: StateFlow<Boolean> =
+        WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.MAP_PREFETCH)
+            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** How much OpenStreetMap ground is stored, for the settings card (A.29). */
+    val mapStats: StateFlow<TileStore.Stats> = AppGraph.basemap.stats
+
+    /**
      * Which recordings stand out on their own route, keyed by recording id.
      *
      * Recomputed from the list itself rather than stored: it is a property of the
@@ -470,6 +487,45 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             },
             onFailure = { "Wiederherstellen fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
         )
+    }
+
+    /**
+     * „Karte vorladen": enqueue the background fetch of the ground around every
+     * recording (A.29).
+     *
+     * Enqueued with KEEP rather than REPLACE, unlike the clustering job: a
+     * second tap while a prefetch is waiting for WLAN should leave the waiting
+     * one alone, not restart it.
+     */
+    fun prefetchMap() = viewModelScope.launch {
+        Jobs.enqueueMapPrefetch(getApplication())
+        _status.value = "Karte wird im Hintergrund geladen, sobald WLAN da ist"
+    }
+
+    /** „Karte einlesen": take a store built on a laptop. */
+    fun importMap(uri: Uri) = viewModelScope.launch {
+        _busy.value = true
+        val result = runCatching { AppGraph.basemap.import(uri) }
+        _busy.value = false
+        _status.value = result.fold(
+            onSuccess = { taken ->
+                if (taken == 0) "Keine Kartenkacheln in der Datei"
+                else "$taken Kartenkacheln übernommen"
+            },
+            onFailure = { "Karte konnte nicht eingelesen werden: ${it.message ?: "unbekannter Fehler"}" },
+        )
+    }
+
+    /**
+     * „Karte löschen". The feature's off switch, and the only one it has: a
+     * toggle would be a fifth state to test for something that was asked for
+     * unconditionally.
+     */
+    fun deleteMap() = viewModelScope.launch {
+        _busy.value = true
+        runCatching { AppGraph.basemap.delete() }
+        _busy.value = false
+        _status.value = "Kartendaten gelöscht"
     }
 
     fun rename(routeId: Long, name: String) = viewModelScope.launch {

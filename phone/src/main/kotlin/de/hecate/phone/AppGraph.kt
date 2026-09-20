@@ -8,6 +8,7 @@ import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.ingest.DataLayerIngest
 import de.hecate.phone.ingest.SessionRepository
+import de.hecate.phone.map.BasemapRepository
 import de.hecate.phone.tcx.TcxImporter
 
 /**
@@ -33,6 +34,13 @@ object AppGraph {
     lateinit var dataLayer: DataLayerIngest
         private set
 
+    /** The OpenStreetMap ground under the track drawings (A.29). Held here
+     *  rather than in the view model because three different things reach for
+     *  it — two screens and a WorkManager job — and they must share one tile
+     *  cache and one fetch queue. */
+    lateinit var basemap: BasemapRepository
+        private set
+
     @Volatile
     private var initialised = false
 
@@ -47,6 +55,7 @@ object AppGraph {
             importer = TcxImporter(app, repository)
             archive = ArchiveRepository(app, db)
             dataLayer = DataLayerIngest(app, repository)
+            basemap = BasemapRepository(app)
             initialised = true
         }
     }

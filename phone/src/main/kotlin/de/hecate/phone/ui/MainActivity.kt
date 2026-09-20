@@ -55,6 +55,18 @@ class MainActivity : ComponentActivity() {
         uri?.let { vm.restoreArchive(it) }
     }
 
+    /**
+     * „Karte einlesen": a tile store built on a laptop (A.29). Same picker as
+     * the backup, and just as unrestrictive, for the same reason — providers
+     * disagree about the type of a .zip, and a file the user cannot select is
+     * worse than a picker that shows too much.
+     */
+    private val openMap = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        uri?.let { vm.importMap(it) }
+    }
+
     private val requestHealthConnect = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { granted: Set<String> ->
@@ -90,6 +102,7 @@ class MainActivity : ComponentActivity() {
                 // disagree about the type of a .zip, and a backup the user cannot
                 // select is worse than a picker that shows too much.
                 onRestoreArchive = { openArchive.launch(arrayOf("*/*")) },
+                onImportMap = { openMap.launch(arrayOf("*/*")) },
                 onRequestHealthConnect = { startHealthConnectFlow() },
             )
         }

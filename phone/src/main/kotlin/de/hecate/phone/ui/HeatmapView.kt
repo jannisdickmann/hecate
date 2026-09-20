@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -46,10 +47,14 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.text.rememberTextMeasurer
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
 import de.hecate.core.heat.Heatmap
 import de.hecate.core.heat.HeatmapGrid
+import de.hecate.core.map.KarteIndex
+import de.hecate.core.map.MapView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.ln
@@ -59,10 +64,12 @@ import kotlin.math.roundToInt
  * Every recording at once, as a density raster, with the routes drawn over it
  * (US-8).
  *
- * §4 still holds: no maps SDK, no tiles, no API key. There is no map behind
- * this — it is your own tracks against an empty ground, which for a route you
- * have run two hundred times is a more recognisable picture than a street map
- * would be.
+ * §4 still holds where it was about something: no maps SDK, no API key, no
+ * billing, no tile library. There *is* now a map behind this, and it is a dim
+ * one drawn under the raster rather than over it (A.29) — so it shows through
+ * where you have not been and is progressively buried where you have, and the
+ * picture is still your own tracks. For a route you have run two hundred times
+ * that was always the more recognisable half; what the ground adds is *where*.
  *
  * The grid arrives precomputed from `ClusterWorker` (Appendix A.14); this
  * colours it and nothing else. Three things make the difference between a
@@ -79,25 +86,56 @@ fun HeatmapView(
     raster: ImageBitmap?,
     modifier: Modifier = Modifier,
     dark: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
+    /** What the picture is currently magnified by, when it sits inside a
+     *  `graphicsLayer` that pinches. It changes *which* map is wanted, not only
+     *  how it is drawn: at eight times zoom the ground on screen is an eighth as
+     *  wide and deserves a denser map, and every stroke has to be divided back
+     *  down or a 1 dp road becomes an 8 dp blob. */
+    zoom: Float = 1f,
+    /** The part of the drawn picture actually on screen, in the picture's own
+     *  pixels. Null means all of it, which is true of every view but the pinched
+     *  one. */
+    window: Rect? = null,
 ) {
     val surface = MaterialTheme.colorScheme.surfaceContainerLow
     val routeColor = if (dark) HecateMapColors.RouteOnHeatDark else HecateMapColors.RouteOnHeatLight
-    val strokePx = with(androidx.compose.ui.platform.LocalDensity.current) { 1.2.dp.toPx() }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val strokePx = with(density) { 1.2.dp.toPx() }
+    // The heat is a one-hue blue ramp, so water here is drawn in the same
+    // neutral ink as the roads: a blue river crossing the ramp would read as a
+    // value on it.
+    val basemapColors = remember(dark) { BasemapColors.forHeat(dark) }
+    val measurer = rememberTextMeasurer()
 
     // The aspect ratio is the grid's own, so the picture is never stretched: the
     // extent is the shape of the ground it covers, within the range the two
     // views can show (Tuning.HEATMAP_MIN_ASPECT/MAX_ASPECT).
-    Canvas(modifier.aspectRatio(grid.width.toFloat() / grid.height.toFloat())) {
-        drawRect(surface)
-        raster?.let {
-            drawImage(
-                image = it,
-                dstOffset = IntOffset.Zero,
-                dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
-                filterQuality = FilterQuality.Medium,
-            )
+    BoxWithConstraints(modifier.aspectRatio(grid.width.toFloat() / grid.height.toFloat())) {
+        val widthPx = with(density) { maxWidth.toPx() }
+        val heightPx = with(density) { maxHeight.toPx() }
+        val view = remember(grid, widthPx, heightPx) {
+            MapView.of(grid, widthPx.toDouble(), heightPx.toDouble())
         }
-        drawRoutes(grid, routes, routeColor, strokePx)
+        val visible = window ?: Rect(0f, 0f, widthPx, heightPx)
+        val scene = rememberBasemapScene(view, visible, zoom)
+        val placed = rememberPlacedLabels(scene, visible, zoom)
+
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(surface)
+            // Under the raster, and that is the right way round: the raster is
+            // transparent on ground nobody has been on, so the map shows through
+            // where you have not been and is progressively buried where you have.
+            scene?.let { drawBasemap(it, placed, basemapColors, measurer, zoom) }
+            raster?.let {
+                drawImage(
+                    image = it,
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+                    filterQuality = FilterQuality.Medium,
+                )
+            }
+            drawRoutes(grid, routes, routeColor, strokePx)
+        }
     }
 }
 
@@ -206,18 +244,40 @@ fun HeatmapFullScreen(
                                     translationX = offset.x,
                                     translationY = offset.y,
                                 ),
+                            // The basemap must not simply ride along inside the
+                            // layer. It is the one thing on this screen that is
+                            // a vector, and at eight times zoom the raster below
+                            // it is an interpolated bitmap — so this is where a
+                            // crisp map earns the most, and where a magnified
+                            // one would look worst.
+                            zoom = scale,
+                            window = Viewport(scale, offset).window(widthPx, heightPx, drawnW, drawnH),
                         )
                     }
                 }
 
-                Text(
-                    caption,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(16.dp),
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // ODbL: the obligation is met by naming the source wherever
+                    // the data is presented at size, and in the app's own
+                    // information. This is the "at size" half; the settings
+                    // card is the other. Not on the small drawings, which have
+                    // no room for it.
+                    Text(
+                        KarteIndex.ATTRIBUTION,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    )
+                }
                 IconButton(
                     onClick = onDismiss,
                     modifier = Modifier
@@ -279,6 +339,34 @@ internal data class Viewport(val scale: Float, val offset: Offset)
  * asks for is |c|·(s − 1), the clamp allows (drawn·s − window) / 2, and for any
  * centroid inside a window the picture covers, the first is the smaller.
  */
+/**
+ * Which part of the drawn picture is actually on screen.
+ *
+ * The picture is drawn [drawnW] by [drawnH], centred in the window, then scaled
+ * about its own centre and translated — so a picture point p lands at
+ * `windowW/2 + (p − drawnW/2)·s + t`, and setting that to the two edges of the
+ * window gives the two ends of what is visible:
+ *
+ *     centre   = drawnW/2 − offset.x/scale
+ *     half     = windowW/(2·scale)
+ *
+ * This is what makes the basemap a *different* map at eight times zoom rather
+ * than the same one magnified: the query is for the ground in this rectangle,
+ * at a level of detail that follows from how much of it there is.
+ */
+internal fun Viewport.window(windowW: Float, windowH: Float, drawnW: Float, drawnH: Float): Rect {
+    val cx = drawnW / 2f - offset.x / scale
+    val cy = drawnH / 2f - offset.y / scale
+    val halfW = windowW / (2f * scale)
+    val halfH = windowH / (2f * scale)
+    return Rect(
+        left = (cx - halfW).coerceIn(0f, drawnW),
+        top = (cy - halfH).coerceIn(0f, drawnH),
+        right = (cx + halfW).coerceIn(0f, drawnW),
+        bottom = (cy + halfH).coerceIn(0f, drawnH),
+    )
+}
+
 internal fun Viewport.pinched(
     centroid: Offset,
     pan: Offset,

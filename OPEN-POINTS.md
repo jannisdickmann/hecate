@@ -688,6 +688,91 @@ is probably the price of doing it at all.
 
 ---
 
+### 3.13 The basemap has been seen on an emulator, not on a phone in daylight
+
+What the OpenStreetMap ground under the track drawings (A.29) has actually been
+put through, so that the gap is the right size:
+
+- `karteinfo --svg` renders the store from its decoded tiles with the user's own
+  recordings in red over it, which answers coverage and alignment. It answered
+  them correctly on a real fetch of the Regnitz valley north of Erlangen.
+- The codec, the viewport query, the label placer, the coverage clusterer, the
+  fetch planner and the level-of-detail table are unit-tested; the import, the
+  delete, a corrupt import and an empty store are tested under Robolectric.
+- **On the Pixel 8 emulator, against the real history**: a route drawing, the
+  heatmap card and the full-screen heatmap all draw the map, in light and dark,
+  with the track aligned on it and the level of detail visibly different between
+  the coarse view and the close one. The on-demand fetch filled twenty-five
+  tiles by itself, silently, while the heatmap was open — which is the only part
+  of the network path that a test cannot reach.
+
+That run found two defects that no test would have: the place labels were
+unreadable, because the halo was measured with the stroke baked into its
+`TextStyle`, which fattens the glyphs rather than outlining them; and the card
+said "1 Gebiete".
+
+Three things are still only judgeable on a real screen, and each has a specific
+way of being wrong:
+
+- **Whether "dim" is dim enough in daylight.** The palette is one neutral ink
+  from 0.40 down to 0.10 alpha, chosen against a track drawn at full opacity. It
+  reads correctly on an emulator in both themes; an emulator is a monitor. On a
+  phone at midday with the brightness up the whole map may simply vanish, and in
+  a dark room a street grid at 0.23 may compete with the track. The alphas are
+  all in `BasemapColors` in `Theme.kt` and are the one thing here that should be
+  expected to change after the first walk outside — as are the 11 sp place
+  names, which are legible on a desk and have never been read at arm's length in
+  the sun.
+- **Whether the pinch holds 60 fps across a zoom-key crossing.** The scene is
+  rebuilt six times over the 1…8 range, off the main thread, and each rebuild is
+  a few thousand `lineTo` calls. The risk is a visible hitch at the moment a key
+  changes. If it stalls, the fix is local: split each class's `Path` by tile
+  inside the scene builder.
+- **Whether the map lines up with a recording made on the ground it draws.** The
+  SVG says the map is where OSM says it is and the track is where the watch said
+  it was, at the scale of a region. A systematic offset of ten metres would be
+  invisible there and obvious on a route drawing of one street.
+
+---
+
+### 3.14 Route lines still fatten under the pinch; the basemap does not
+
+In the full-screen heatmap, the basemap is built for the pinched viewport and
+its strokes are divided by the zoom, so a 1 dp road stays 1 dp at eight times
+magnification. The route lines drawn over the raster are not: they ride inside
+the `graphicsLayer` and are eight times thicker at full zoom, as they always
+have been.
+
+That is now an inconsistency inside one picture. It is left alone deliberately —
+A.29 changed enough at once without also changing how the existing lines behave,
+and the fat lines have never been complained about. Fixing it means moving the
+route drawing out of the scaled layer the same way, which is a change to a
+picture that currently works and should be made on its own.
+
+---
+
+### 3.15 Overpass is a volunteer service, and a full prefetch leans on it
+
+„Karte vorladen" over the whole history is about forty requests. The client is
+polite by construction — one request at a time, two seconds between them,
+`Retry-After` honoured, backoff on 429 and 504, and three instances tried in
+turn — and the job is resumable, because every completed tile is on disk before
+the next request goes out. None of that helps if all three instances are down,
+which is the price of this data source and not a bug to be fixed.
+
+Two smaller things sit under this heading:
+
+- **Nothing warns that a two-year-old tile is two years old.** Deliberate: a nag
+  about scenery would be worse than stale scenery. The per-tile timestamp is
+  stored, so a refresh is possible when it is wanted; `karte --refresh` is the
+  laptop-side way to take it.
+- **Water relations are not resolved.** Lake Garda is an OSM multipolygon and
+  this treats member ways as independent rings, so a large lake may show a seam
+  and an island renders as water. Acceptable on a dim backdrop; noted here so it
+  arrives as a known simplification rather than a bug report.
+
+---
+
 ## 4. Things deliberately not done
 
 Everything in §8 of the specification, as specified: route variant hierarchies,
@@ -709,6 +794,10 @@ Three more worth naming explicitly, because they look like oversights:
   better one.
 - **No phone-side recording.** §8.5 defers it. The phone app has no record
   button and the manifest asks for no location permission.
-- **No network permission anywhere.** NFR-7. Neither manifest declares
-  `INTERNET`. If a future dependency needs it, that is a decision to take
-  consciously, not a merge to wave through.
+- **~~No network permission anywhere.~~** This one was taken, consciously, and
+  is written up as Appendix A.29. The **watch manifest is untouched** and stays
+  offline. The phone now declares `INTERNET` and uses it for exactly one thing:
+  fetching OpenStreetMap geometry for ground already recorded, in tile-grid-
+  aligned rectangles, on request. No recording, position, time or identifier
+  leaves either device, and no dependency was added — `HttpURLConnection` is in
+  the platform. What it does cost is in §3.13 below.

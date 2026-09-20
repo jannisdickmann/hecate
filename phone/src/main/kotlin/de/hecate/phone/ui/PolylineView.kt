@@ -1,22 +1,30 @@
 package de.hecate.phone.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
+import de.hecate.core.map.MapView
 import de.hecate.core.model.Intensity
 import kotlin.math.max
 import kotlin.math.min
@@ -33,13 +41,21 @@ import kotlin.math.min
 data class TrackPoint(val at: LatLon, val hrBpm: Double? = null)
 
 /**
- * §4: no maps SDK. A plain polyline on a Compose `Canvas` — no API key, no
- * billing, no tile cache, no library — which is all US-8 asks for: "a plain
- * polyline drawing of the route geometry".
+ * A route on a Compose `Canvas`, over a dim drawing of the streets it was run
+ * on (US-8, Appendix A.29).
+ *
+ * §4 still holds where it was actually about something: there is no maps SDK
+ * here, no API key, no billing and no tile library. What changed is that the
+ * ground is no longer empty — a route not run in a year used to be a shape
+ * without a place. The basemap is OpenStreetMap data fetched once, simplified
+ * and stored locally; where it has not been fetched, this draws exactly the
+ * picture it always did, on nothing.
  *
  * Latitude and longitude are projected locally to metres before scaling so the
  * drawing has the right aspect ratio rather than being stretched by the cosine
- * of the latitude.
+ * of the latitude. That projection is [MapView] now rather than arithmetic
+ * inlined here, which is what stops the map and the track drifting apart: they
+ * read one object instead of two copies of a formula.
  *
  * **The line is coloured by effort** where there is a heart rate to colour it by
  * (A.21): each segment takes the band its own reading falls in, so the shape of
@@ -51,7 +67,7 @@ data class TrackPoint(val at: LatLon, val hrBpm: Double? = null)
  * Neither the markers nor the bands follow the theme. Which end of a track is
  * the start, and which colour means a maximal effort, are facts about the
  * recording, and a wallpaper must not be able to recolour them into something
- * else — see [HecateMapColors] and [HecateIntensityColors].
+ * else — see [HecateMapColors], [HecateIntensityColors] and [BasemapColors].
  */
 @Composable
 fun PolylineView(
@@ -61,44 +77,44 @@ fun PolylineView(
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
     startColor: Color = HecateMapColors.Start,
     endColor: Color = HecateMapColors.End,
+    dark: Boolean = isSystemInDarkTheme(),
 ) {
     // As on the charts: a track with no reading anywhere is simply a track, and
     // one with readings has holes that must not read as emphasis.
     val measured = points.any { it.hrBpm != null }
     val plain = if (measured) HecateIntensityColors.Unmeasured else routeLineColor
     val bandColors = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
+    val basemapColors = remember(dark) { BasemapColors.forTrack(dark) }
+    val measurer = rememberTextMeasurer()
 
-    Box(modifier.fillMaxWidth().height(height)) {
-        if (points.size < 2) return@Box
-        Canvas(Modifier.fillMaxWidth().height(height)) {
+    // `clipToBounds` is not optional. A `Canvas` does not clip, and the track
+    // can never escape because it is fitted with padding — but the basemap
+    // covers the whole visible bounds, and a road at the edge would otherwise
+    // paint over the elevation chart below.
+    BoxWithConstraints(modifier.fillMaxWidth().height(height).clipToBounds()) {
+        if (points.size < 2) return@BoxWithConstraints
+        val density = LocalDensity.current
+        val widthPx = with(density) { maxWidth.toPx() }
+        val heightPx = with(density) { maxHeight.toPx() }
+
+        // Out of the `Canvas` lambda and into a `remember`: this used to run on
+        // every recomposition, which for a two-hour ride is seven thousand
+        // projections per frame — and the basemap needs the fit *before* the
+        // draw, so that its scene can start being built.
+        val view = remember(points, widthPx, heightPx) { fitTo(points, widthPx, heightPx) }
+        val local = remember(points) {
             val origin = points.first().at
-            val local = points.map { Geo.toLocal(origin, it.at) }
+            points.map { Geo.toLocal(origin, it.at) }
+        }
+        val visible = remember(widthPx, heightPx) { Rect(0f, 0f, widthPx, heightPx) }
+        val scene = rememberBasemapScene(view, visible)
+        val placed = rememberPlacedLabels(scene, visible)
 
-            var minX = Double.MAX_VALUE
-            var maxX = -Double.MAX_VALUE
-            var minY = Double.MAX_VALUE
-            var maxY = -Double.MAX_VALUE
-            for (p in local) {
-                minX = min(minX, p[0]); maxX = max(maxX, p[0])
-                minY = min(minY, p[1]); maxY = max(maxY, p[1])
-            }
-            val spanX = (maxX - minX).coerceAtLeast(1.0)
-            val spanY = (maxY - minY).coerceAtLeast(1.0)
+        Canvas(Modifier.fillMaxSize()) {
+            scene?.let { drawBasemap(it, placed, basemapColors, measurer) }
 
-            val pad = 16f
-            val usableW = size.width - 2 * pad
-            val usableH = size.height - 2 * pad
-            // One scale for both axes: a route must not be distorted into a shape
-            // it does not have.
-            val scale = min(usableW / spanX, usableH / spanY)
-            val offX = pad + (usableW - spanX * scale).toFloat() / 2f
-            val offY = pad + (usableH - spanY * scale).toFloat() / 2f
-
-            fun toCanvas(p: DoubleArray) = Offset(
-                x = offX + ((p[0] - minX) * scale).toFloat(),
-                // Canvas y grows downwards; north must point up.
-                y = size.height - offY - ((p[1] - minY) * scale).toFloat(),
-            )
+            fun toCanvas(p: DoubleArray) =
+                Offset(view.canvasX(p[0]).toFloat(), view.canvasY(p[1]).toFloat())
 
             // Consecutive segments of the same band are drawn as one path rather
             // than one path each: a two-hour ride is seven thousand segments and
@@ -121,6 +137,39 @@ fun PolylineView(
         }
     }
 }
+
+/**
+ * The fit this view has always made: one scale on both axes, centred, padded by
+ * [PAD_PX].
+ *
+ * The arithmetic itself lives in [MapView.fit] and is unchanged to the last
+ * float; `MapViewTest` holds the golden case that says so.
+ */
+private fun fitTo(points: List<TrackPoint>, widthPx: Float, heightPx: Float): MapView {
+    val origin = points.first().at
+    var minX = Double.MAX_VALUE
+    var maxX = -Double.MAX_VALUE
+    var minY = Double.MAX_VALUE
+    var maxY = -Double.MAX_VALUE
+    for (p in points) {
+        val l = Geo.toLocal(origin, p.at)
+        minX = min(minX, l[0]); maxX = max(maxX, l[0])
+        minY = min(minY, l[1]); maxY = max(maxY, l[1])
+    }
+    return MapView.fit(
+        origin = origin,
+        minX = minX,
+        minY = minY,
+        spanX = (maxX - minX).coerceAtLeast(1.0),
+        spanY = (maxY - minY).coerceAtLeast(1.0),
+        widthPx = widthPx.toDouble(),
+        heightPx = heightPx.toDouble(),
+        padPx = PAD_PX.toDouble(),
+    )
+}
+
+/** Breathing room, so the outermost point of the track is not the frame. */
+private const val PAD_PX = 16f
 
 /**
  * The band the segment ending at [index] belongs to.

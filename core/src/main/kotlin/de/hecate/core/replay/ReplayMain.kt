@@ -6,6 +6,7 @@ import de.hecate.core.geo.Track
 import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.io.SessionCodec
+import de.hecate.core.map.KarteCli
 import de.hecate.core.matcher.RouteMatcher
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
@@ -37,6 +38,8 @@ import kotlin.system.exitProcess
  * ./gradlew :core:run --args="selfcheck --bundle b.json --session s.jsonl"
  * ./gradlew :core:run --args="onwrist --session s.jsonl --bundle b.json"
  * ./gradlew :core:run --args="takeout --input takeout/takeout-*.zip"
+ * ./gradlew :core:run --args="karte --archive takeout/hecate-sicherung-*.zip --out map/"
+ * ./gradlew :core:run --args="karteinfo --store map/ --svg map/preview"
  * ```
  */
 object ReplayMain {
@@ -65,6 +68,11 @@ object ReplayMain {
             "sessions" -> cmdSessions(opts)
             "extract" -> cmdExtract(opts)
             "takeout" -> cmdTakeout(opts)
+            // The basemap's own two commands, which parse their arguments
+            // themselves: `--bbox` has to be able to tell a repeated flag from a
+            // single one, and [parseOptions] below cannot (see KarteCli.Options).
+            "karte" -> KarteCli.karte(args.drop(1))
+            "karteinfo" -> KarteCli.karteinfo(args.drop(1))
             "help", "--help", "-h" -> { usage(); 0 }
             else -> { usage(); 2 }
         }
@@ -101,6 +109,8 @@ object ReplayMain {
                         ./takeout and writes to ./takeout/parsed.
             """.trimIndent(),
         )
+        println()
+        KarteCli.usage()
     }
 
     // ------------------------------------------------------------------ commands

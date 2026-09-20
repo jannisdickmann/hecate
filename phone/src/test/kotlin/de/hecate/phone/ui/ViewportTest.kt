@@ -127,4 +127,55 @@ class ViewportTest {
         repeat(30) { v = pinch(v, Offset(100f, 100f), zoom = 0.5f) }
         assertEquals(1f, v.scale, 1e-3f, "pinching out past the whole picture")
     }
+
+    // ---------------------------------------------------------------- the map
+
+    /**
+     * Which ground the basemap is asked for, which is [window] and not the same
+     * question as where the picture is drawn.
+     *
+     * The failure this guards against is quiet in a different way from the ones
+     * above: the map would be *correct* and simply be of somewhere else — the
+     * middle of the picture rather than the part the fingers have dragged into
+     * view — and it would look exactly like a map that had not finished
+     * loading.
+     */
+    @Test
+    fun `at rest the window is the whole picture`() {
+        val w = Viewport(1f, Offset.Zero).window(windowW, windowH, windowW, windowH)
+        assertEquals(0f, w.left, 1e-3f)
+        assertEquals(0f, w.top, 1e-3f)
+        assertEquals(windowW, w.right, 1e-3f)
+        assertEquals(windowH, w.bottom, 1e-3f)
+    }
+
+    @Test
+    fun `every doubling of the zoom halves the ground on screen`() {
+        val once = Viewport(2f, Offset.Zero).window(windowW, windowH, windowW, windowH)
+        val twice = Viewport(4f, Offset.Zero).window(windowW, windowH, windowW, windowH)
+        assertEquals(windowW / 2f, once.width, 1e-3f)
+        assertEquals(windowW / 4f, twice.width, 1e-3f)
+        // Centred while nothing has been dragged.
+        assertEquals(windowW / 2f, once.center.x, 1e-3f)
+    }
+
+    @Test
+    fun `panning moves the window the other way`() {
+        val centred = Viewport(4f, Offset.Zero).window(windowW, windowH, windowW, windowH)
+        // Dragging the picture to the right shows ground further to the left.
+        val dragged = Viewport(4f, Offset(200f, 0f)).window(windowW, windowH, windowW, windowH)
+        assertTrue(dragged.center.x < centred.center.x)
+        assertEquals(centred.width, dragged.width, 1e-3f)
+    }
+
+    @Test
+    fun `the window never leaves the picture`() {
+        for (scale in listOf(1f, 1.5f, 3f, 8f)) {
+            for (offset in listOf(Offset.Zero, Offset(5000f, 5000f), Offset(-5000f, -5000f))) {
+                val w = Viewport(scale, offset).window(windowW, windowH, 800f, 1600f)
+                assertTrue(w.left >= 0f && w.top >= 0f, "window $w starts outside the picture")
+                assertTrue(w.right <= 800f && w.bottom <= 1600f, "window $w runs past the picture")
+            }
+        }
+    }
 }

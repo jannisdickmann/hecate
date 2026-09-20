@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.hecate.core.Tuning
+import de.hecate.core.map.KarteIndex
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.Intensity
 import de.hecate.core.profile.Elevation
@@ -109,6 +110,7 @@ fun HecateApp(
     onPickTcx: () -> Unit,
     onExportArchive: () -> Unit,
     onRestoreArchive: () -> Unit,
+    onImportMap: () -> Unit,
     onRequestHealthConnect: () -> Unit,
 ) {
     val screen by vm.screen.collectAsStateWithLifecycle()
@@ -213,7 +215,8 @@ fun HecateApp(
                         is Screen.Recordings -> RecordingsScreen(vm)
                         is Screen.Routes -> RoutesScreen(vm)
                         is Screen.Settings -> SettingsScreen(
-                            vm, onPickTcx, onExportArchive, onRestoreArchive, onRequestHealthConnect,
+                            vm, onPickTcx, onExportArchive, onRestoreArchive, onImportMap,
+                            onRequestHealthConnect,
                         )
                         is Screen.SessionDetail -> RecordingDetailScreen(vm)
                         is Screen.RouteDetail -> RouteDetailScreen(vm)
@@ -823,6 +826,7 @@ private fun SettingsScreen(
     onPickTcx: () -> Unit,
     onExportArchive: () -> Unit,
     onRestoreArchive: () -> Unit,
+    onImportMap: () -> Unit,
     onRequestHealthConnect: () -> Unit,
 ) {
     val clustering by vm.clustering.collectAsStateWithLifecycle()
@@ -906,6 +910,11 @@ private fun SettingsScreen(
         }
 
         Spacer(Modifier.height(20.dp))
+        SectionHeader("Karte")
+        Spacer(Modifier.height(8.dp))
+        SettingsCard { MapCard(vm, onImportMap) }
+
+        Spacer(Modifier.height(20.dp))
         SectionHeader("Daten")
         Spacer(Modifier.height(8.dp))
         SettingsCard {
@@ -933,6 +942,93 @@ private fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
     }
 }
+
+/**
+ * What the app knows of the ground under your tracks, and the three things you
+ * can do about it (Appendix A.29).
+ *
+ * There is **no on/off switch**. Deleting the data is the off switch, and a
+ * toggle would be a fifth state to test for a feature that was asked for
+ * unconditionally.
+ *
+ * The attribution line is not decoration: OSM data is ODbL, and the obligation
+ * is to name the source where the data is presented rather than only in a
+ * licence file. It appears twice — here, and under the full-screen heatmap.
+ */
+@Composable
+private fun MapCard(vm: HecateViewModel, onImportMap: () -> Unit) {
+    val stats by vm.mapStats.collectAsStateWithLifecycle()
+    val prefetching by vm.mapPrefetching.collectAsStateWithLifecycle()
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    Text("Kartendaten", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(4.dp))
+    if (stats.isEmpty) {
+        Quiet(
+            "Noch keine Kartendaten. Streckenbilder werden auf leerem Grund gezeichnet; " +
+                "beim Öffnen einer Strecke lädt die App die Umgebung nach.",
+        )
+    } else {
+        Quiet(
+            buildString {
+                append(plural(stats.tiles, "Kachel", "Kacheln"))
+                append(" · ${Format.fileSize(stats.bytes)}")
+                if (stats.regions > 0) append(" · ${plural(stats.regions, "Gebiet", "Gebiete")}")
+                stats.newestUtcMs?.let { append(" · zuletzt geladen am ${Format.date(it, 0)}") }
+            },
+        )
+    }
+    Spacer(Modifier.height(4.dp))
+    Quiet(KarteIndex.ATTRIBUTION)
+
+    Spacer(Modifier.height(12.dp))
+    if (prefetching) {
+        // Enqueued is not the same as running here: the job waits for an
+        // unmetered network, so "sobald WLAN da ist" is the honest wording.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(12.dp))
+            Text("Wird geladen, sobald WLAN da ist…", style = MaterialTheme.typography.bodyMedium)
+        }
+    } else {
+        SettingsAction(
+            "Karte vorladen",
+            "Lädt die Umgebung aller Aufzeichnungen im Hintergrund, nur über WLAN. Danach " +
+                "funktioniert die Karte auch ohne Empfang.",
+            { vm.prefetchMap() },
+        )
+    }
+    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+    SettingsAction(
+        "Karte einlesen",
+        "Übernimmt eine am Rechner erzeugte Kartendatei, statt sie hier zu laden.",
+        onImportMap,
+    )
+    if (!stats.isEmpty) {
+        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+        SettingsAction(
+            "Karte löschen",
+            "Entfernt alle Kartendaten. Die Aufzeichnungen bleiben unberührt.",
+            { confirmDelete = true },
+        )
+    }
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Kartendaten löschen?",
+            body = "${plural(stats.tiles, "Kachel", "Kacheln")}, ${Format.fileSize(stats.bytes)}. Streckenbilder " +
+                "werden danach wieder auf leerem Grund gezeichnet. Aufzeichnungen, Routen und " +
+                "Namen bleiben unberührt, und die Karte lässt sich jederzeit neu laden.",
+            confirm = "Löschen",
+            onConfirm = { confirmDelete = false; vm.deleteMap() },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+}
+
+/** "1 Kachel" rather than "1 Kacheln", which is the only thing on this card a
+ *  reader would notice. */
+private fun plural(n: Int, one: String, many: String): String = "$n ${if (n == 1) one else many}"
 
 @Composable
 private fun SettingsCard(content: @Composable () -> Unit) {

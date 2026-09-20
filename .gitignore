@@ -47,3 +47,6 @@ keystore.properties
 
 # Backup archives dropped here to be examined — the whole database, so likewise
 /backup/
+
+# Locally built OpenStreetMap tile stores (A.29) — re-fetchable, and megabytes
+/map/

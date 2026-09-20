@@ -648,4 +648,124 @@ object Tuning {
      *  active. The recorder is then not recording, whatever the screen says, and
      *  that is the one thing the watch must never be quiet about. */
     const val NO_WRITE_MS: Long = 90_000L
+
+    // ------------------------------------------------------------------ basemap
+
+    /**
+     * How far from a recorded position the dim OpenStreetMap backdrop is fetched
+     * at all [m] (Appendix A.29).
+     *
+     * A margin round the ground you have actually been on, not a box round your
+     * whole life: the twelve clusters the recordings fall into are 4,677 km²
+     * with this margin and about 175,000 km² without it. Three kilometres is
+     * roughly "the next village either way", which is as much context as a
+     * drawing of a route ever needs.
+     */
+    const val MAP_REGION_MARGIN_M: Double = 3_000.0
+
+    /** Ground within this distance of a recorded position is worth the full
+     *  street detail [m]; everything else in a region gets the coarse level.
+     *  Two kilometres is 712 km² over the whole history — about ninety tiles. */
+    const val MAP_DETAIL_RADIUS_M: Double = 2_000.0
+
+    /** Edge [m] of the grid the coverage clusterer works on. Five kilometres is
+     *  well under the distance between two places a person would call different
+     *  (Erlangen and Bamberg are 50 km apart) and well over the width of any
+     *  single ride. */
+    const val MAP_CLUSTER_GRID_M: Double = 5_000.0
+
+    /** A coverage cluster holding fewer positions than this is a stray fix, not
+     *  a place that was ridden through, and is not worth fetching a region for. */
+    const val MAP_MIN_CLUSTER_SAMPLES: Int = 25
+
+    /** How far outside a region place *nodes* are still collected [m].
+     *  Bamberg's node sitting a kilometre outside the box must not cost the
+     *  label for a city that fills the screen. */
+    const val MAP_PLACE_MARGIN_M: Double = 15_000.0
+
+    /**
+     * Douglas–Peucker tolerance per class [m].
+     *
+     * Set by the zoomed-in case, which is the only one that can show the error:
+     * at a 1 km view (about 2.5 m/px) these are two to five pixels of deviation,
+     * under a bright track on a dim ground. They are an order of magnitude above
+     * the storage quantisation and well under GNSS noise, so neither of those is
+     * ever the limiting step.
+     */
+    const val MAP_SIMPLIFY_MOTORWAY_M: Double = 6.0
+    const val MAP_SIMPLIFY_PRIMARY_M: Double = 8.0
+    const val MAP_SIMPLIFY_RAIL_M: Double = 8.0
+    const val MAP_SIMPLIFY_MINOR_M: Double = 10.0
+    const val MAP_SIMPLIFY_WATER_M: Double = 10.0
+    const val MAP_SIMPLIFY_SERVICE_M: Double = 12.0
+    const val MAP_SIMPLIFY_PATH_M: Double = 12.0
+
+    /** Under this a path, footway or field track is a stub that costs bytes and
+     *  says nothing [m]. */
+    const val MAP_MIN_PATH_M: Double = 150.0
+
+    /** Under this a stream is a ditch rather than a river [m]. */
+    const val MAP_MIN_STREAM_M: Double = 500.0
+
+    /** Under this a body of water would draw as one pixel [m²]. */
+    const val MAP_MIN_WATER_AREA_M2: Double = 2_500.0
+
+    /**
+     * Level of detail, in **dp** per metre of ground.
+     *
+     * Dp and not px, for the reason [HEATMAP_CELL_M] exists one layer down: a
+     * 3x screen must not show a denser map than a 1x one at the same apparent
+     * size. On a ~360 dp canvas these read straight off as "how wide is this
+     * view": 0.008 is 45 km across, 0.03 is 12 km, 0.15 is 2.4 km. For
+     * reference, web Mercator z14 at 49.5 °N is 0.107 px/m, so the bands land
+     * roughly where a street map's own zoom levels do.
+     *
+     * Every band is a floor except one. [MAP_LOD_STREETS] is also the *ceiling*
+     * of the faint built-up patch: at whole-region zoom "where are the towns" is
+     * the useful question and 4,700 km² of residential streets is a black
+     * scribble, but the moment the streets themselves are drawn the patch only
+     * muddies them. It is the one entry here with its own test, because it is
+     * the one somebody will later "fix".
+     */
+    const val MAP_LOD_TOWN: Double = 0.008
+    const val MAP_LOD_STREETS: Double = 0.030
+    const val MAP_LOD_SERVICE: Double = 0.080
+    const val MAP_LOD_HAMLET: Double = 0.100
+    const val MAP_LOD_PATH: Double = 0.150
+
+    /** Decoded tiles held in memory. A full-screen street view is a few dozen;
+     *  this is enough to pan without re-inflating and small enough that the
+     *  cache cannot become the reason the app is remembered for its memory. */
+    const val MAP_TILE_CACHE: Int = 96
+
+    /** Clear space kept around a place label [dp] before it counts as
+     *  colliding with another. */
+    const val MAP_LABEL_MARGIN_DP: Double = 4.0
+
+    /** Roughly one label per this much canvas area [dp²], which comes out at
+     *  about six on a route drawing and twenty-five full screen. */
+    const val MAP_LABEL_AREA_PER_LABEL_DP2: Double = 13_000.0
+
+    /** Bounds on that count, so a thumbnail gets at least a couple of names and
+     *  a tablet does not get a phone book. */
+    const val MAP_LABEL_MIN: Int = 3
+    const val MAP_LABEL_MAX: Int = 30
+
+    /** Minimum total length of minor road inside one tile [m] before the tile
+     *  counts as built up. A village lane is a few hundred metres; a town tile
+     *  is tens of kilometres. */
+    const val MAP_URBAN_MIN_LENGTH_M: Double = 12_000.0
+
+    /** Quiet time between two Overpass requests [ms]. Manners, and structural
+     *  rather than aspirational: the client sleeps, so nothing can forget. */
+    const val MAP_FETCH_PAUSE_MS: Long = 2_000L
+
+    /** Backoff after a 429 or a 504 [ms], in order. Past the end of this the
+     *  chunk is given up and the next endpoint is tried. */
+    val MAP_FETCH_BACKOFF_MS: LongArray = longArrayOf(5_000L, 15_000L, 45_000L, 120_000L)
+
+    /** The largest box a single Overpass request may ask for [deg]. Beyond
+     *  about a quarter degree — 500 km² here — the public instances start
+     *  timing out rather than answering slowly. */
+    const val MAP_MAX_CHUNK_DEG: Double = 0.25
 }

@@ -202,7 +202,7 @@ exactly what it decided and why.*
 | NFR-4 | Matcher and clustering logic are pure Kotlin, unit-testable on the JVM with no Android dependencies. |
 | NFR-5 | All tuning constants live in one documented object. No magic numbers scattered in logic. |
 | NFR-6 | Durations use `SystemClock.elapsedRealtimeNanos`, never wall clock. Wall clock is recorded once per session for display and Health Connect. |
-| NFR-7 | No network access of any kind. The manifest declares no `INTERNET` permission. |
+| NFR-7 | The watch has no network access of any kind and its manifest declares no `INTERNET` permission. The phone declares one, and uses it for exactly one thing: fetching OpenStreetMap geometry for ground already recorded, in tile-grid-aligned rectangles, on request (Appendix A.29). No recording, position, time or identifier ever leaves either device. |
 | NFR-8 | Total third-party dependencies outside AndroidX: one (kotlinx.serialization). |
 
 ---
@@ -224,7 +224,7 @@ Chosen for smallest moving-part count, not for elegance.
 | Serialization | kotlinx.serialization JSON, gzipped | Avoids a protobuf toolchain; payloads are ~40 KB gzipped per hour |
 | Watch↔phone | Wearable Data Layer `DataClient` with `Asset` | Automatic retry and delivery when out of range; the robustness requirement in US-2 comes free |
 | Dependency injection | None. Manual constructor wiring, one `AppGraph` object | Hilt would add build complexity for ~15 objects |
-| Charts / maps | None. Compose `Canvas` polyline + tables | No API keys, no billing, no tile cache, no map library |
+| Charts / maps | Compose `Canvas` + tables, over a dim OpenStreetMap vector basemap fetched from Overpass and stored as local tiles (A.29) | Still no maps SDK, no API key, no billing and no third-party dependency — the codec, the projection and the viewport query are `:core` Kotlin over `java.util.zip` and `HttpURLConnection` |
 | Background work | `WorkManager` (phone only, one-shot after ingest) | Clustering is the only deferred job |
 | Testing | JUnit + kotlin-test on `:core`; replay harness as a `:core` main | — |
 | Localization | None. German strings hardcoded | Single user |
@@ -1088,10 +1088,15 @@ and its removal can happen outside this app.
 ### A.14 A heatmap of everything, drawn around the routes' own extent
 
 Not in the specification. §4 rejected every maps SDK and §8.5 defers charts; this
-is neither. It is the app's own tracks drawn against an empty ground, with no
-map behind them — which for ground you have covered two hundred times is a more
-recognisable picture than a street map would be, and costs no API key, no tiles
-and no third-party dependency. NFR-7 and NFR-8 are untouched.
+is neither. It is the app's own tracks drawn against a ground of their own —
+which for ground you have covered two hundred times is a more recognisable
+picture than a street map would be, and costs no API key, no tiles and no
+third-party dependency. NFR-8 is untouched.
+
+*(Written when that ground was empty. **A.29 put a dim street drawing behind it**
+and revised NFR-7 with it; everything below about the extent, the cell size, the
+radius filter and the blur is unchanged, because the basemap is drawn under the
+raster and changes nothing about how the raster is built.)*
 
 **Precomputed, not drawn on demand.** The raster is O(samples) over the whole
 history — the same pass the clusterer already makes over the same data — so
@@ -2335,3 +2340,263 @@ cannot: real GNSS noise, ambient batching, battery, and — while the emulators
 stay unpaired — the Data Layer and Health Connect. A replay proves the matcher
 and the display agree with the harness. It proves nothing about the sensors,
 because it replaces them.
+
+### A.29 A dim OpenStreetMap ground under every track
+
+Every drawing of a track in this app sat on nothing. `PolylineView` fitted one
+route to a box and drew it; `HeatmapView` drew the density raster and the route
+lines over a flat surface colour. That was deliberate (§4, §8.5, A.14) and it is
+why a route not run in a year was a shape without a place: you could see what it
+looked like and not where it was.
+
+There is now a street network and town names behind those pictures. The data is
+OpenStreetMap, fetched from the Overpass API, classified, simplified, quantised,
+clipped into tiles and stored locally — **and never fetched twice**.
+
+**One documented decision is reversed: the phone gets `INTERNET`.** OPEN-POINTS
+§3.4 asked that this be "a decision to take consciously, not a merge to wave
+through", so, consciously: the phone fetches map data for ground already
+recorded, on request; the watch manifest is untouched and stays offline. NFR-8
+survives intact — `HttpURLConnection` is in the platform and the responses parse
+with kotlinx.serialization, so the dependency list does not change. NFR-7 is
+rewritten rather than deleted, because the watch half of it is still true and the
+reason belongs next to it.
+
+Two consequences, named here rather than discovered later:
+
+- **The Overpass operator learns which squares of ground are asked for.** For an
+  app whose first line is "no cloud, no network", that is the real cost of this
+  feature, not the bytes. It is bounded structurally: requests are always
+  tile-grid-aligned rectangles — never a track, never a position, never a time —
+  and carry nothing but a bounding box and a generic `User-Agent`.
+- **OSM data is ODbL, which obliges attribution on screen**, not only in a
+  licence file. "Kartendaten © OpenStreetMap-Mitwirkende (ODbL)" appears on the
+  settings card and under the full-screen heatmap — the two places the data is
+  presented at size and in the app's own information. Not on the small drawings,
+  which have no room.
+
+#### The shape of it
+
+One pipeline, two front ends. Everything interesting — classification,
+simplification, quantisation, the tile codec, the viewport query, the level of
+detail, label placement — is in `:core` and JVM-testable. Only the last three
+metres differ: the phone drives it from a screen, the laptop from a CLI.
+
+```
+Overpass  ──►  OsmJson ──► Classify ──► Simplify ──► TileCodec ──► TileStore
+ (bbox)         parse       tag→class    DP + quant   deflate       files/karte/
+                                                                        │
+                            BasemapQuery(view, dpPerM) ◄────────────────┘
+                                        │
+                            BasemapLayer (Compose Canvas) ──► under the track
+```
+
+**`MapView` is the linchpin, and it is a refactor before it is a feature.**
+`PolylineView` and `HeatmapView` each computed the same affine inline. That was
+harmless while the only thing drawn was the track — a drawing cannot disagree
+with itself — and stops being harmless the moment a second layer goes underneath
+it. Naming the projection once means the map and the track read one object
+instead of two copies of a formula. `PolylineView` was moved onto it as a
+separate, behaviour-identical step, guarded by a golden test that reproduces the
+old arithmetic to within a thousandth of a pixel; that tolerance is the exact
+size of the one difference between the two expressions, which is that the
+original added an offset in `Float` where `MapView` folds it into its origin and
+adds in `Double`.
+
+**The store is a directory of small files**, `filesDir/karte/<level>/<row>_<col>.hmt`,
+not one big file and not Room. A growable store is the point: an incremental
+fetch appends tiles and one `renameTo` per tile makes each one atomic, where a
+monolithic file would be rewritten on every fetch. Not Room, because a map is
+not the user's data: `ArchiveRepository.export` walks the tables, so a map table
+would silently add megabytes to every backup — against the rule already written
+on the settings card, that the archive holds "das Einzige darin, was sonst
+nirgends steht". Tiles are re-fetchable. Staying out of Room also means no schema
+v8, no migration and no `MigrationTest` case.
+
+**The tile grid is 1/32° square in degrees** — 3.5 km by 2.2 km at 49.5 °N.
+Degree-aligned and a power of two, so a tile index is a shift, a tile's origin is
+exactly representable, and the same grid snaps the boxes sent to Overpass. Tiles
+are *not* square on the ground and no code may assume they are.
+
+**Two detail levels.** `grob` is water, rivers, rail, motorway and primary —
+what a whole-region view can legibly show; `fein` is everything. A zoomed-out
+view reads only `grob`.
+
+**Features are clipped to their tiles at build time.** That costs one duplicated
+vertex per crossing and buys three things: every vertex is provably inside its
+own tile, so a coordinate is tile-local and fits in a short varint; the viewport
+query needs no per-feature bounding-box test; and two hundred metres of motorway
+on screen can never drag in the other forty kilometres of it.
+
+**DEFLATE per class, not per tile**, which is the entire point of splitting the
+classes: a whole-region view inflates the motorway, rail and water sections and
+never touches the residential streets sitting in the same files.
+
+This is a binary format in a codebase that otherwise prefers gzipped JSON you can
+read when it goes wrong. The justification is the one `HeatmapCodec` already
+writes down for itself — *"it is the decoder that would not survive four million
+JSON integers"* — and unlike a heatmap raster this cannot be run-length encoded,
+because no two coordinates repeat. What replaces "open it in a text editor" is
+`karteinfo --svg`, which renders the decoded store as a picture, **with your own
+tracks in red over it** — because "does the map cover where I went, and is it
+aligned?" is the question no comparison of numbers can answer.
+
+#### Level of detail, in dp per metre
+
+Not pixels per metre: a 3× screen must not show a denser map than a 1× one at the
+same apparent size, which is the same bug `HEATMAP_CELL_M` exists to prevent one
+layer down. On a ~360 dp canvas the bands read straight off as "how wide is this
+view": 0.008 is 45 km across and turns on town labels, 0.030 is 12 km and turns
+on minor roads and village names, 0.080 is 4.5 km and adds field tracks, 0.150 is
+2.4 km and adds paths. For reference, web Mercator z14 at this latitude is
+0.107 px/m, so the bands land roughly where a street map's own zoom levels do.
+
+Every band is a floor **except one**. The faint built-up patch — derived at build
+time from the outline of dense minor-road geometry, which is why no landuse or
+building data is fetched at all — *closes* at the street band. At whole-region
+zoom "where are the towns" is the useful question and four thousand square
+kilometres of residential streets is a black scribble; the moment the streets
+themselves are drawn, the patch only muddies them. It is the one entry in the
+table with its own test, because it is the one somebody will later "fix".
+
+#### What is deliberately not on the map
+
+Buildings (the largest class in German OSM by a wide margin, invisible at any
+zoom where a 20 km track fits a phone, and alone enough to double every file);
+landuse and woodland polygons (area fills compete with the track for contrast,
+which is the opposite of the goal); POIs, addresses, boundaries and power lines;
+`footway=sidewalk` and `footway=crossing`, which in a German town outnumber the
+streets they run beside; tracks and paths under 150 m; and **street names** —
+place names tell you where you are, street names on a dim backdrop are clutter,
+and they would cost roughly as much as the geometry carrying them.
+
+#### Colour, and why there are two palettes
+
+Fixed literals per light and dark, **not** scheme roles, for the reason already
+written in `Theme.kt`: dynamic colour can hand you a near-black or a neon
+primary, and a wallpaper must not be able to make the ground louder than the
+track. Everything is one neutral ink at a different alpha — motorway 0.40 down to
+path 0.14, labels 0.62 with a surface halo — so the loudest thing on the map is a
+mid grey at 40 % against a track drawn at full opacity.
+
+Water is the exception and the reason there are two palettes. On the heatmap
+views the heat is a one-hue blue ramp, so a blue river crossing it would be read
+as a value on that scale — the same argument that already made the route lines
+warm (A.21). There, water is the same ink as the roads. On a route drawing there
+is no ramp, so water is blue and reads as water.
+
+#### The full-screen heatmap, which is the interesting one
+
+The basemap must not simply ride along inside the pinch's `graphicsLayer`: at
+eight times zoom a 1 dp road would become an 8 dp blob and an 11 sp village name
+a headline. So the scene is built for the *pinched viewport* instead — the
+visible rectangle is computed back out of the scale and the translation — strokes
+are divided by the zoom, and labels are drawn inside a `scale(1/zoom)` about
+their own anchor so glyphs rasterise once at final size. The scene is keyed on a
+quantised zoom, six steps over 1…8, so a pinch does not rebuild it sixty times a
+second, and label placement is recomputed per step — not because the anchors
+move, but because a constant-screen-size label covers less ground the further in
+you go, so more of them fit.
+
+This is where the basemap earns the most: at eight times zoom the raster is an
+interpolated bitmap and the vector map is the only crisp thing on screen. The
+route lines *do* still fatten under the layer; that inconsistency is left alone
+and written into OPEN-POINTS rather than changed in the same breath.
+
+#### When it fetches
+
+**On demand.** Opening a track or the heatmap computes the tiles its own viewport
+needs; anything missing is fetched in the background while the track draws on
+empty ground, and the map appears when it arrives. Over any network — a route
+opened away from home is exactly when you want to know where you are. A viewport
+fetch is capped at two requests, because opening one route in a city you have
+never downloaded should cost a few seconds rather than a quarter of an hour. **A
+failed fetch is silent**: the view is simply mapless, which is precisely the
+picture this app drew before the feature existed.
+
+**Prefetch.** „Einstellungen → Karte → Karte vorladen" enqueues a `WorkManager`
+job on `NetworkType.UNMETERED` with `setRequiresBatteryNotLow`, alongside the
+existing `Jobs`/`ClusterWorker` wiring. It walks the coverage clusters derived
+from the database, fetches `grob` for all of them and `fein` only within 2 km of
+a recorded position, and is resumable by construction, because every completed
+tile is already on disk.
+
+**Import.** „Karte einlesen" unpacks a store built on a laptop, for filling the
+whole thing over ethernet before a trip. Every entry is decoded before it is
+kept, so a file that is not a map leaves the installed one untouched.
+
+**There is no on/off switch.** Deleting the data is the off switch; a toggle
+would be a fifth state to test for a feature that was asked for unconditionally.
+
+**Absent coverage says nothing.** A holiday track outside the covered ground
+draws on empty ground with no badge and no caption. The map is scenery, and
+announcing its absence on every foreign track would be noise — deliberately
+*not* folded into `heatmapCaption`, which exists for a sharper reason (an
+excluded recording is indistinguishable from one never made). A missing basemap
+loses no information.
+
+#### Coverage: eleven regions, not one box
+
+The recordings in the real history are **not one area**. They run from 45.5 to
+50.0 °N and 7.3 to 11.9 °E, and a fixed 5 km grid with eight-connected flood fill
+puts them in **eleven** disjoint clusters — Erlangen/Nürnberg, the Spessart,
+Bamberg, four in Alsace and Baden, Innsbruck, three around Lake Garda. A single
+box round all of it would be about 175,000 km²; the eleven with a 3 km margin are
+**3,334 km²**, of which 207 tiles are within 2 km of somewhere actually ridden.
+
+The grid is fixed in degrees rather than derived from the data, and that is the
+property the whole feature rests on: the region boxes, and therefore the queries,
+are a function of *which ground* was ridden and not of how many times or in what
+order. A new recording two hundred metres beyond the furthest point ever reached
+produces the same snapped box, the same query and nothing to fetch. If the grid
+moved with the data, every ride would invalidate the map.
+
+#### Measured, not estimated
+
+The plan this was built from extrapolated one urban Overpass query and warned
+that the arithmetic was its weakest part. It was, by an order of magnitude in the
+right direction. One real fetch of 156 km² of mixed town and country north of
+Erlangen, at **both** levels, came to **88 KiB stored** — about 0.56 KB/km²,
+against an estimate of 5.5. The eleven regions should therefore be a few
+megabytes on disk rather than the 10–25 MB projected. The transfer estimate
+printed by `--dry-run` is still the plan's 44 KB/km² of urban ground and is
+therefore pessimistic; it is left that way on purpose, because the number a user
+reads before starting a long download should err high.
+
+#### The laptop side
+
+```bash
+./gradlew :core:run --args="karte --archive takeout/hecate-sicherung-*.zip --out map/"
+./gradlew :core:run --args="karteinfo --store map/ --svg map/preview --zip map/karte.zip"
+```
+
+`karte` takes its coverage from a backup, a directory of sessions or explicit
+`--bbox` boxes, prints the regions it found and what they will cost, and fetches
+what is missing. `--dry-run` prints all of that and queries nothing, which is the
+first checkpoint worth running and costs nothing. `--offline` fails rather than
+reaching for the network, and it wins over any injected client, which is what
+lets a test prove the network was never touched.
+
+`--bbox` is the one flag that had to reject its repeated form. `parseOptions`
+keeps only the last value of a repeated key — right for `--out`, and silently
+wrong for a list of boxes, where three would become one and the user would find
+out by looking at a map with two thirds of it missing. It takes a
+semicolon-separated list instead, and says so when given the other form.
+
+#### What the emulator answered, and what it did not
+
+On a Pixel 8 emulator against the real history, all three views draw the map in
+both themes with the track aligned on it, the level of detail differs visibly
+between the coarse view and the close one, and the on-demand fetch filled
+twenty-five tiles by itself while the heatmap was open.
+
+It also found the two defects no test would have. The place labels were
+unreadable: the halo was a second layout measured with `Stroke` baked into its
+`TextStyle`, which fattens the glyphs and fills their counters rather than
+outlining them — `drawText` takes a `drawStyle` of its own, and one layout drawn
+twice is both correct and cheaper. And the card said "1 Gebiete".
+
+What is left needs a real screen and is in OPEN-POINTS §3.13: whether "dim" is
+dim enough in daylight, whether the pinch holds 60 fps across a zoom-key
+crossing, and whether the map lines up with a recording made on the ground it
+draws.
