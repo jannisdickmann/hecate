@@ -4,6 +4,7 @@ import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.io.SessionCodec
+import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.SessionEventType
 import kotlin.test.Test
@@ -57,6 +58,31 @@ class CodecTest {
         assertEquals(s.samples.size, back.samples.size)
         assertEquals(s.samples.first(), back.samples.first())
         assertEquals(s.samples.last(), back.samples.last())
+    }
+
+    /**
+     * The auto-stop's cut, which lives in the footer because the file it
+     * describes may not be rewritten (A.30).
+     *
+     * An older recording has no such field and must read back as one that was
+     * never cut — `null`, not zero, which would trim every position it has.
+     */
+    @Test
+    fun `the footer carries the auto-stop's cut, and its absence`() {
+        val s = Synthetic.record("s-cut", Synthetic.workRoute, Synthetic.MONDAY_0730_UTC, seed = 3)
+        val stopped = s.copy(
+            footer = s.footer!!.copy(
+                reason = SessionEndReason.AUTO_STOPPED,
+                trimmedAfterTOffsetMs = 120_000L,
+            ),
+        )
+        val back = SessionCodec.decodeSession(SessionCodec.encodeSession(stopped).lineSequence())
+        assertNotNull(back)
+        assertEquals(120_000L, back.footer?.trimmedAfterTOffsetMs)
+        assertEquals(SessionEndReason.AUTO_STOPPED, back.footer?.reason)
+
+        val plain = SessionCodec.decodeSession(SessionCodec.encodeSession(s).lineSequence())
+        assertNull(assertNotNull(plain).footer?.trimmedAfterTOffsetMs)
     }
 
     @Test

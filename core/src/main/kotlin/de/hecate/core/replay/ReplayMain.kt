@@ -14,6 +14,11 @@ import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteBundle
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.SessionEventType
+import de.hecate.core.geo.Geo
+import de.hecate.core.geo.LatLon
+import de.hecate.core.recorder.AutoStopVerdict
+import de.hecate.core.recorder.AutoStopWatch
 import de.hecate.core.takeout.TakeoutImport
 import de.hecate.core.takeout.TakeoutSource
 import java.io.File
@@ -66,6 +71,7 @@ object ReplayMain {
             "selfcheck" -> cmdSelfCheck(opts)
             "onwrist" -> cmdOnWrist(opts)
             "sessions" -> cmdSessions(opts)
+            "autostop" -> cmdAutoStop(opts)
             "extract" -> cmdExtract(opts)
             "takeout" -> cmdTakeout(opts)
             // The basemap's own two commands, which parse their arguments
@@ -99,6 +105,11 @@ object ReplayMain {
                         List the stored activities and what each one matches, so
                         that a replay can be picked by what it does rather than by
                         the date on it. --bundle answers for that bundle.
+              autostop  (--archive <zip> | --sessions <dir> | --session <f>)
+                        Run the auto-stop rules over stored activities and print
+                        what each one would have ended and thrown away. The
+                        thresholds are guesses until this says nothing fired on a
+                        history of real workouts.
               extract   --archive <zip> --session <id> [--out <f>]
                         Write one session out of a backup as JSONL, by id or by
                         any unique prefix of one.
@@ -294,6 +305,139 @@ object ReplayMain {
             println("extract one with: extract --archive $archive --session <id>")
         }
         return 0
+    }
+
+    /**
+     * What the auto-stop would have done to activities that are already
+     * recorded (A.30).
+     *
+     * The rules end a workout and throw away its tail, which are the two most
+     * irreversible things in the app, and their thresholds were chosen from the
+     * geometry of the problem rather than from evidence. This is the evidence:
+     * run it over a backup and the interesting result is the boring one — no
+     * session stopped, because none of them was standing still for a quarter of
+     * an hour or moving at 90 km/h. Anything that does fire is either a real
+     * forgotten recording (look at it, and at what would have gone) or a
+     * threshold that is wrong.
+     *
+     * Sessions that already carry a cut are reported as such rather than
+     * re-judged: the watch decided that one at the time, on the samples as they
+     * arrived.
+     */
+    private fun cmdAutoStop(o: Map<String, String>): Int {
+        val sessions: List<RecordedSession> = when {
+            o["archive"] != null -> archiveSessions(File(o["archive"]!!)) ?: return 2
+            o["sessions"] != null -> directorySessions(File(o["sessions"]!!)) ?: return 2
+            o["session"] != null -> listOfNotNull(loadSession(o["session"]) ?: return 2)
+            else -> { usage(); return 2 }
+        }
+        if (sessions.isEmpty()) {
+            println("no sessions to judge")
+            return 0
+        }
+
+        println(
+            "%-8s  %-16s %-7s %8s  %s".format("id", "started", "type", "length", "auto-stop"),
+        )
+        var fired = 0
+        var alreadyCut = 0
+        for (session in sessions.sortedBy { it.header.startedAtUtcMs }) {
+            val verdict = autoStopOf(session)
+            if (verdict != null) fired++
+            val stored = session.footer?.trimmedAfterTOffsetMs
+            if (stored != null) alreadyCut++
+            val text = when {
+                verdict != null -> {
+                    val lost = session.samples.count { it.tOffsetMs > verdict.keepThrough.tOffsetMs }
+                    "%s at %s — %s, %d points / %.2f km discarded".format(
+                        verdict.reason.name,
+                        hms(verdict.decidedAtMs),
+                        verdict.note,
+                        lost,
+                        distanceAfter(session, verdict.keepThrough.tOffsetMs) / 1000.0,
+                    )
+                }
+                stored != null -> "already cut at ${hms(stored)} by the watch"
+                else -> "-"
+            }
+            println(
+                "%-8s  %s %-7s %8s  %s".format(
+                    session.id.take(8),
+                    LOCAL_STAMP
+                        .withZone(java.time.ZoneOffset.ofTotalSeconds(session.header.tzOffsetMinutes * 60))
+                        .format(Instant.ofEpochMilli(session.header.startedAtUtcMs)),
+                    session.header.exerciseType,
+                    hms(session.activeDurationMs),
+                    text,
+                ),
+            )
+        }
+        println("---")
+        println("${sessions.size} sessions, $fired would be auto-stopped, $alreadyCut already carry a cut")
+        return 0
+    }
+
+    /**
+     * The rules, over a session that has already been recorded.
+     *
+     * Samples only: there is no clock here, so the two patience rules are noticed
+     * on the first sample after the threshold rather than the moment it passes,
+     * which is late by one sample interval and by nothing else. The manual pauses
+     * come out of the event log, which is the only place the user's own pause and
+     * Health Services' auto-pause are told apart — and they are treated
+     * differently on purpose (see [AutoStopWatch]).
+     */
+    private fun autoStopOf(session: RecordedSession): AutoStopVerdict? {
+        val watch = AutoStopWatch(session.header.exerciseType)
+        val pauses = session.events
+            .filter { it.type == SessionEventType.PAUSE_MANUAL || it.type == SessionEventType.RESUME_MANUAL }
+            .sortedBy { it.tOffsetMs }
+        var next = 0
+        for (sample in session.samples) {
+            while (next < pauses.size && pauses[next].tOffsetMs <= sample.tOffsetMs) {
+                watch.manualPause(pauses[next].type == SessionEventType.PAUSE_MANUAL, pauses[next].tOffsetMs)
+                next++
+            }
+            watch.sample(sample)?.let { return it }
+        }
+        return null
+    }
+
+    /** Ground covered after an offset [m], along the samples as recorded. */
+    private fun distanceAfter(session: RecordedSession, tOffsetMs: Long): Double {
+        var total = 0.0
+        var previous: LatLon? = null
+        for (sample in session.samples) {
+            if (sample.tOffsetMs <= tOffsetMs || !sample.usable) continue
+            val here = LatLon(sample.lat, sample.lon)
+            previous?.let { total += Geo.haversine(it, here) }
+            previous = here
+        }
+        return total
+    }
+
+    /** Every session in a backup, samples and all. */
+    private fun archiveSessions(file: File): List<RecordedSession>? {
+        if (!file.isFile) { System.err.println("no such file: $file"); return null }
+        val reader = try {
+            ArchiveCodec.Reader(file)
+        } catch (e: Exception) {
+            System.err.println("not a Hecate backup: $file (${e.message})")
+            return null
+        }
+        return reader.use { r -> r.database.sessions.mapNotNull { row -> r.session(row.id) } }
+    }
+
+    /** Every session file in a directory, as `fixtures/` holds them. */
+    private fun directorySessions(dir: File): List<RecordedSession>? {
+        if (!dir.isDirectory) { System.err.println("not a directory: $dir"); return null }
+        val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        return files.mapNotNull { f ->
+            SessionCodec.decodeSession(f.readLines().asSequence())
+                ?: null.also { System.err.println("not a session file, skipped: $f") }
+        }
     }
 
     /**

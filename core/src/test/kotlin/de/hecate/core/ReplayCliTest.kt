@@ -143,6 +143,73 @@ class ReplayCliTest {
     }
 
     @Test
+    fun `autostop says nothing fired on a history of ordinary workouts`() {
+        // The result that matters is the boring one. These rules end recordings
+        // and throw away their tails, so the first question to ask of them is how
+        // often they would do that to a workout somebody actually did — and the
+        // answer has to be never (A.30).
+        val dir = tempDir()
+        val sessions = history()
+        val zip = archive(dir, sessions)
+
+        val printed = capture { assertEquals(0, ReplayMain.dispatch(arrayOf("autostop", "--archive", zip.path))) }
+        assertTrue(
+            printed.contains("${sessions.size} sessions, 0 would be auto-stopped"),
+            printed,
+        )
+
+        val fixtures = File(dir, "fixtures").apply { mkdirs() }
+        for (session in sessions) {
+            File(fixtures, "${session.id}.jsonl").writeText(SessionCodec.encodeSession(session))
+        }
+        assertEquals(0, ReplayMain.dispatch(arrayOf("autostop", "--sessions", fixtures.path)))
+        assertEquals(
+            0,
+            ReplayMain.dispatch(
+                arrayOf("autostop", "--session", File(fixtures, "${sessions.first().id}.jsonl").path),
+            ),
+        )
+        assertEquals(2, ReplayMain.dispatch(arrayOf("autostop")))
+    }
+
+    @Test
+    fun `autostop names the workout that ended in a car park`() {
+        val dir = tempDir()
+        val ordinary = Synthetic.record("walk-home", Synthetic.workRoute, day(1), seed = 5)
+        // Twenty minutes standing on the last position, which is what a watch
+        // still running on the kitchen table records.
+        val last = ordinary.samples.last()
+        val parked = ordinary.copy(
+            samples = ordinary.samples + (1..20 * 60).map { i ->
+                last.copy(
+                    tOffsetMs = last.tOffsetMs + i * 1000L,
+                    activeMs = last.activeMs + i * 1000L,
+                )
+            },
+        )
+        val file = File(dir, "parked.jsonl").apply { writeText(SessionCodec.encodeSession(parked)) }
+
+        val printed = capture {
+            assertEquals(0, ReplayMain.dispatch(arrayOf("autostop", "--session", file.path)))
+        }
+        assertTrue(printed.contains("STATIONARY"), printed)
+        assertTrue(printed.contains("1 sessions, 1 would be auto-stopped"), printed)
+    }
+
+    /** Everything the command printed while [block] ran. */
+    private fun capture(block: () -> Unit): String {
+        val buffer = java.io.ByteArrayOutputStream()
+        val previous = System.out
+        System.setOut(java.io.PrintStream(buffer, true, Charsets.UTF_8))
+        try {
+            block()
+        } finally {
+            System.setOut(previous)
+        }
+        return buffer.toString(Charsets.UTF_8)
+    }
+
+    @Test
     fun `extract takes a unique prefix and refuses an ambiguous one`() {
         val dir = tempDir()
         val sessions = history()

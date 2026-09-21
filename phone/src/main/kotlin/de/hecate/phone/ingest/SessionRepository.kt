@@ -10,6 +10,7 @@ import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.SessionSource
+import de.hecate.core.recorder.AutoStop
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
@@ -53,7 +54,24 @@ class SessionRepository(
      * @param triggerFollowUp whether to queue clustering and the Health Connect
      *        write. A bulk import sets it false and queues once at the end.
      */
-    suspend fun ingest(session: RecordedSession, triggerFollowUp: Boolean = true): IngestResult {
+    suspend fun ingest(incoming: RecordedSession, triggerFollowUp: Boolean = true): IngestResult {
+        // The one place the auto-stop's cut is applied (A.30). The watch cannot
+        // apply it itself — its file is append-only, which is what makes a
+        // recording survive a process death — so it records where the activity
+        // ended and the phone drops the rest here, before anything else in the
+        // system has seen it. Everything downstream of ingest therefore reads a
+        // session that contains the workout and not the drive home: the track,
+        // the profile, the clusterer that learns routes from it, the heatmap,
+        // Health Connect and every backup.
+        val discarded = AutoStop.discardedSamples(incoming)
+        val session = AutoStop.trim(incoming)
+        if (discarded > 0) {
+            Log.i(
+                TAG,
+                "Sitzung ${session.id}: $discarded Messpunkte nach dem automatischen Stopp verworfen",
+            )
+        }
+
         if (session.samples.size < 2) {
             return IngestResult.Rejected("zu wenige Messpunkte", permanent = true)
         }

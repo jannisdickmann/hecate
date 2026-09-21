@@ -29,6 +29,8 @@ import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
+import de.hecate.core.recorder.AutoStopVerdict
+import de.hecate.core.recorder.AutoStopWatch
 import de.hecate.wear.AppGraph
 import de.hecate.wear.notify.Haptics
 import de.hecate.wear.notify.OngoingNotification
@@ -81,6 +83,19 @@ class RecorderService : Service() {
 
     private var sessionId: String? = null
     private var startedElapsedNs: Long = 0
+
+    /**
+     * The three rules that end a recording nobody is doing any more (issue #4,
+     * A.30), and the verdict once one of them has fired.
+     *
+     * The verdict is kept because it carries the cut: the last sample that was
+     * still part of the activity, which [endSession] writes into the footer so
+     * that the phone can drop the drive home rather than file it as cycling.
+     */
+    private var autoStop: AutoStopWatch? = null
+
+    @Volatile
+    private var autoStopVerdict: AutoStopVerdict? = null
     private var lastState: MatchState? = null
     private var routeNames: Map<Long, String> = emptyMap()
     private var lastNotificationUpdateMs = 0L
@@ -255,6 +270,13 @@ class RecorderService : Service() {
         }
         if (matcher?.disabled == true) recordEvent(SessionEventType.MATCHER_DISABLED)
 
+        // Fed from [onSample], which a replay reaches by the same path a workout
+        // does: the rules read sample offsets and never a clock, so replaying a
+        // recording that ended in a car reaches the same verdict on the same
+        // sample the wrist would have (§6.5).
+        autoStop = AutoStopWatch(exerciseType)
+        autoStopVerdict = null
+
         val canLocate = source.canRecordLocation()
         bus.update {
             RecorderUiState(
@@ -308,6 +330,49 @@ class RecorderService : Service() {
             }
         Haptics.tick(this)
         armPrepareTimeout(id)
+        armAutoStopWatchdog(id)
+    }
+
+    /**
+     * Ask the auto-stop, on a timer, what the samples cannot say.
+     *
+     * Both of its patience rules expire in silence: an auto-pause writes no
+     * samples at all, and a receiver that has quietly given up writes none that
+     * are usable, so a recording left in a rucksack would never be asked about
+     * again if the question only came with a position.
+     *
+     * Live sessions only. A replay is paced off the recording's own offsets, at
+     * whatever speed was asked for, and the wall clock this reads has nothing to
+     * do with either — there the samples do all the asking.
+     */
+    private fun armAutoStopWatchdog(id: String) {
+        scope.launch {
+            while (sessionId == id) {
+                delay(Tuning.AUTO_STOP_TICK_MS)
+                if (sessionId != id) return@launch
+                val verdict = autoStop?.tick(nowOffsetMs()) ?: continue
+                autoStopped(verdict)
+                return@launch
+            }
+        }
+    }
+
+    /**
+     * End the recording, and say why on the wrist.
+     *
+     * The event goes in before the footer so that a file whose last write is
+     * torn still carries the reason, and the two firm pulses are the deviation
+     * alert's rather than the stop tick's: a session that ended itself is worth
+     * feeling through a sleeve.
+     */
+    private suspend fun autoStopped(verdict: AutoStopVerdict) {
+        if (sessionId == null) return
+        autoStopVerdict = verdict
+        Log.i(TAG, "Automatischer Stopp: ${verdict.note}")
+        recordEvent(SessionEventType.AUTO_STOP, verdict.note)
+        Haptics.deviation(this)
+        say(getString(de.hecate.wear.R.string.auto_stopped, verdict.reason.label))
+        endSession(SessionEndReason.AUTO_STOPPED)
     }
 
     /**
@@ -448,17 +513,28 @@ class RecorderService : Service() {
         if (!replaying) runCatching { source.end() }
 
         val st = bus.state.value
+        // An auto-stop's totals are those of the last sample that was still part
+        // of the activity, not those of the moment the watch gave up: the live
+        // figures include the drive home, and a footer written from them would
+        // hand Health Connect a 40 km bike ride the user did not do. The samples
+        // after the cut stay in the file — it is append-only, and rewriting it is
+        // the one thing a recorder may not do — and the phone drops them on the
+        // way in (A.30).
+        val cut = autoStopVerdict?.keepThrough
         writer?.writeFooter(
             SessionFooter(
                 endedAtUtcMs = System.currentTimeMillis(),
-                activeDurationMs = st.activeDurationMs,
-                totalDistanceM = st.distanceM,
+                activeDurationMs = cut?.activeMs ?: st.activeDurationMs,
+                totalDistanceM = cut?.cumDistanceM ?: st.distanceM,
                 reason = reason,
+                trimmedAfterTOffsetMs = cut?.tOffsetMs,
             ),
         )
         writer?.close()
         writer = null
         matcher = null
+        autoStop = null
+        autoStopVerdict = null
         feed = null
         lastState = null
         sawFirstLocation = false
@@ -590,6 +666,12 @@ class RecorderService : Service() {
                 if (bus.state.value.phase != RecorderPhase.PAUSED) {
                     recordEvent(if (auto) SessionEventType.PAUSE_AUTO else SessionEventType.PAUSE_MANUAL)
                     pausedSinceMs = nowOffsetMs()
+                    // Only the user's own pause suspends the auto-stop. An
+                    // auto-pause *is* the standing still it watches for, and
+                    // suspending on it would make the one case it is surest
+                    // about — the watch left on the kitchen table — the one case
+                    // it never sees.
+                    if (!auto) autoStop?.manualPause(true, nowOffsetMs())
                 }
                 bus.update { it.copy(phase = RecorderPhase.PAUSED, autoPaused = auto) }
             }
@@ -601,6 +683,7 @@ class RecorderService : Service() {
                     )
                     pausedSinceMs?.let { pausedTotalMs += (nowOffsetMs() - it).coerceAtLeast(0) }
                     pausedSinceMs = null
+                    autoStop?.manualPause(false, nowOffsetMs())
                 }
                 bus.update { it.copy(phase = RecorderPhase.ACTIVE, autoPaused = false) }
             }
@@ -692,6 +775,13 @@ class RecorderService : Service() {
                 )
             }
         }
+
+        // A delivery that carried no position still carries the time it arrived
+        // in, and the timers are exactly about time passing with nothing to show
+        // for it. Cheaper than waiting for the watchdog's next half minute, and
+        // the one thing that still arrives while ambient batching stretches
+        // everything else out.
+        autoStop?.tick(nowOffsetMs())?.let { verdict -> scope.launch { autoStopped(verdict) } }
 
         if (locations.isEmpty()) {
             maybeUpdateNotification()
@@ -794,6 +884,12 @@ class RecorderService : Service() {
                 lastAccuracyM = sample.accuracyM ?: it.lastAccuracyM,
             )
         }
+
+        // After the write and before the matcher: a decision to stop is about
+        // the recording, not about the route, and it must not depend on a
+        // matcher that may be disabled. Launched rather than awaited because
+        // ending a session suspends and this path may not.
+        autoStop?.sample(sample)?.let { verdict -> scope.launch { autoStopped(verdict) } }
 
         val state = matcher?.update(sample)
         if (matcher?.disabled == true && !bus.state.value.matcherDisabled) {

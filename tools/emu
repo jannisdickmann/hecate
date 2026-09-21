@@ -184,6 +184,12 @@ case "${1:-up}" in
           # run, so it can never match anything. What is on screen during a replay
           # is what would have been on the wrist that day — the decisions are the
           # matcher's own, and it is not told which of the two it is running in.
+          #
+          # That now includes the auto-stop (A.30): a recording that ends with a
+          # drive home or twenty minutes on a sofa ends the replay where it would
+          # have ended the workout, with the same reason on the screen. Use
+          # `autostop --session <f>` on the laptop first if you want to know
+          # which of the stored activities do that.
     shift || true
     case "${1:-}" in
       --list|-l)

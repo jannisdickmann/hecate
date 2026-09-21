@@ -11,4 +11,7 @@
     <string name="warmup_failed">GPS-Vorbereitung fehlgeschlagen</string>
     <string name="started_without_gps">Ohne GPS gestartet</string>
     <string name="nothing_recorded">Nichts aufgezeichnet — verworfen</string>
+    <!-- The recording ended itself (issue #4). The placeholder is the rule that
+         decided it: Stillstand, Kein GPS, Zu schnell. -->
+    <string name="auto_stopped">Automatisch beendet — %1$s</string>
 </resources>
