@@ -12,6 +12,7 @@ import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.ExerciseState
 import androidx.health.services.client.data.ExerciseUpdate
+import androidx.health.services.client.data.HeartRateAccuracy
 import androidx.health.services.client.data.LocationAccuracy
 import androidx.health.services.client.data.LocationAvailability
 import androidx.health.services.client.data.LocationData
@@ -23,6 +24,7 @@ import de.hecate.core.display.routeBelief
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchState
+import de.hecate.core.model.Reading
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionEvent
@@ -138,6 +140,13 @@ class RecorderService : Service() {
     private var lastSpeedKmh: Double? = null
     private var lastSpeedAtMs = 0L
 
+    /** The last of each series written, and how many — the counts only so the
+     *  log can say at the end what each sensor actually gave. */
+    private var lastAltitudeAtMs = -1L
+    private var altitudesWritten = 0
+    private var lastSpeedReadingAtMs = -1L
+    private var speedsWritten = 0
+
     /** Serialises [endSession]; see there for what happens without it. */
     private val endLock = Mutex()
 
@@ -224,6 +233,10 @@ class RecorderService : Service() {
         pausedSinceMs = null
         lastHrBpm = null
         lastHrAtMs = 0L
+        lastAltitudeAtMs = -1L
+        altitudesWritten = 0
+        lastSpeedReadingAtMs = -1L
+        speedsWritten = 0
         lastRateAtMs = -1L
         ratesWritten = 0
         val startedAtUtcMs = header?.startedAtUtcMs ?: System.currentTimeMillis()
@@ -479,7 +492,11 @@ class RecorderService : Service() {
         // Never for a replay, which is surer still: it opened no file, and the id
         // it runs under is the stored session's own, so discarding "its" file
         // would delete the recording being replayed.
-        Log.i(TAG, "Sitzung $id: $samplesWritten Messpunkte, $ratesWritten Pulswerte")
+        Log.i(
+            TAG,
+            "Sitzung $id: $samplesWritten Messpunkte, $ratesWritten Pulswerte, " +
+                "$altitudesWritten Höhenwerte, $speedsWritten Geschwindigkeiten",
+        )
         val empty = samplesWritten < MIN_USEFUL_SAMPLES && !replaying
         samplesWritten = 0
         ratesWritten = 0
@@ -635,47 +652,61 @@ class RecorderService : Service() {
             }
             ?: bus.state.value.activeDurationMs
 
-        ingest(update.latestMetrics, activeMs)
+        ingest(update, activeMs)
     }
 
     /**
-     * Turn one batch of Health Services metrics into samples.
+     * Turn one delivery of Health Services metrics into samples and series.
      *
-     * Batches arrive per second with the screen on and in bursts while ambient
-     * (§1.3). Samples are written and matched in timestamp order either way, so
-     * the result is identical — which is exactly what the replay harness checks.
+     * Deliveries arrive about once a second with the screen on and in bursts
+     * while ambient (§1.3) — Health Services documents a maximum reporting period
+     * of around 150 seconds, so one of them can carry two and a half minutes of
+     * every series at once.
+     *
+     * That fact is what this method is organised around. Anything measured on its
+     * own schedule is written from its own data points, at the times the sensor
+     * stamped them; nothing is reduced to one value per delivery and then stamped
+     * across every position in the batch. Doing the latter is how the heart rate
+     * once lost four fifths of its readings, and it is why altitude and speed are
+     * series here rather than columns.
      */
-    private fun ingest(metrics: DataPointContainer, activeMs: Long) {
+    private fun ingest(update: ExerciseUpdate, activeMs: Long) {
+        val metrics = update.latestMetrics
         val locations = runCatching { metrics.getData(DataType.LOCATION) }.getOrDefault(emptyList())
         val hrPoints = runCatching { metrics.getData(DataType.HEART_RATE_BPM) }.getOrDefault(emptyList())
+        val elevations = runCatching {
+            metrics.getData(DataType.ABSOLUTE_ELEVATION)
+        }.getOrDefault(emptyList())
+        val speeds = runCatching { metrics.getData(DataType.SPEED) }.getOrDefault(emptyList())
+        // Cumulative, and therefore one value for the whole delivery rather than
+        // one per position in it. Read as an aggregate, which is a different call
+        // from the delta types above: `getData` returns a single point for an
+        // AggregateDataType and a list for a DeltaDataType.
         val distance = runCatching { metrics.getData(DataType.DISTANCE_TOTAL)?.total }.getOrNull()
-        // Speed as the platform measures it, in metres per second.
-        //
-        // The live screen has always had a cell for this, and the cell has always
-        // been the *session average* in disguise: nothing ever assigned
-        // `speedKmh`, so the display fell through to distance-over-time for the
-        // whole workout — a number that, an hour in, barely moves whatever the
-        // user does. Asking for the data type is the whole fix.
-        val speed = runCatching {
-            metrics.getData(DataType.SPEED).lastOrNull()?.value
-        }.getOrNull()?.takeIf { it.isFinite() && it >= 0 }
 
-        // Every reading, at its own time — not one per delivery. Health Services
-        // batches, and a batch can carry a minute of them; keeping only the last
-        // wrote 161 readings for a 47-minute ride and lost the rest, which is
-        // the whole reason the series is its own record now. See [HeartRate].
+        // Each series first, every reading at the time its own sensor took it.
         writeRates(hrPoints)
+        writeAltitudes(elevations)
+        writeSpeeds(speeds)
 
-        val measured = hrPoints.lastOrNull()?.value?.toInt()?.takeIf { it in 20..250 }
-        if (measured != null) {
-            lastHrBpm = measured
-            lastHrAtMs = nowOffsetMs()
+        // What the live screen shows, which is a different question: there the
+        // only interesting reading is the most recent one, and how old it is.
+        //
+        // Stamped with the data point's own time, not with the moment it was
+        // processed. In ambient the two differ by up to the reporting period, and
+        // taking "now" told [Tuning.HR_HOLD_MS] and [Tuning.FIX_STALE_MS] that a
+        // two-minute-old reading had just arrived — so the screen presented stale
+        // numbers as current for exactly as long as the hold allowed.
+        hrPoints.lastOrNull { usableRate(it) }?.let {
+            lastHrBpm = it.value.toInt()
+            lastHrAtMs = offsetOf(it.timeDurationFromBoot.toMillis())
         }
-        val hr = measured
-            ?: lastHrBpm?.takeIf { nowOffsetMs() - lastHrAtMs <= Tuning.HR_HOLD_MS }
-        if (speed != null) {
-            lastSpeedKmh = speed * 3.6
-            lastSpeedAtMs = nowOffsetMs()
+        val hr = lastHrBpm?.takeIf { nowOffsetMs() - lastHrAtMs <= Tuning.HR_HOLD_MS }
+
+        val speed = speeds.lastOrNull { it.value.isFinite() && it.value >= 0 }
+        speed?.let {
+            lastSpeedKmh = it.value * 3.6
+            lastSpeedAtMs = offsetOf(it.timeDurationFromBoot.toMillis())
         }
         // Held only as long as a position fix would be: speed is a location
         // product, and once the fix is stale this is not a current speed but a
@@ -698,12 +729,100 @@ class RecorderService : Service() {
             return
         }
 
+        // Pause state is read once for the delivery, and that is sound rather
+        // than convenient: Health Services sends an update on every state
+        // transition, so a batch does not straddle a pause. It is the one thing
+        // here without a per-point source, and it is worth knowing which.
         val paused = bus.state.value.phase == RecorderPhase.PAUSED
-        for (point in locations.sortedBy { it.timeDurationFromBoot.toMillis() }) {
-            val sample = toSample(point, hr, distance, paused) ?: continue
+        val sorted = locations.sortedBy { it.timeDurationFromBoot.toMillis() }
+        for ((i, point) in sorted.withIndex()) {
+            // The cumulative distance describes the delivery, so it belongs on
+            // the position that ends it and on no other. Stamping it across the
+            // batch gave every position in an ambient burst the same travelled
+            // figure — which nothing on the phone reads, but which was written
+            // into the file as though it were measured there. Readers of an older
+            // session are unaffected: a null already falls back (see the replay
+            // path in [onReplaySample]).
+            val cumulative = if (i == sorted.size - 1) distance else null
+            val sample = toSample(update, point, cumulative, paused) ?: continue
             onSample(sample)
         }
         maybeUpdateNotification()
+    }
+
+    /**
+     * Whether a heart-rate reading is worth recording at all.
+     *
+     * The range check alone was never enough. Health Services attaches a
+     * [HeartRateAccuracy] to each reading, and a watch that has lost skin contact
+     * keeps producing numbers that sit comfortably inside 20..250 — Google's
+     * guidance is explicit that the accuracy is there to be read. NO_CONTACT and
+     * UNRELIABLE are the two that say the value is not a measurement of anybody.
+     *
+     * ACCURACY_LOW is kept. It means the sensor is struggling, not that it is
+     * wrong, and a workout where the optics never settle is better described by
+     * poor readings than by no readings — the bands the display draws are ten
+     * percent of a peak wide and survive that. An absent accuracy is also kept:
+     * it means the platform did not say, which is not the same as saying no.
+     */
+    private fun usableRate(point: SampleDataPoint<Double>): Boolean {
+        if (!point.value.isFinite() || point.value.toInt() !in 20..250) return false
+        val status = (point.accuracy as? HeartRateAccuracy)?.sensorStatus ?: return true
+        return status != HeartRateAccuracy.SensorStatus.NO_CONTACT &&
+            status != HeartRateAccuracy.SensorStatus.UNRELIABLE
+    }
+
+    /** Session time from a boot-clock instant, the one conversion every series
+     *  and every sample goes through. */
+    private fun offsetOf(bootMs: Long): Long = bootMs - startedElapsedNs / 1_000_000
+
+    /**
+     * Write every barometric altitude of a delivery, at the time it was measured.
+     *
+     * A series rather than a column on the position, because the two sensors do
+     * not keep the same time and the barometer is much the slower: measured on a
+     * Pixel Watch 4, readings came 57 s, 27 s and 2 s apart while positions
+     * arrived every second. Joining them at this end kept 16 samples in 101, and
+     * would have kept nothing at all through a GNSS dropout — which is precisely
+     * where a barometer is the only sensor still working. The phone puts the
+     * series onto the positions on the way out, where the decision can be changed
+     * without the readings having been thrown away first.
+     *
+     * The bound is the one the position's own altitude gets, for the same reason:
+     * a synthetic sensor reports values no place on earth has.
+     */
+    private fun writeAltitudes(points: List<SampleDataPoint<Double>>) {
+        val w = writer ?: return
+        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+            val metres = point.value
+                .takeIf { it.isFinite() && it in MIN_ALTITUDE_M..MAX_ALTITUDE_M }
+                ?: continue
+            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+            if (tOffsetMs < 0 || tOffsetMs <= lastAltitudeAtMs) continue
+            w.writeAltitude(Reading(tOffsetMs = tOffsetMs, value = metres))
+            lastAltitudeAtMs = tOffsetMs
+            altitudesWritten++
+        }
+    }
+
+    /**
+     * Write every speed reading of a delivery, at the time it was measured.
+     *
+     * Health Services measures speed rather than inferring it, which beats
+     * differencing two positions that carry a few metres of error each. The data
+     * type was already being asked for — and paid for in battery — while only the
+     * last value of each delivery was read for one live cell and none of it kept.
+     */
+    private fun writeSpeeds(points: List<SampleDataPoint<Double>>) {
+        val w = writer ?: return
+        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+            val mps = point.value.takeIf { it.isFinite() && it >= 0.0 } ?: continue
+            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+            if (tOffsetMs < 0 || tOffsetMs <= lastSpeedReadingAtMs) continue
+            w.writeSpeed(Reading(tOffsetMs = tOffsetMs, value = mps))
+            lastSpeedReadingAtMs = tOffsetMs
+            speedsWritten++
+        }
     }
 
     /**
@@ -718,8 +837,9 @@ class RecorderService : Service() {
         val w = writer ?: return
         var wrote = false
         for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
-            val bpm = point.value.toInt().takeIf { it in 20..250 } ?: continue
-            val tOffsetMs = point.timeDurationFromBoot.toMillis() - startedElapsedNs / 1_000_000
+            if (!usableRate(point)) continue
+            val bpm = point.value.toInt()
+            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
             if (tOffsetMs < 0 || tOffsetMs <= lastRateAtMs) continue
             w.writeRate(HeartRate(tOffsetMs = tOffsetMs, bpm = bpm))
             lastRateAtMs = tOffsetMs
@@ -735,33 +855,49 @@ class RecorderService : Service() {
     }
 
     private fun toSample(
+        update: ExerciseUpdate,
         point: SampleDataPoint<LocationData>,
-        hr: Int?,
         distance: Double?,
         paused: Boolean,
     ): Sample? {
         val d = point.value
         if (!d.latitude.isFinite() || !d.longitude.isFinite()) return null
-        val bootMs = point.timeDurationFromBoot.toMillis()
-        val tOffsetMs = bootMs - startedElapsedNs / 1_000_000
+        val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
         if (tOffsetMs < 0) return null
         sawFirstLocation = true
         return Sample(
             tOffsetMs = tOffsetMs,
-            // This sample's own offset, less every pause before it — not the
-            // checkpoint the live display uses. See [pausedTotalMs].
-            activeMs = activeAt(tOffsetMs),
+            // The platform's own answer for this exact position, not ours for the
+            // delivery it arrived in.
+            //
+            // Health Services knows when the exercise was paused because it is
+            // what paused it, and `getActiveDurationAtDataPoint` returns the
+            // active duration at the point rather than at the moment the batch
+            // was handled. The bookkeeping it replaces subtracted our running
+            // pause totals *as they stood now*, so every position in a batch got
+            // the same answer and a batch delivered after a pause got the wrong
+            // one — the failure that once counted a wait at a level crossing as
+            // active time. [activeAt] remains for the replay path, which has no
+            // ExerciseUpdate to ask.
+            activeMs = runCatching { update.getActiveDurationAtDataPoint(point).toMillis() }
+                .getOrNull()
+                ?.coerceAtLeast(0L)
+                ?: activeAt(tOffsetMs),
             lat = d.latitude,
             lon = d.longitude,
-            // LocationData.ALTITUDE_UNAVAILABLE is documented as NaN, which
-            // isFinite() rejects — but the emulator's synthetic provider sends
-            // Double.MAX_VALUE instead, and that is finite. Nothing reads altitude
-            // yet, which is exactly why it is worth rejecting now: 1.8e308 m would
-            // sit in the database and in every backup until the first feature that
-            // did read it. A bound, as for heart rate below, rather than a test
-            // against one sentinel a second provider will not use.
-            altM = d.altitude.takeIf { it.isFinite() && it in MIN_ALTITUDE_M..MAX_ALTITUDE_M },
-            hrBpm = hr,
+            // Both of these are series now, written at their own times by
+            // [writeAltitudes] and [writeRates]; the phone joins them on the way
+            // in. Leaving them null here is the point rather than an omission —
+            // a value carried over from elsewhere in the batch is a claim that
+            // this position was measured with it, and it was not.
+            //
+            // `LocationData.altitude` is not a fallback either. A Pixel Watch 4
+            // sends Double.MAX_VALUE for it on every fix — the "no altitude here"
+            // sentinel, finite, and exactly what the bound in [writeAltitudes]
+            // exists to reject. That it is real hardware and not only the
+            // emulator is the correction A.18 needs.
+            altM = null,
+            hrBpm = null,
             // LocationData carries only lat/lon/altitude/bearing; the horizontal
             // error lives on the data point's accuracy, which is null whenever
             // Health Services has no estimate to give.
@@ -899,6 +1035,12 @@ class RecorderService : Service() {
          *  or a broken fix, not a place this watch has been. */
         private const val MIN_ALTITUDE_M = -1_000.0
         private const val MAX_ALTITUDE_M = 10_000.0
+
+        /** How many barometer readings to keep for joining to positions.
+         *  Ten minutes at the roughly one a second both series run at — far more
+         *  than any one delivery carries, and a few kilobytes if nothing ever
+         *  consumes them. */
+        private const val ALTITUDE_TRAIL_MAX = 600
         private const val NOTIFICATION_INTERVAL_MS = 5_000L
 
         /**

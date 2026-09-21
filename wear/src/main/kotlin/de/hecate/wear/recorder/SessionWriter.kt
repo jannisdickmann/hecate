@@ -6,6 +6,7 @@ import de.hecate.core.Tuning
 import de.hecate.core.io.SessionCodec
 import de.hecate.core.io.SessionRecord
 import de.hecate.core.model.HeartRate
+import de.hecate.core.model.Reading
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEvent
@@ -51,6 +52,12 @@ class SessionWriter(val file: File) {
     /** One heart-rate reading, at the time the sensor took it. Not synced on its
      *  own: a rate is worth a line, not a flush. */
     fun writeRate(rate: HeartRate) = write(SessionRecord.RateLine(rate))
+
+    /** One barometric altitude, at the time the sensor measured it. */
+    fun writeAltitude(reading: Reading) = write(SessionRecord.AltitudeLine(reading))
+
+    /** One fused speed reading [m/s], at the time the sensor measured it. */
+    fun writeSpeed(reading: Reading) = write(SessionRecord.SpeedLine(reading))
 
     fun writeFooter(footer: SessionFooter) = write(SessionRecord.Footer(footer), forceSync = true)
 
