@@ -24,10 +24,11 @@ import java.time.ZoneId
         RouteMemberEntity::class,
         MatchLogEntity::class,
         SessionEventsEntity::class,
+        SessionSeriesEntity::class,
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -212,9 +213,37 @@ abstract class HecateDatabase : RoomDatabase() {
          * makes that impossible, and A.16 is the reminder of what a migration
          * nobody replays costs.
          */
+        /**
+         * v8 keeps the series the sensors produced on their own schedules.
+         *
+         * The watch has always written the heart rate as its own series; ingest
+         * merged it into the sample rows and dropped it, so the join tolerance
+         * can never be re-derived for anything already stored. Altitude made that
+         * untenable: the barometer reports about once every half-minute against a
+         * position a second, so merging keeps roughly one reading in seven. The
+         * table holds all three — rate, altitude, speed — and the join moves to
+         * the way out. Sessions ingested before v8 have no row and never will.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_series (
+                        session_id TEXT NOT NULL,
+                        heart_rates BLOB,
+                        altitudes BLOB,
+                        speeds BLOB,
+                        PRIMARY KEY(session_id),
+                        FOREIGN KEY(session_id) REFERENCES session(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         val MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7,
+            MIGRATION_6_7, MIGRATION_7_8,
         )
 
         @Volatile

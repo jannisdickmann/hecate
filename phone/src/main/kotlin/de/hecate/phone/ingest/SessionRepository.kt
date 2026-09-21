@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.Altitudes
 import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.RecordedSession
@@ -14,6 +15,7 @@ import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
 import de.hecate.phone.db.SessionEventsEntity
+import de.hecate.phone.db.SessionSeriesEntity
 import de.hecate.phone.db.SampleEntity
 import de.hecate.phone.db.SessionEntity
 import de.hecate.phone.work.Jobs
@@ -83,7 +85,10 @@ class SessionRepository(
         // effort that was being made at it. A session with no separate series —
         // an import, or a recording from before the watch wrote one — comes
         // through unchanged. See `HeartRates.merge`.
-        val samples = HeartRates.merge(session.samples, session.heartRates)
+        val samples = Altitudes.merge(
+            HeartRates.merge(session.samples, session.heartRates),
+            session.altitudes,
+        )
 
         val hrValues = samples.mapNotNull { it.hrBpm }
         val avgHr = if (hrValues.isEmpty()) null else hrValues.average()
@@ -149,12 +154,39 @@ class SessionRepository(
                     ),
                 )
             }
+            // The raw series, kept rather than merged away.
+            //
+            // The heart rate is stored *as well as* being merged above: the merge
+            // fills a column every screen already reads, and the series is what
+            // lets the join be redone when the tolerance changes. Altitude is
+            // stored instead of being merged, because merging it is the thing
+            // that loses it — six readings in seven land nowhere near a position.
+            if (session.heartRates.isNotEmpty() ||
+                session.altitudes.isNotEmpty() ||
+                session.speeds.isNotEmpty()
+            ) {
+                dao.upsertSeries(
+                    SessionSeriesEntity(
+                        sessionId = session.id,
+                        heartRates = session.heartRates
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { BundleCodec.encodeRates(it).toByteArray(Charsets.UTF_8) },
+                        altitudes = session.altitudes
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
+                        speeds = session.speeds
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
+                    ),
+                )
+            }
         }
 
         Log.i(
             TAG,
             "Sitzung ${session.id} gespeichert (${samples.size} Messpunkte, " +
-                "${session.heartRates.size} Pulswerte, ${hrValues.size} davon zugeordnet)",
+                "${session.heartRates.size} Pulswerte, ${hrValues.size} davon zugeordnet, " +
+                "${session.altitudes.size} Höhenwerte, ${session.speeds.size} Geschwindigkeiten)",
         )
         if (triggerFollowUp) queueFollowUp()
         return IngestResult.Stored(session.id)

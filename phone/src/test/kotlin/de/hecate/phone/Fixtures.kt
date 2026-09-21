@@ -7,6 +7,7 @@ import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
+import de.hecate.core.model.Reading
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionEvent
@@ -68,6 +69,8 @@ object Fixtures {
         lat0: Double = 50.1,
         lon0: Double = 8.6,
         events: List<SessionEvent> = emptyList(),
+        altitudes: List<Reading> = emptyList(),
+        speeds: List<Reading> = emptyList(),
     ): RecordedSession {
         val samples = (0 until sampleCount).map { i ->
             Sample(
@@ -91,6 +94,8 @@ object Fixtures {
             ),
             samples = samples,
             events = events,
+            altitudes = altitudes,
+            speeds = speeds,
             footer = SessionFooter(
                 endedAtUtcMs = startedAtUtcMs + activeMs,
                 activeDurationMs = activeMs,

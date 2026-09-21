@@ -3,6 +3,7 @@ package de.hecate.phone.ingest
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.Reading
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionSource
@@ -18,6 +19,7 @@ import org.robolectric.RobolectricTestRunner
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -159,6 +161,39 @@ class SessionRepositoryTest {
         repository.ingest(Fixtures.recorded("s-1", events = events))
 
         assertNotNull(db.sessions().events("s-1"))
+    }
+
+    @Test
+    fun `the barometer's own series is kept, and put onto every sample`(): Unit = runBlocking {
+        // Schema v8 exists for this. The sensor reports about once every half
+        // minute against a position a second, so merging it into the sample rows
+        // and dropping the series — which is what happened to the heart rate —
+        // would keep roughly one reading in seven and lose the rest for good.
+        val altitudes = (0..10).map { Reading(it * 3_000L, 260.0 + it * 2.0) }
+        repository.ingest(Fixtures.recorded("s-alt", sampleCount = 30, altitudes = altitudes))
+
+        assertNotNull(db.sessions().series("s-alt")?.altitudes, "the readings themselves")
+        // And every sample has an altitude, not just the ones a reading landed on.
+        val samples = db.sessions().samples("s-alt")
+        assertEquals(30, samples.size)
+        assertTrue(samples.all { it.altM != null })
+        // Interpolated rather than nearest, read in the interior where a
+        // monotonic run passes through the de-spiking median unchanged: the
+        // sample a second into a three-second, two-metre step is a third of the
+        // way up it. A nearest join would have said 270 here — and nothing at all
+        // at two samples in three.
+        assertEquals(270.0, samples.first { it.tOffsetMs == 15_000L }.altM!!, 1e-6)
+        assertEquals(270.0 + 2.0 / 3.0, samples.first { it.tOffsetMs == 16_000L }.altM!!, 1e-6)
+    }
+
+    @Test
+    fun `deleting a session takes its series with it`(): Unit = runBlocking {
+        repository.ingest(
+            Fixtures.recorded("s-alt", altitudes = listOf(Reading(0L, 260.0), Reading(3_000L, 262.0))),
+        )
+        db.sessions().delete("s-alt")
+
+        assertNull(db.sessions().series("s-alt"))
     }
 
     @Test

@@ -1136,9 +1136,17 @@ private fun ClusteringBanner() {
  * The altitude profile and the numbers read off it, under the track on both
  * detail screens.
  *
- * Absent rather than empty when there is nothing to draw: a recording from a
- * watch with no altitude, or a route last clustered before the elevation column
- * existed. A chart of a flat line at zero would be a claim about the ground.
+ * No chart when there is nothing to draw: a recording made before the watch
+ * asked Health Services for altitude at all, or a route last clustered before
+ * the elevation column existed. A chart of a flat line at zero would be a claim
+ * about the ground.
+ *
+ * But not *silence* either, which is what this used to be. A missing section and
+ * a genuinely flat ride look identical from the sofa, and the reasonable reading
+ * of an absent profile is that the ground was level — which for every recording
+ * made before #6 was landed is wrong. One line is enough to say which, and it
+ * keeps the rule it used to break: nothing here draws a number about height
+ * unless a height was measured.
  */
 @Composable
 private fun ElevationSection(
@@ -1146,7 +1154,15 @@ private fun ElevationSection(
     stats: Elevation.Stats?,
     peakHrBpm: Int,
 ) {
-    if (points.size < 2 || stats == null) return
+    if (points.size < 2 || stats == null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Kein Höhenprofil: die Uhr hat keine Höhe geliefert.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
     Spacer(Modifier.height(4.dp))
     SectionHeader("Höhenprofil")
     ElevationView(points, peakHrBpm = peakHrBpm)
