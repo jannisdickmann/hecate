@@ -62,6 +62,20 @@ object ArchiveCodec {
             for (m in session.matchLog) {
                 writer.appendLine(SessionCodec.encodeLine(SessionRecord.MatchLine(m)))
             }
+            // The sensors' own series. Omitted until now — not deliberately, the
+            // phone simply had none to write, because ingest merged them into the
+            // sample columns and dropped them. A backup that leaves these out is
+            // a backup a restore cannot re-join differently, which for altitude
+            // means losing six readings in seven.
+            for (r in session.heartRates) {
+                writer.appendLine(SessionCodec.encodeLine(SessionRecord.RateLine(r)))
+            }
+            for (a in session.altitudes) {
+                writer.appendLine(SessionCodec.encodeLine(SessionRecord.AltitudeLine(a)))
+            }
+            for (v in session.speeds) {
+                writer.appendLine(SessionCodec.encodeLine(SessionRecord.SpeedLine(v)))
+            }
             session.footer?.let { writer.appendLine(SessionCodec.encodeLine(SessionRecord.Footer(it))) }
             // Flush rather than close: closing the writer would close the ZIP.
             writer.flush()

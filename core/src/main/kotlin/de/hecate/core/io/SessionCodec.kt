@@ -2,6 +2,7 @@ package de.hecate.core.io
 
 import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchLogEntry
+import de.hecate.core.model.Reading
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEvent
@@ -49,6 +50,31 @@ sealed interface SessionRecord {
     @Serializable
     @SerialName("r")
     data class RateLine(val v: HeartRate) : SessionRecord
+
+    /**
+     * One barometric altitude at its own time.
+     *
+     * Separate from [SampleLine] for the reason [RateLine] is, and more sharply:
+     * altitude arrives once every 20 to 60 seconds against a position a second,
+     * and it keeps arriving through a GNSS dropout, when there is no position to
+     * hang it on at all. See [Reading].
+     */
+    @Serializable
+    @SerialName("b")
+    data class AltitudeLine(val v: Reading) : SessionRecord
+
+    /**
+     * One fused speed reading [m/s] at its own time.
+     *
+     * Health Services measures speed rather than inferring it from successive
+     * positions, which is strictly better than differencing two fixes with a
+     * few metres of error each. It was being requested — and paid for in
+     * battery — for a year while only the last value of each delivery was read,
+     * for one live cell, and none of it was kept.
+     */
+    @Serializable
+    @SerialName("v")
+    data class SpeedLine(val v: Reading) : SessionRecord
 }
 
 /**
@@ -93,6 +119,8 @@ object SessionCodec {
         val events = ArrayList<SessionEvent>()
         val matches = ArrayList<MatchLogEntry>()
         val rates = ArrayList<HeartRate>()
+        val altitudes = ArrayList<Reading>()
+        val speeds = ArrayList<Reading>()
         for (line in lines) {
             when (val r = decodeLineOrNull(line)) {
                 is SessionRecord.Header -> if (header == null) header = r.v
@@ -101,13 +129,17 @@ object SessionCodec {
                 is SessionRecord.MatchLine -> matches.add(r.v)
                 is SessionRecord.Footer -> footer = r.v
                 is SessionRecord.RateLine -> rates.add(r.v)
+                is SessionRecord.AltitudeLine -> altitudes.add(r.v)
+                is SessionRecord.SpeedLine -> speeds.add(r.v)
                 null -> Unit
             }
         }
         val h = header ?: return null
         samples.sortBy { it.tOffsetMs }
         rates.sortBy { it.tOffsetMs }
-        return RecordedSession(h, samples, events, footer, matches, rates)
+        altitudes.sortBy { it.tOffsetMs }
+        speeds.sortBy { it.tOffsetMs }
+        return RecordedSession(h, samples, events, footer, matches, rates, altitudes, speeds)
     }
 
     fun encodeSession(session: RecordedSession): String = buildString {
@@ -116,6 +148,8 @@ object SessionCodec {
         for (e in session.events) appendLine(encodeLine(SessionRecord.EventLine(e)))
         for (m in session.matchLog) appendLine(encodeLine(SessionRecord.MatchLine(m)))
         for (r in session.heartRates) appendLine(encodeLine(SessionRecord.RateLine(r)))
+        for (a in session.altitudes) appendLine(encodeLine(SessionRecord.AltitudeLine(a)))
+        for (v in session.speeds) appendLine(encodeLine(SessionRecord.SpeedLine(v)))
         session.footer?.let { appendLine(encodeLine(SessionRecord.Footer(it))) }
     }
 }

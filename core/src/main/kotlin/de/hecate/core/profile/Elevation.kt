@@ -3,6 +3,7 @@ package de.hecate.core.profile
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
+import de.hecate.core.model.Altitudes
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 
@@ -102,9 +103,18 @@ object Elevation {
      * distance still advances across a dropout, for the same reason it does in
      * `Track`: the ground was covered even though the shape of it is unknown.
      */
-    fun ofSession(session: RecordedSession): List<Point> = of(session.samples)
+    fun ofSession(session: RecordedSession): List<Point> =
+        of(Altitudes.merge(session.samples, session.altitudes))
 
-    /** As [ofSession], for a caller holding the samples rather than the session. */
+    /**
+     * As [ofSession], for a caller holding the samples rather than the session.
+     *
+     * Reads [Sample.altM] and nothing else. A watch recording's barometer series
+     * is put onto that column by [Altitudes.merge] on the way in, exactly as
+     * [de.hecate.core.model.HeartRates] does for the rate — so by the time
+     * anything draws a profile, the two sources of altitude look the same and
+     * only one of them has to be understood here.
+     */
     fun of(samples: List<Sample>): List<Point> {
         // Distance first, altitude second, so that the median runs over a series
         // with the same indices as the samples it came from.
