@@ -226,6 +226,62 @@ class DisplayTest {
     }
 
     @Test
+    fun `a long manual pause is not a lost fix`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                paused = true,
+                fixAgeMs = Tuning.FIX_LOST_MS * 5, sinceLastWriteMs = 600_000,
+            ),
+        )
+        assertEquals(HealthKind.PAUSED, h.kind)
+    }
+
+    @Test
+    fun `a manual pause still reports a fix the receiver says is gone`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                paused = true, gpsSignalLost = true,
+                fixAgeMs = Tuning.FIX_LOST_MS + 1, sinceLastWriteMs = 600_000,
+            ),
+        )
+        assertEquals(HealthKind.NO_FIX, h.kind)
+    }
+
+    @Test
+    fun `just after resuming, the pause does not count as time without a fix`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                fixAgeMs = Tuning.FIX_LOST_MS * 5, sinceResumeMs = 2_000, sinceLastWriteMs = 1_000,
+            ),
+        )
+        assertEquals(HealthKind.RECORDING, h.kind)
+        assertEquals(2_000, h.fixAgeMs)
+    }
+
+    @Test
+    fun `no fix for long after resuming is still reported, counted from the resume`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                fixAgeMs = Tuning.FIX_LOST_MS * 5, sinceResumeMs = Tuning.FIX_LOST_MS + 1,
+                sinceLastWriteMs = 1_000,
+            ),
+        )
+        assertEquals(HealthKind.NO_FIX, h.kind)
+        assertEquals(Tuning.FIX_LOST_MS + 1, h.fixAgeMs)
+    }
+
+    @Test
+    fun `a fix the receiver lost before the pause is not forgiven by resuming`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                fixAgeMs = Tuning.FIX_LOST_MS * 5, sinceResumeMs = 2_000, gpsSignalLost = true,
+                sinceLastWriteMs = 1_000,
+            ),
+        )
+        assertEquals(HealthKind.NO_FIX, h.kind)
+    }
+
+    @Test
     fun `a message the user has to see outranks the states it usually explains`() {
         val h = recordingHealth(
             RecordingHealthInput(

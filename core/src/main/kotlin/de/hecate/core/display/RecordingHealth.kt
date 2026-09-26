@@ -83,11 +83,18 @@ data class RecordingHealthInput(
      * The receiver itself has said the fix is gone (searching, or no GNSS),
      * as opposed to samples merely not arriving.
      *
-     * Only consulted during auto-pause: Health Services stops delivering
-     * locations while it holds the exercise auto-paused, so [fixAgeMs] grows
-     * there with a perfectly good fix, and on its own is no evidence of anything.
+     * Only consulted around pauses: Health Services stops delivering locations
+     * while an exercise is paused, so [fixAgeMs] grows there with a perfectly
+     * good fix, and on its own is no evidence of anything.
      */
     val gpsSignalLost: Boolean = false,
+    /**
+     * Wall-clock time since the exercise last resumed from a pause, or null if
+     * it has not been paused. Caps [fixAgeMs] (unless [gpsSignalLost]): the
+     * silence during the pause was Health Services', not the receiver's, so
+     * the first fix after resuming gets the same grace as any other.
+     */
+    val sinceResumeMs: Long? = null,
     /** Wall-clock time since anything was last written to the session file. */
     val sinceLastWriteMs: Long? = null,
     /** Reported accuracy of the most recent position, usable or not. */
@@ -117,7 +124,11 @@ data class RecordingHealth(
  * every metric except the route survives it.
  */
 fun recordingHealth(input: RecordingHealthInput): RecordingHealth {
-    val fixAge = input.fixAgeMs ?: 0L
+    val fixAgeMs = input.fixAgeMs?.let { age ->
+        val sinceResume = input.sinceResumeMs
+        if (sinceResume != null && !input.gpsSignalLost) minOf(age, sinceResume) else age
+    }
+    val fixAge = fixAgeMs ?: 0L
 
     // Nothing has reached the file while the exercise is supposedly running.
     // Never raised while paused or preparing, when there is legitimately nothing
@@ -138,11 +149,11 @@ fun recordingHealth(input: RecordingHealthInput): RecordingHealth {
         return RecordingHealth(HealthKind.NO_LOCATION_PERMISSION, HealthSeverity.DEGRADED)
     }
 
-    // While auto-paused, silence is expected — Health Services withholds the
-    // locations it is still receiving — so fix age alone never raises a
-    // complaint there; the receiver has to have said the fix is gone.
-    val autoPausedSilence = input.paused && input.autoPaused && !input.gpsSignalLost
-    if (!input.preparing && !autoPausedSilence && input.fixAgeMs != null && fixAge > Tuning.FIX_LOST_MS) {
+    // While paused (auto or manual), silence is expected — Health Services
+    // withholds the locations it is still receiving — so fix age alone never
+    // raises a complaint there; the receiver has to have said the fix is gone.
+    val pausedSilence = input.paused && !input.gpsSignalLost
+    if (!input.preparing && !pausedSilence && fixAgeMs != null && fixAge > Tuning.FIX_LOST_MS) {
         return RecordingHealth(HealthKind.NO_FIX, HealthSeverity.FAILED, fixAge)
     }
 
@@ -159,7 +170,7 @@ fun recordingHealth(input: RecordingHealthInput): RecordingHealth {
     if (input.preparing) return RecordingHealth(HealthKind.PREPARING, HealthSeverity.DEGRADED, fixAge)
 
     val poorAccuracy = (input.accuracyM ?: 0.0) > Tuning.MAX_USABLE_ACCURACY_M
-    if (poorAccuracy || (input.fixAgeMs != null && fixAge > Tuning.FIX_STALE_MS)) {
+    if (poorAccuracy || (fixAgeMs != null && fixAge > Tuning.FIX_STALE_MS)) {
         return RecordingHealth(HealthKind.POOR_FIX, HealthSeverity.DEGRADED, fixAge)
     }
 

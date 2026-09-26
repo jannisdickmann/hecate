@@ -374,6 +374,7 @@ class RecorderService : Service() {
                 it.copy(
                     phase = if (paused) RecorderPhase.PAUSED else RecorderPhase.ACTIVE,
                     autoPaused = false,
+                    resumedAtMs = if (paused) it.resumedAtMs else System.currentTimeMillis(),
                 )
             }
             return
@@ -629,6 +630,11 @@ class RecorderService : Service() {
                     )
                     pausedSinceMs?.let { pausedTotalMs += (nowOffsetMs() - it).coerceAtLeast(0) }
                     pausedSinceMs = null
+                    // The resume event above is a write too, and dating it keeps a
+                    // long pause from reading as "Keine Aufzeichnung" until the
+                    // first sample after it lands.
+                    val now = System.currentTimeMillis()
+                    bus.update { it.copy(resumedAtMs = now, lastWriteAtMs = now) }
                 }
                 bus.update { it.copy(phase = RecorderPhase.ACTIVE, autoPaused = false) }
             }
