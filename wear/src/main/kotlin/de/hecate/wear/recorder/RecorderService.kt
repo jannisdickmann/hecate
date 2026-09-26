@@ -565,8 +565,19 @@ class RecorderService : Service() {
             if (availability is LocationAvailability) {
                 val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
                     availability == LocationAvailability.ACQUIRED_UNTETHERED
+                val lost = availability == LocationAvailability.ACQUIRING ||
+                    availability == LocationAvailability.NO_GNSS
                 val was = bus.state.value.gpsReady
-                bus.update { it.copy(gpsReady = ready) }
+                bus.update {
+                    it.copy(
+                        gpsReady = ready,
+                        gpsSignalLost = when {
+                            ready -> false
+                            lost -> true
+                            else -> it.gpsSignalLost
+                        },
+                    )
+                }
                 if (!was && ready) {
                     recordEvent(SessionEventType.GPS_ACQUIRED)
                     if (bus.state.value.phase == RecorderPhase.PREPARING) {

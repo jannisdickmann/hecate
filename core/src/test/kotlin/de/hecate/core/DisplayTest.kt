@@ -202,6 +202,30 @@ class DisplayTest {
     }
 
     @Test
+    fun `a long auto-pause is not a lost fix`() {
+        // Health Services stops delivering locations while auto-paused, so the
+        // fix ages with nothing wrong with the receiver.
+        val h = recordingHealth(
+            RecordingHealthInput(
+                paused = true, autoPaused = true,
+                fixAgeMs = Tuning.FIX_LOST_MS * 5, sinceLastWriteMs = 600_000,
+            ),
+        )
+        assertEquals(HealthKind.AUTO_PAUSED, h.kind)
+    }
+
+    @Test
+    fun `an auto-pause still reports a fix the receiver says is gone`() {
+        val h = recordingHealth(
+            RecordingHealthInput(
+                paused = true, autoPaused = true, gpsSignalLost = true,
+                fixAgeMs = Tuning.FIX_LOST_MS + 1, sinceLastWriteMs = 600_000,
+            ),
+        )
+        assertEquals(HealthKind.NO_FIX, h.kind)
+    }
+
+    @Test
     fun `a message the user has to see outranks the states it usually explains`() {
         val h = recordingHealth(
             RecordingHealthInput(
