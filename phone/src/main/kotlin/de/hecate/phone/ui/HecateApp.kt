@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
@@ -89,6 +90,7 @@ import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
+import de.hecate.phone.export.GpxExporter
 
 /**
  * §5.4: Recordings list → recording detail; Routes list → route detail; plus a
@@ -112,6 +114,7 @@ fun HecateApp(
     onRestoreArchive: () -> Unit,
     onImportMap: () -> Unit,
     onRequestHealthConnect: () -> Unit,
+    onShare: (GpxExporter.Share) -> Unit,
 ) {
     val screen by vm.screen.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
@@ -124,6 +127,16 @@ fun HecateApp(
         status?.let {
             snackbar.showSnackbar(it)
             vm.clearStatus()
+        }
+    }
+
+    // The share sheet needs the activity, so the file is handed up to it; the
+    // view model only builds it.
+    val share by vm.share.collectAsStateWithLifecycle()
+    LaunchedEffect(share) {
+        share?.let {
+            vm.clearShare()
+            onShare(it)
         }
     }
 
@@ -159,6 +172,14 @@ fun HecateApp(
                         navigationIcon = {
                             IconButton(onClick = { vm.back() }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
+                            }
+                        },
+                        // Up here rather than among the rows: it acts on the
+                        // whole recording or route, and it is the one thing on
+                        // these screens that sends something out of the app.
+                        actions = {
+                            IconButton(onClick = { vm.shareGpx(screen) }) {
+                                Icon(Icons.Filled.Share, contentDescription = "Als GPX teilen")
                             }
                         },
                     )

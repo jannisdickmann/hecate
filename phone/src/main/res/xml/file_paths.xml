@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What GpxExporter may hand to other apps: the one directory it writes GPX files
+  into, and nothing else in the cache. The name is the Uri path segment; the path
+  must match GpxExporter.DIRECTORY.
+-->
+<paths>
+    <cache-path name="gpx" path="gpx/" />
+</paths>
