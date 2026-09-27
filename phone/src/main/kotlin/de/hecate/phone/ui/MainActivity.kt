@@ -1,5 +1,6 @@
 package de.hecate.phone.ui
 
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -13,6 +14,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
+import de.hecate.core.gpx.Gpx
+import de.hecate.phone.export.GpxExporter
 import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.work.Jobs
 
@@ -104,6 +107,7 @@ class MainActivity : ComponentActivity() {
                 onRestoreArchive = { openArchive.launch(arrayOf("*/*")) },
                 onImportMap = { openMap.launch(arrayOf("*/*")) },
                 onRequestHealthConnect = { startHealthConnectFlow() },
+                onShare = { share(it) },
             )
         }
     }
@@ -117,6 +121,27 @@ class MainActivity : ComponentActivity() {
         // Anything the watch delivered while the app was closed is already in the
         // database; this only nudges the writes that are still outstanding.
         Jobs.enqueueHealthConnect(this)
+    }
+
+    /**
+     * The system share sheet, with a read grant for this one file. Saving it is
+     * one of the targets the sheet offers (Files, Drive), next to messengers and
+     * mail, so there is no separate "save as" here.
+     *
+     * The grant has to ride on [ClipData] as well as the flag: the chooser
+     * passes the intent on to the app the user picks, and only the clip's Uris
+     * are granted onward to it.
+     */
+    private fun share(file: GpxExporter.Share) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = Gpx.MIME
+            putExtra(Intent.EXTRA_STREAM, file.uri)
+            putExtra(Intent.EXTRA_SUBJECT, file.title)
+            clipData = ClipData.newRawUri(file.title, file.uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivity(Intent.createChooser(send, "GPX teilen")) }
+            .onFailure { toast("Keine App zum Teilen gefunden") }
     }
 
     private fun startHealthConnectFlow() {
