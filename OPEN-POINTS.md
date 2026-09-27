@@ -771,6 +771,55 @@ Two smaller things sit under this heading:
   and an island renders as water. Acceptable on a dim backdrop; noted here so it
   arrives as a known simplification rather than a bug report.
 
+### 3.16 The auto-stop has never met a forgotten activity
+
+The three rules that end a recording by themselves (Appendix A.30) do the two
+most irreversible things in the app: they stop a workout, and they throw away
+the end of it. Their thresholds — three quarters of an hour inside a 30 m
+circle, a quarter of an hour without a usable fix, ninety seconds above the
+sport's ceiling — come from the geometry of the problem, from what the two
+mistakes cost, and now from one run over the real history. §2.1 already says this about every other constant here;
+these are the ones where being wrong is visible to the user and cannot be undone
+from the wrist.
+
+Two questions, and a command that answers the first one on a laptop:
+
+```bash
+./gradlew :core:run --args="autostop --archive takeout/hecate-sicherung-*.zip"
+```
+
+**How often would it fire on workouts that were not forgotten?** It prints a
+line per session and a count at the end, and the answer has to be zero. A hike
+with a long lunch, a bike ride with a café stop, a ski day full of lifts and a
+run through a city with poor reception are the four that would say otherwise,
+and the real history is the only place they exist.
+
+Run over the 73 sessions of the September 2026 backup, the first guess of
+fifteen minutes stationary fired on ten — six of them walks and hikes ended at a
+break with hours still to come (a half-hour summit rest, a 25-minute stop four
+hours into a seven-hour walk). At forty-five it fires on four: three drives
+home, caught by the speed rule, and one recording (gh-31923) whose 75-minute gap
+without samples mid-walk is ended as Stillstand with 0.75 km of walking after
+it. That one is the remaining open case: a gap that long in a Google recording
+is most likely a pause that the export does not mark, which a manual pause on
+the watch would shield.
+
+**Does it fire when it should, on a wrist?** Nothing yet has left a watch
+recording on a kitchen table for twenty minutes, or driven home with a ride
+still running, and looked at what came back: the `AUTO_STOP` event and its
+reason in session detail, the distance and duration cut back to where the
+activity ended, and the positions after it absent from the database. The replay
+harness reaches the same verdicts on the same samples — the rules read sample
+offsets and never a clock — so the emulator can rehearse it (`tools/emu replay`
+of a session that ends in a car will now end the replay), but the ninety-second
+watchdog and the haptic have only been read, not felt.
+
+Until the second is done, treat a stop that surprises you as a threshold to
+change in `Tuning` rather than as a fault. Note what a mis-tuned stop costs:
+the cut is applied at ingest, so the part before it is safe, but the watch has
+*stopped recording* — whatever the user does after a false stop is not in the
+file at all unless they start a new one.
+
 ---
 
 ## 4. Things deliberately not done

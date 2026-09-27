@@ -66,6 +66,11 @@ distance until I stop it.*
 - Survives: screen off for the whole activity, app process death, watch reboot
   mid-activity (recording resumes or the partial session is preserved).
 - Auto-pause events from Health Services are honoured and recorded.
+- The recording ends itself when the activity plainly has not, and discards the
+  tail that was not part of it: three quarters of an hour inside a 30 m circle,
+  a quarter of an hour without a usable fix, or a speed the sport cannot reach
+  sustained for ninety seconds. A manual pause suspends all three; nothing ends
+  a recording that has not yet travelled 50 m (Appendix A.30).
 - Recording continues if the route matcher throws. Matcher failure is never
   fatal to recording.
 
@@ -288,6 +293,8 @@ dependency list.
 - `profile/ProfileBuilder` — per-position median time and HR curves
 - `geo/` — resampling, haversine, point-to-segment projection
 - `tcx/TcxParser` — import
+- `recorder/AutoStop` — when a recording has stopped being an activity, and
+  where to cut it (A.30). Clock-free, so the watch and a replay agree
 - `Tuning` — every constant, with a comment giving its unit and rationale
 - `replay/ReplayMain` — CLI entry point for US-10
 
@@ -297,6 +304,8 @@ dependency list.
   Owns the `ExerciseClient` session. This type is mandatory; without it sessions
   die with `AUTO_ENDED_PERMISSION_LOST`.
 - `SessionWriter` — append-only JSONL, fsync every 10 s and on pause/stop.
+- `AutoStopWatch` (in `:core`) — fed every sample and asked every 30 s whether
+  the activity is over; ends the session and writes the cut into the footer.
 - `MatcherHost` — feeds samples to `:core` matcher; wraps every call in
   try/catch, and on repeated failure sets a disabled flag and carries on
   recording (NFR-1 outranks the feature).
@@ -2600,3 +2609,137 @@ What is left needs a real screen and is in OPEN-POINTS §3.13: whether "dim" is
 dim enough in daylight, whether the pinch holds 60 fps across a zoom-key
 crossing, and whether the map lines up with a recording made on the ground it
 draws.
+
+### A.30 The activity that ended in a car park
+
+A workout that is not stopped does not stop. It records the walk back to the
+car, the drive home, and then the evening: every one of those positions is a
+position, and nothing downstream of the recorder has ever had a reason to doubt
+them. They end up in the track, in the distance, in the active duration, in
+Health Connect — and, worst of the four, in `RouteClusterer`, which learns
+routes from whatever it is given and cannot tell a commute from a drive along
+the same road. One forgotten recording is a wrong number; a habit of them is a
+route network with a motorway in it.
+
+Issue #4 asks for three detectors and one consequence: stop when the location
+stops changing, stop when the fix has been gone for a long time, stop when the
+speed is unreasonable for the sport — and in all three cases discard the points
+at the end that were not the activity.
+
+#### Three rules, one of which is really two
+
+`de.hecate.core.recorder.AutoStopWatch` is fed every sample the recorder writes
+and asked every `AUTO_STOP_TICK_MS` whether time alone has decided anything. It
+is clock-free like the matcher (NFR-4): every decision is a function of the
+sample offsets, so replaying a stored session reaches the same verdict on the
+same sample as the wrist did, and a unit test can put a quarter of an hour into
+two lines.
+
+- **Stillstand.** The user has not left a 30 m circle for `AUTO_STOP_IDLE_MS`.
+  The anchor is the last usable fix that was somewhere *new*, so the time on it
+  is how long they have been where they are, and the cut goes back to it: the
+  time on the sofa is not part of the run. Forty-five minutes, because the
+  first guess of fifteen ended six of 73 real walks and hikes at a break —
+  a half-hour summit rest with two hours of descent after it among them — and
+  a break is the one thing this rule must never mistake for an ending.
+- **Kein GPS.** Fixes arriving and unusable for `AUTO_STOP_NO_FIX_MS`, a
+  quarter of an hour. The cut goes back to the last fix the receiver actually
+  had, which is the door they walked through.
+- **Zu schnell.** A speed above the sport's ceiling, sustained for
+  `AUTO_STOP_OVERSPEED_MS`. The cut goes back to the last position reached at a
+  plausible speed, which is where the activity ended and the vehicle began.
+
+The first two are anchored to the same kind of moment: the idle clock to a
+usable fix and the blind clock to the *last* usable fix, so the idle one can
+never be behind. The blind threshold is the shorter one, and it therefore only
+counts on evidence — fixes that arrive and are useless. A resting user has
+good fixes, and an auto-pause delivers none at all; neither is evidence about
+the receiver, and only the idle threshold may end them. Besides when, the rules
+decide the *name*, and the name is not cosmetic — "Kein GPS" and "Stillstand" send the
+user to look at completely different things and they cut in different places.
+The receiver is blamed only when it is arriving and useless, which is what
+walking indoors looks like from the inside of the app: the fixes do not stop,
+they degrade, and a 200 m error wanders far enough to keep resetting the
+stationary anchor for ever.
+
+Speed is measured between consecutive usable fixes however far apart they are,
+including across a dropout — crossing six kilometres of ground during a
+five-minute hole is not a bike ride whatever happened to the receiver, and that
+hole is exactly what a car in a valley looks like. What keeps GNSS noise out is
+not a gap rule but the ninety seconds of *continuous* evidence: one second of
+noise at 500 m is 1,800 km/h and is also one second long, and the segment after
+it starts the run over.
+
+**Skifahren has no ceiling and is exempt from the speed rule.** A lift is part
+of the activity and moves like a road vehicle; a descent moves faster than most
+of them. The rule is switched off there rather than made unreliable, and the
+other two still watch. The other four ceilings are deliberately generous — the
+question is not "is this a fast run" but "is this a car".
+
+#### The two things it refuses to do
+
+**It never ends an activity that has not begun.** Until the recording has
+travelled `AUTO_STOP_ARM_M`, no rule may fire. Start the watch, wait for someone
+to lace up, and an armed idle timer would end the recording before the first
+step — and the run that followed would not be recorded at all, which is a worse
+failure than any this feature prevents. The same arming makes "GPS never worked
+at all" safe by construction: a session with no usable fix has travelled
+nothing, so a recording deliberately made without GPS — a stopwatch with a heart
+rate monitor, which the live page already says it is — is never thrown away.
+
+**A manual pause suspends everything.** Pausing is an explicit "I will be back",
+and the user who pressed it is the only authority this code has; resuming starts
+both timers over rather than resuming them, so a recording that waited out a
+train is not ended a minute after it starts moving again. An auto-pause is the
+opposite: it *is* the standing still these rules are about, and it writes no
+samples at all, so the timers run through it exactly as they would if the
+receiver had gone quiet. That asymmetry is the answer to the obvious question —
+the watch left on the kitchen table auto-pauses within a minute and would
+otherwise be the one case auto-stop never sees.
+
+#### Where the discarded points go, and why not sooner
+
+The watch does not rewrite its file. The session file is append-only and that is
+the whole of NFR-1: a recorder that goes back and edits what it has already
+written is a recorder that can lose a workout to a process death mid-edit. So
+the cut is *recorded* rather than applied — `SessionFooter.trimmedAfterTOffsetMs`
+is the last offset that is part of the activity, and the footer's
+`activeDurationMs` and `totalDistanceM` are those of that sample rather than of
+the moment the watch gave up. `SessionEndReason.AUTO_STOPPED` distinguishes this
+app's own judgement from `AUTO_ENDED`, which is the platform's, and a new
+`SessionEventType.AUTO_STOP` event carries the reason in words.
+
+`SessionRepository.ingest` applies the cut, once, before anything else in the
+system has seen the session (`AutoStop.trim`). Everything downstream therefore
+reads a recording that contains the workout and not the drive home: the track,
+the profile, the clusterer, the heatmap, Health Connect and every backup. The
+positions after the cut exist only in the watch's own copy of the file, which is
+deleted once the phone acknowledges it — which is what "discard" has to mean if
+it is to mean anything.
+
+Positions, heart rates and the matcher's own log are cut; the events are not.
+The `AUTO_STOP` event is by definition later than the cut it describes, and it
+is the only record of why the recording ends where it does. It shows up in
+session detail's "Verlauf der Aufzeichnung" (A.12) with its reason, which is how
+a user who disagrees with a stop finds out what the watch thought it saw.
+
+#### What is measured and what is not
+
+Nothing here has met a real forgotten activity. What it has met is a JVM suite
+of nineteen cases — the drive home, the car after a dropout, the indoor walk,
+the auto-pause, the manual pause and the resume, the ten-minute break that must
+not be a stop, the fast descent that is still cycling, the single 500 m jump
+that is noise — and a new harness command:
+
+```
+./gradlew :core:run --args="autostop --archive takeout/hecate-sicherung-*.zip"
+```
+
+which runs the rules over a whole backup and prints what each session would have
+been stopped for and how much would have gone. The interesting result is the
+boring one: **nothing fired**, on a history of workouts somebody actually did.
+Anything that does fire is either a genuinely forgotten recording, in which case
+look at what would have been discarded, or a threshold that is wrong. That
+command is the evidence this feature is asking to be judged on, and it is in
+OPEN-POINTS §3.16 until it has been run against the real history and against a
+deliberately forgotten workout on a wrist.

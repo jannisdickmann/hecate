@@ -120,6 +120,13 @@ enum class SessionEventType {
     GPS_ACQUIRED,
     SERVICE_RESTARTED,
     MATCHER_DISABLED,
+
+    /** The recorder ended the session itself because the activity was over and
+     *  nobody had said so — see
+     *  [de.hecate.core.recorder.AutoStopWatch]. The note says which of the three
+     *  rules decided it. Written *after* the cut it describes, which is why the
+     *  events survive a trim when the samples around them do not. */
+    AUTO_STOP,
 }
 
 @Serializable
@@ -146,7 +153,18 @@ data class SessionHeader(
 @Serializable
 enum class SessionEndReason {
     USER_STOPPED,
+
+    /** Health Services ended the exercise on its own — a permission lost, a
+     *  session taken over by another app, a replay that ran out of recording. */
     AUTO_ENDED,
+
+    /** The recorder decided the activity was over: standing still, no fix for a
+     *  quarter of an hour, or a speed the sport cannot reach
+     *  ([de.hecate.core.recorder.AutoStopWatch]). Distinct from [AUTO_ENDED]
+     *  because it is this app's own judgement rather than the platform's, and
+     *  because it is the only ending that discards part of what it recorded. */
+    AUTO_STOPPED,
+
     SERVICE_DIED,
     IMPORTED,
 }
@@ -201,6 +219,20 @@ data class SessionFooter(
     val activeDurationMs: Long,
     val totalDistanceM: Double,
     val reason: SessionEndReason,
+    /**
+     * The last sample offset that is part of the activity [ms], or null when
+     * nothing was cut — which is every session stopped by hand and every one
+     * recorded before auto-stop existed.
+     *
+     * Written by an auto-stop, together with [activeDurationMs] and
+     * [totalDistanceM] as they stood at that sample rather than at the end. The
+     * file itself keeps every position it recorded, because it is append-only
+     * and rewriting it is the one thing a recorder may not do (NFR-1); the phone
+     * applies the cut once, on the way in
+     * ([de.hecate.core.recorder.AutoStop.trim]), so the drive home reaches
+     * neither the database nor Health Connect nor the clusterer.
+     */
+    val trimmedAfterTOffsetMs: Long? = null,
 )
 
 /**

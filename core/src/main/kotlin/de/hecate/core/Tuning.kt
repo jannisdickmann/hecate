@@ -717,6 +717,115 @@ object Tuning {
      *  that is the one thing the watch must never be quiet about. */
     const val NO_WRITE_MS: Long = 90_000L
 
+    // ---------------------------------------------------------------- auto-stop
+
+    /**
+     * How long the user may stay inside [AUTO_STOP_IDLE_RADIUS_M] before the
+     * recording ends itself [ms].
+     *
+     * Three quarters of an hour, because the two mistakes are not symmetric.
+     * Ending a workout that was only resting cuts a real recording in half and
+     * cannot be undone from the wrist; waiting to notice an activity nobody is
+     * doing any more costs battery and a stretch of track that is discarded
+     * anyway (see [AutoStop][de.hecate.core.recorder.AutoStop]).
+     *
+     * Fifteen minutes was the first guess, and the real history refuted it: run
+     * over 73 recorded workouts (`autostop --archive`), it ended six walks and
+     * hikes in the middle — a half-hour summit rest with two hours of descent
+     * after it, a 25-minute stop four hours into a seven-hour walk. Thirty still
+     * ended the summit one. At forty-five nothing fires on a break, and the four
+     * sessions it does end are the ones that deserve it: a watch left running
+     * for an hour after arriving, and three drives home that the speed rule
+     * catches first anyway.
+     */
+    const val AUTO_STOP_IDLE_MS: Long = 45 * 60 * 1000L
+
+    /**
+     * The circle the user has to leave for the recording to count as moving [m].
+     *
+     * Wider than the 3-10 m a consumer receiver manages in the open, so that
+     * standing still never looks like walking, and far narrower than anything a
+     * moving activity stays inside for long: at the slowest of the five sports
+     * this is twenty-five seconds of walking. Fixes too poor to use
+     * ([MAX_USABLE_ACCURACY_M]) neither move the anchor nor reset the clock —
+     * they are not evidence of anything, and a jumping indoor fix would
+     * otherwise make "standing in the kitchen" look like a walk.
+     */
+    const val AUTO_STOP_IDLE_RADIUS_M: Double = 30.0
+
+    /**
+     * How long without a single usable fix before the recording ends itself [ms].
+     *
+     * Shorter than [AUTO_STOP_IDLE_MS], because a break is not what it looks
+     * like: a resting user has perfectly good fixes, and only the stationary
+     * rule is about resting. This is the rule that
+     * catches walking indoors with the watch still running, which is what
+     * [AUTO_STOP_IDLE_MS] cannot see: indoors the receiver does not stop, it
+     * degrades, and its positions wander far enough to keep resetting the
+     * stationary anchor while being much too poor to use. It never fires before
+     * the session has had a usable fix of its own — a recording made knowingly
+     * without GPS is a stopwatch with a heart rate monitor, which the watch
+     * already says, and not something to throw away.
+     */
+    const val AUTO_STOP_NO_FIX_MS: Long = 15 * 60 * 1000L
+
+    /**
+     * How far the activity has to have travelled before either timer can end it
+     * [m].
+     *
+     * Nothing may auto-stop an activity that has not begun: start the watch, wait
+     * for a friend to lace up, and an armed idle timer would end the recording
+     * before the first step — and the recording that mattered would be the one
+     * nobody noticed was not running. Fifty metres is past the door and past the
+     * first fix's own error, and no workout ends before it.
+     */
+    const val AUTO_STOP_ARM_M: Double = 50.0
+
+    /**
+     * How long a speed above the sport's ceiling has to last before it is
+     * believed [ms].
+     *
+     * One second of GNSS noise at 15 m is 54 km/h of imaginary sprint, and a
+     * single bad pair of fixes can be far worse than that, so no single segment
+     * decides anything: the speed has to stay impossible for a minute and a half
+     * of continuous evidence. A car pulling out of the drive supplies that in the
+     * first block it drives; noise never does, because the segment after it is
+     * ordinary again and the run starts over.
+     */
+    const val AUTO_STOP_OVERSPEED_MS: Long = 90_000L
+
+    /**
+     * The speed above which the sport is no longer being done [km/h].
+     *
+     * Deliberately generous — the question is not "is this a fast run" but "is
+     * this a car". Each is well above what the sport's world records need: a
+     * marathon is run at 21 km/h and a sprint peaks near 45, which is why
+     * [AUTO_STOP_MAX_KMH_RUNNING] sits above the first and below the second only
+     * as a matter of arithmetic and not of ambition — a sprint lasting ninety
+     * seconds does not exist. Cycling gets 80 because alpine descents reach 70.
+     *
+     * Skifahren has no ceiling at all and is exempt from the rule, which is a
+     * judgement rather than an oversight: a lift is part of the activity and is
+     * not distinguishable from a road vehicle by speed, and a fast descent is
+     * faster than most driving. The other two rules still apply to it.
+     */
+    const val AUTO_STOP_MAX_KMH_RUNNING: Double = 30.0
+    const val AUTO_STOP_MAX_KMH_WALKING: Double = 20.0
+    const val AUTO_STOP_MAX_KMH_HIKING: Double = 20.0
+    const val AUTO_STOP_MAX_KMH_BIKING: Double = 80.0
+
+    /**
+     * How often the recorder asks the auto-stop whether time alone has decided
+     * anything [ms].
+     *
+     * Both timers can expire with no sample to carry them: an auto-pause writes
+     * nothing at all, and a receiver that has given up writes nothing usable. So
+     * the question is also asked on a timer, half a minute apart — often enough
+     * that the stop lands within a rounding error of the threshold, rarely enough
+     * to be invisible beside a GNSS receiver in the battery budget (NFR-3).
+     */
+    const val AUTO_STOP_TICK_MS: Long = 30_000L
+
     // ------------------------------------------------------------------ basemap
 
     /**

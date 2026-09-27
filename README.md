@@ -611,6 +611,9 @@ be reproduced exactly on a laptop. That is what makes tuning tractable.
 
 # Take one out of a backup, in the same JSONL the watch writes
 ./gradlew :core:run --args="extract --archive backup.zip --session a3f91b2c"
+
+# What the auto-stop would have done to activities you actually did
+./gradlew :core:run --args="autostop --archive backup.zip"
 ```
 
 Sessions live on the watch at `/data/data/de.hecate/files/sessions/` and
@@ -631,6 +634,53 @@ The id column is only as long as it needs to be to name one session, and is what
 `extract --session` and `tools/emu replay` take. Without `--bundle`, a backup is
 listed from its database part alone — no samples are parsed, which for a few
 hundred sessions is the difference between instant and not.
+
+## When a recording ends itself
+
+A workout that is not stopped keeps recording — the walk to the car, the drive
+home, the evening — and everything downstream believes it, the route clusterer
+included. So the watch ends the recording itself in three situations, and throws
+away the part that was not the activity (Appendix A.30):
+
+| It stops when | after | and cuts back to |
+|---|---|---|
+| you have not left a 30 m circle | 45 min | the moment you stopped moving |
+| fixes keep arriving and none is good enough to use | 15 min | the last usable fix |
+| you are faster than the sport can be | 90 s | the last plausible position |
+
+The speed ceilings are 30 km/h for Laufen, 20 for Spaziergang and Wandern, 80
+for Fahrradfahren, and **none for Skifahren** — a lift moves like a car and a
+descent moves faster, so that rule is switched off there rather than made
+unreliable. The other two still apply.
+
+Two things it will not do. It never ends a recording that has not yet travelled
+50 m, so starting the watch early and standing around is safe, and so is a
+recording made deliberately without GPS. And a **manual** pause suspends all
+three rules for as long as it lasts, with both clocks starting over on resume —
+an auto-pause does not, because that is the standing still the rules are looking
+for.
+
+When it fires, the watch buzzes twice and says `Automatisch beendet — Stillstand`
+(or `— Kein GPS`, or `— Zu schnell`), and the session detail on the phone lists
+the reason under "Verlauf der Aufzeichnung". The watch's own file keeps every
+position it recorded; the cut is a line in the footer, and the phone applies it
+on the way in, so the discarded tail never reaches the database, Health Connect
+or a backup.
+
+The thresholds live in `Tuning` with the rest (`AUTO_STOP_*`). Before changing
+one, run it over a real history — the useful answer is that nothing fires:
+
+```bash
+./gradlew :core:run --args="autostop --archive takeout/hecate-sicherung-*.zip"
+```
+
+```
+id        started          type      length  auto-stop
+a3f91b2c  2026-03-11 07:42 RUNNING    42:15  -
+b71c40de  2026-03-14 18:05 BIKING   1:04:33  -
+---
+2 sessions, 0 would be auto-stopped, 0 already carry a cut
+```
 
 ## The map behind the tracks
 

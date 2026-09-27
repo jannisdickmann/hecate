@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.Reading
+import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.SessionEventType
 import de.hecate.core.model.SessionSource
@@ -194,6 +195,64 @@ class SessionRepositoryTest {
         db.sessions().delete("s-alt")
 
         assertNull(db.sessions().series("s-alt"))
+    }
+
+    @Test
+    fun `an auto-stopped session is stored without the tail it discarded`(): Unit = runBlocking {
+        // A.30. The watch writes the whole file — it is append-only, and that is
+        // what makes a recording survive a process death — and says in the footer
+        // where the activity actually ended. Ingest is the one place the cut is
+        // applied, so the drive home reaches neither the database nor the
+        // clusterer nor Health Connect.
+        val recorded = Fixtures.recorded(
+            "s-1",
+            sampleCount = 30,
+            events = listOf(
+                SessionEvent(
+                    tOffsetMs = 29_000,
+                    type = SessionEventType.AUTO_STOP,
+                    note = "Stillstand seit 15 min — beendet",
+                ),
+            ),
+        )
+        val stopped = recorded.copy(
+            footer = recorded.footer!!.copy(
+                reason = SessionEndReason.AUTO_STOPPED,
+                activeDurationMs = 19_000,
+                totalDistanceM = 40.0,
+                trimmedAfterTOffsetMs = 19_000,
+            ),
+        )
+        assertIs<SessionRepository.IngestResult.Stored>(repository.ingest(stopped))
+
+        val samples = db.sessions().samples("s-1")
+        assertEquals(20, samples.size, "twenty seconds of activity, inclusive")
+        assertTrue(samples.all { it.tOffsetMs <= 19_000 })
+        val row = db.sessions().byId("s-1")!!
+        assertEquals(19_000, row.activeDurationMs)
+        assertEquals(40.0, row.totalDistanceM)
+        // The event that says why the recording ends there is later than the cut
+        // by definition, and survives it.
+        assertNotNull(db.sessions().events("s-1"))
+    }
+
+    @Test
+    fun `an auto-stop that leaves nothing behind is refused rather than stored`(): Unit = runBlocking {
+        // Cannot happen while the rules refuse to arm before the activity has
+        // travelled fifty metres, which is more than one sample's worth — but if
+        // it ever does, an empty session must be refused exactly as any other
+        // empty recording is, and permanently, so the watch stops offering it.
+        val recorded = Fixtures.recorded("s-1", sampleCount = 30)
+        val stopped = recorded.copy(
+            footer = recorded.footer!!.copy(
+                reason = SessionEndReason.AUTO_STOPPED,
+                trimmedAfterTOffsetMs = 0,
+            ),
+        )
+        val result = repository.ingest(stopped)
+        assertIs<SessionRepository.IngestResult.Rejected>(result)
+        assertTrue(result.permanent)
+        assertEquals(0, db.sessions().count())
     }
 
     @Test
