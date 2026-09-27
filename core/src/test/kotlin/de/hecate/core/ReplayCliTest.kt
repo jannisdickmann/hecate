@@ -176,11 +176,12 @@ class ReplayCliTest {
     fun `autostop names the workout that ended in a car park`() {
         val dir = tempDir()
         val ordinary = Synthetic.record("walk-home", Synthetic.workRoute, day(1), seed = 5)
-        // Twenty minutes standing on the last position, which is what a watch
-        // still running on the kitchen table records.
+        // Past the stationary patience on the last position, which is what a
+        // watch still running on the kitchen table records.
         val last = ordinary.samples.last()
+        val parkedSeconds = (Tuning.AUTO_STOP_IDLE_MS / 1000L).toInt() + 5 * 60
         val parked = ordinary.copy(
-            samples = ordinary.samples + (1..20 * 60).map { i ->
+            samples = ordinary.samples + (1..parkedSeconds).map { i ->
                 last.copy(
                     tOffsetMs = last.tOffsetMs + i * 1000L,
                     activeMs = last.activeMs + i * 1000L,

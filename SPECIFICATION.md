@@ -67,8 +67,8 @@ distance until I stop it.*
   mid-activity (recording resumes or the partial session is preserved).
 - Auto-pause events from Health Services are honoured and recorded.
 - The recording ends itself when the activity plainly has not, and discards the
-  tail that was not part of it: a quarter of an hour inside a 30 m circle, a
-  quarter of an hour without a usable fix, or a speed the sport cannot reach
+  tail that was not part of it: three quarters of an hour inside a 30 m circle,
+  a quarter of an hour without a usable fix, or a speed the sport cannot reach
   sustained for ninety seconds. A manual pause suspends all three; nothing ends
   a recording that has not yet travelled 50 m (Appendix A.30).
 - Recording continues if the route matcher throws. Matcher failure is never
@@ -2638,24 +2638,29 @@ two lines.
 - **Stillstand.** The user has not left a 30 m circle for `AUTO_STOP_IDLE_MS`.
   The anchor is the last usable fix that was somewhere *new*, so the time on it
   is how long they have been where they are, and the cut goes back to it: the
-  twenty minutes on the sofa are not part of the run.
-- **Kein GPS.** No usable fix for `AUTO_STOP_NO_FIX_MS`. The cut goes back to
-  the last fix the receiver actually had, which is the door they walked through.
+  time on the sofa is not part of the run. Forty-five minutes, because the
+  first guess of fifteen ended six of 73 real walks and hikes at a break —
+  a half-hour summit rest with two hours of descent after it among them — and
+  a break is the one thing this rule must never mistake for an ending.
+- **Kein GPS.** Fixes arriving and unusable for `AUTO_STOP_NO_FIX_MS`, a
+  quarter of an hour. The cut goes back to the last fix the receiver actually
+  had, which is the door they walked through.
 - **Zu schnell.** A speed above the sport's ceiling, sustained for
   `AUTO_STOP_OVERSPEED_MS`. The cut goes back to the last position reached at a
   plausible speed, which is where the activity ended and the vehicle began.
 
-The first two share a threshold, and that is worth being honest about: because
-the idle clock is anchored to a usable fix and the blind clock to the *last*
-usable fix, the idle one can never be behind, so with both set to fifteen
-minutes it always expires first. What the second rule really decides is the
-*name*, and the name is not cosmetic — "Kein GPS" and "Stillstand" send the
+The first two are anchored to the same kind of moment: the idle clock to a
+usable fix and the blind clock to the *last* usable fix, so the idle one can
+never be behind. The blind threshold is the shorter one, and it therefore only
+counts on evidence — fixes that arrive and are useless. A resting user has
+good fixes, and an auto-pause delivers none at all; neither is evidence about
+the receiver, and only the idle threshold may end them. Besides when, the rules
+decide the *name*, and the name is not cosmetic — "Kein GPS" and "Stillstand" send the
 user to look at completely different things and they cut in different places.
 The receiver is blamed only when it is arriving and useless, which is what
 walking indoors looks like from the inside of the app: the fixes do not stop,
 they degrade, and a 200 m error wanders far enough to keep resetting the
-stationary anchor for ever. Both thresholds are written out rather than folded
-into one, so that shortening one of them later does what it says.
+stationary anchor for ever.
 
 Speed is measured between consecutive usable fixes however far apart they are,
 including across a dropout — crossing six kilometres of ground during a

@@ -644,8 +644,8 @@ away the part that was not the activity (Appendix A.30):
 
 | It stops when | after | and cuts back to |
 |---|---|---|
-| you have not left a 30 m circle | 15 min | the moment you stopped moving |
-| no fix has been good enough to use | 15 min | the last usable fix |
+| you have not left a 30 m circle | 45 min | the moment you stopped moving |
+| fixes keep arriving and none is good enough to use | 15 min | the last usable fix |
 | you are faster than the sport can be | 90 s | the last plausible position |
 
 The speed ceilings are 30 km/h for Laufen, 20 for Spaziergang and Wandern, 80

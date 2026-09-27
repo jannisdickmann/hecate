@@ -6,6 +6,7 @@ import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
+import de.hecate.core.model.Reading
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
@@ -124,6 +125,10 @@ class AutoStopTest {
 
     private fun minutes(n: Int) = n * 60
 
+    /** The stationary patience in whole minutes, so that the cases below say
+     *  "past it" and "within it" rather than a number that moves with it. */
+    private val idleMinutes = (Tuning.AUTO_STOP_IDLE_MS / 60_000L).toInt()
+
     // --------------------------------------------------------------- not a stop
 
     @Test
@@ -134,14 +139,27 @@ class AutoStopTest {
 
     @Test
     fun `a break shorter than the threshold is not a stop`() {
-        // Ten minutes at a summit, a café or a level crossing. The whole reason
-        // the threshold is a quarter of an hour rather than five minutes.
+        // Half an hour at a summit, with the descent still to come. The real
+        // history has exactly this — and a fifteen-minute threshold ended it
+        // there, with two hours of walking left unrecorded.
         val tape = Tape().apply {
             move(minutes(20), 1.4)
-            still(minutes(10))
+            still(minutes(30))
             move(minutes(20), 1.4)
         }
         assertNull(judge(tape, ExerciseType.HIKING))
+    }
+
+    @Test
+    fun `an auto-paused break shorter than the threshold is not a stop`() {
+        // The same rest with Health Services auto-pausing through it, so that
+        // nothing arrives at all. The blind timer is the shorter of the two, and
+        // it must not end a break it has no evidence about.
+        val tape = Tape().apply {
+            move(minutes(20), 1.4)
+            silence(minutes(30))
+        }
+        assertNull(judge(tape, ExerciseType.HIKING, tickTo = tape.tMs))
     }
 
     @Test
@@ -163,16 +181,16 @@ class AutoStopTest {
     // --------------------------------------------------------------- Stillstand
 
     @Test
-    fun `standing still for a quarter of an hour ends the recording`() {
+    fun `standing still past the threshold ends the recording`() {
         val tape = Tape().apply {
             move(minutes(30), 3.0)
-            still(minutes(20))
+            still(minutes(idleMinutes + 5))
         }
         val arrivedAtMs = minutes(30) * 1000L
 
         val verdict = assertNotNull(judge(tape))
         assertEquals(AutoStopReason.STATIONARY, verdict.reason)
-        // Decided a quarter of an hour after arriving, give or take the last
+        // Decided the threshold after arriving, give or take the last
         // anchor before the user stopped — which is within one radius of walking.
         val decidedAfterArrival = verdict.decidedAtMs - arrivedAtMs
         assertTrue(
@@ -180,7 +198,7 @@ class AutoStopTest {
             "decided ${decidedAfterArrival}ms after arriving",
         )
         // And cut back to the moment the movement stopped, not to the moment the
-        // rule fired: the twenty minutes on the sofa are not part of the run.
+        // rule fired: the time on the sofa is not part of the run.
         assertTrue(
             kotlin.math.abs(verdict.keepThrough.tOffsetMs - arrivedAtMs) <= 30_000,
             "cut at ${verdict.keepThrough.tOffsetMs}, arrived at $arrivedAtMs",
@@ -194,7 +212,7 @@ class AutoStopTest {
         // watch on the kitchen table, and the rule it exists for.
         val tape = Tape().apply {
             move(minutes(25), 3.0)
-            silence(minutes(20))
+            silence(minutes(idleMinutes + 5))
         }
         val verdict = assertNotNull(judge(tape, tickTo = tape.tMs))
         assertEquals(AutoStopReason.STATIONARY, verdict.reason)
@@ -224,13 +242,14 @@ class AutoStopTest {
     @Test
     fun `resuming starts the patience over`() {
         // Half an hour standing at a station, then resumed and immediately still
-        // again: the quarter of an hour counts from the resume, so the recording
-        // survives the first ten minutes of it and not the twentieth.
+        // again: the patience counts from the resume, so the recording survives
+        // the first ten minutes of it and not the time past the threshold.
         val pausedAtMs = minutes(20) * 1000L
         val resumedAtMs = minutes(50) * 1000L
         val tape = Tape().apply {
             move(minutes(20), 3.0)
-            still(minutes(45))
+            // Samples until ten minutes after the resume; ticks carry it on.
+            still(minutes(40))
         }
         val pauses = listOf(pausedAtMs to true, resumedAtMs to false)
 
@@ -239,7 +258,7 @@ class AutoStopTest {
             "ten minutes after the resume is still within the patience",
         )
         val verdict = assertNotNull(
-            judge(tape, pauses = pauses, tickTo = resumedAtMs + minutes(20) * 1000L),
+            judge(tape, pauses = pauses, tickTo = resumedAtMs + minutes(idleMinutes + 5) * 1000L),
         )
         assertEquals(AutoStopReason.STATIONARY, verdict.reason)
         assertTrue(verdict.decidedAtMs >= resumedAtMs + Tuning.AUTO_STOP_IDLE_MS)
@@ -359,7 +378,7 @@ class AutoStopTest {
         val watch = AutoStopWatch(ExerciseType.RUNNING)
         val tape = Tape().apply {
             move(minutes(20), 3.0)
-            still(minutes(20))
+            still(minutes(idleMinutes + 5))
         }
         var verdicts = 0
         for (sample in tape.samples) if (watch.sample(sample) != null) verdicts++
@@ -375,7 +394,7 @@ class AutoStopTest {
     // -------------------------------------------------------------------- the cut
 
     @Test
-    fun `the cut drops positions, rates and the match log but keeps the events`() {
+    fun `the cut drops positions, rates, sensor series and the match log but keeps the events`() {
         val session = sessionWithCut(cutAtMs = 60_000L)
         val trimmed = AutoStop.trim(session)
 
@@ -383,6 +402,12 @@ class AutoStopTest {
         assertTrue(trimmed.samples.all { it.tOffsetMs <= 60_000L })
         assertTrue(trimmed.heartRates.all { it.tOffsetMs <= 60_000L })
         assertTrue(trimmed.matchLog.all { it.tOffsetMs <= 60_000L })
+        // The barometer and speed series are sampled on their own schedule, and
+        // the drive home's readings must not survive in them either.
+        assertEquals(3, trimmed.altitudes.size)
+        assertTrue(trimmed.altitudes.all { it.tOffsetMs <= 60_000L })
+        assertEquals(3, trimmed.speeds.size)
+        assertTrue(trimmed.speeds.all { it.tOffsetMs <= 60_000L })
         // The AUTO_STOP event is by definition later than the cut it describes.
         // It is the only record of why the session ends where it does.
         assertEquals(session.events, trimmed.events)
@@ -446,6 +471,8 @@ class AutoStopTest {
                 )
             },
             heartRates = List(120) { i -> HeartRate(tOffsetMs = i * 1000L, bpm = 130) },
+            altitudes = List(6) { i -> Reading(tOffsetMs = i * 30_000L, value = 260.0 + i) },
+            speeds = List(6) { i -> Reading(tOffsetMs = i * 30_000L, value = 3.0) },
         )
     }
 }

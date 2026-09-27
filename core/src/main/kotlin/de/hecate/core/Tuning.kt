@@ -723,15 +723,22 @@ object Tuning {
      * How long the user may stay inside [AUTO_STOP_IDLE_RADIUS_M] before the
      * recording ends itself [ms].
      *
-     * Fifteen minutes rather than five, because the two mistakes are not
-     * symmetric. Ending a workout that was only resting cuts a real recording in
-     * half and cannot be undone from the wrist; waiting a quarter of an hour to
-     * notice an activity nobody is doing any more costs battery and a stretch of
-     * track that is discarded anyway (see [AutoStop][de.hecate.core.recorder.AutoStop]).
-     * A summit break, a café stop and a wait for a ferry are all shorter than
-     * this; a forgotten recording is not.
+     * Three quarters of an hour, because the two mistakes are not symmetric.
+     * Ending a workout that was only resting cuts a real recording in half and
+     * cannot be undone from the wrist; waiting to notice an activity nobody is
+     * doing any more costs battery and a stretch of track that is discarded
+     * anyway (see [AutoStop][de.hecate.core.recorder.AutoStop]).
+     *
+     * Fifteen minutes was the first guess, and the real history refuted it: run
+     * over 73 recorded workouts (`autostop --archive`), it ended six walks and
+     * hikes in the middle — a half-hour summit rest with two hours of descent
+     * after it, a 25-minute stop four hours into a seven-hour walk. Thirty still
+     * ended the summit one. At forty-five nothing fires on a break, and the four
+     * sessions it does end are the ones that deserve it: a watch left running
+     * for an hour after arriving, and three drives home that the speed rule
+     * catches first anyway.
      */
-    const val AUTO_STOP_IDLE_MS: Long = 15 * 60 * 1000L
+    const val AUTO_STOP_IDLE_MS: Long = 45 * 60 * 1000L
 
     /**
      * The circle the user has to leave for the recording to count as moving [m].
@@ -749,7 +756,9 @@ object Tuning {
     /**
      * How long without a single usable fix before the recording ends itself [ms].
      *
-     * The same fifteen minutes and for the same reason. This is the rule that
+     * Shorter than [AUTO_STOP_IDLE_MS], because a break is not what it looks
+     * like: a resting user has perfectly good fixes, and only the stationary
+     * rule is about resting. This is the rule that
      * catches walking indoors with the watch still running, which is what
      * [AUTO_STOP_IDLE_MS] cannot see: indoors the receiver does not stop, it
      * degrades, and its positions wander far enough to keep resetting the

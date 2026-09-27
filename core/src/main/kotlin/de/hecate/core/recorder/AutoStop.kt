@@ -61,14 +61,13 @@ data class AutoStopVerdict(
  * are deliberately different in kind, because the three ways an activity ends
  * without being stopped look nothing like each other:
  *
- *  - **Stillstand.** The user has not left a small circle for a quarter of an
- *    hour ([Tuning.AUTO_STOP_IDLE_MS]). The cut goes back to the moment they
- *    arrived at it.
- *  - **Kein GPS.** The same patience ([Tuning.AUTO_STOP_NO_FIX_MS]) with fixes
+ *  - **Stillstand.** The user has not left a small circle for three quarters
+ *    of an hour ([Tuning.AUTO_STOP_IDLE_MS]) — longer than any break the real
+ *    history has in it. The cut goes back to the moment they arrived at it.
+ *  - **Kein GPS.** A quarter of an hour ([Tuning.AUTO_STOP_NO_FIX_MS]) of fixes
  *    that arrive and are useless, which is what walking indoors looks like. The
- *    cut goes back to the last fix the receiver actually had. The two share a
- *    threshold and therefore, in practice, a moment — see [check] for which of
- *    them gets to name the ending, and why that is worth deciding.
+ *    cut goes back to the last fix the receiver actually had. See [check] for
+ *    which of the two gets to name the ending, and why that is worth deciding.
  *  - **Zu schnell.** A speed above what the sport can do, sustained for
  *    [Tuning.AUTO_STOP_OVERSPEED_MS]. The cut goes back to the last position
  *    reached at a plausible speed, which is where the activity actually ended
@@ -89,6 +88,11 @@ data class AutoStopVerdict(
  * unit test can put fifteen minutes into two lines.
  */
 class AutoStopWatch(private val type: ExerciseType) {
+
+    // The recorder asks from more than one thread — the sample path and the
+    // watchdog both run on Dispatchers.Default — and a verdict is decided once,
+    // so every entry point is synchronised: two racing calls must not both find
+    // no verdict and each decide one.
 
     /** Null for a sport the speed rule is not applied to. */
     private val ceilingKmh: Double? = AutoStop.ceilingKmh(type)
@@ -131,6 +135,7 @@ class AutoStopWatch(private val type: ExerciseType) {
      * Returns the verdict the moment there is one, and null every time
      * afterwards: the caller ends the session once.
      */
+    @Synchronized
     fun sample(sample: Sample): AutoStopVerdict? {
         if (verdict != null || manuallyPaused) return null
         if (sample.usable) {
@@ -153,6 +158,7 @@ class AutoStopWatch(private val type: ExerciseType) {
      * [tOffsetMs] is the session's own monotonic offset, the same clock the
      * samples are stamped with.
      */
+    @Synchronized
     fun tick(tOffsetMs: Long): AutoStopVerdict? {
         if (verdict != null || manuallyPaused) return null
         return check(tOffsetMs)
@@ -166,6 +172,7 @@ class AutoStopWatch(private val type: ExerciseType) {
      * out a train with the user's knowledge has not been standing still
      * unwatched, and must not be ended a minute after it starts moving again.
      */
+    @Synchronized
     fun manualPause(paused: Boolean, tOffsetMs: Long) {
         if (manuallyPaused == paused) return
         manuallyPaused = paused
@@ -186,9 +193,10 @@ class AutoStopWatch(private val type: ExerciseType) {
      *
      * They are anchored to the same kind of moment — the last usable fix, and
      * the last usable fix that was somewhere *new* — so the idle clock is never
-     * behind the blind one, and with both thresholds set to a quarter of an hour
-     * the idle one always expires first. Both are written out all the same, so
-     * that shortening one of them later does what it says.
+     * behind the blind one. The blind timer is the shorter of the two, and it
+     * only counts when fixes are arriving and useless: a resting user, or an
+     * auto-pause that delivers nothing at all, leaves it running without
+     * evidence, and only the idle threshold may end that.
      *
      * What is genuinely two decisions is the *name*, and it is worth getting
      * right: "Stillstand" and "Kein GPS" send the user to look at completely
@@ -207,8 +215,11 @@ class AutoStopWatch(private val type: ExerciseType) {
         val spot = anchor ?: return null
         val blind = nowMs - maxOf(fix.tOffsetMs, timerFloorMs)
         val idle = nowMs - maxOf(spot.tOffsetMs, timerFloorMs)
-        if (idle < Tuning.AUTO_STOP_IDLE_MS && blind < Tuning.AUTO_STOP_NO_FIX_MS) return null
-        return if (unusableSinceFix > 0 && blind >= Tuning.FIX_LOST_MS) {
+        val receiverFailing = unusableSinceFix > 0 && blind >= Tuning.FIX_LOST_MS
+        val idleExpired = idle >= Tuning.AUTO_STOP_IDLE_MS
+        val blindExpired = receiverFailing && blind >= Tuning.AUTO_STOP_NO_FIX_MS
+        if (!idleExpired && !blindExpired) return null
+        return if (receiverFailing) {
             decide(AutoStopReason.NO_FIX, fix, nowMs, minutes(blind))
         } else {
             decide(AutoStopReason.STATIONARY, spot, nowMs, minutes(idle))
@@ -332,10 +343,10 @@ object AutoStop {
      * the cut once, on the way in, so the drive home never reaches the database,
      * Health Connect, the clusterer or a backup.
      *
-     * Positions, heart rates and the matcher's own log are all cut; the events
-     * are not. The `AUTO_STOP` event sits *after* the cut by definition — it is
-     * the record of the decision — and it is the only thing that explains why the
-     * recording ends where it does.
+     * Positions, heart rates, the sensors' own series and the matcher's own
+     * log are all cut; the events are not. The `AUTO_STOP` event sits *after*
+     * the cut by definition — it is the record of the decision — and it is the
+     * only thing that explains why the recording ends where it does.
      *
      * A session with no cut in its footer comes back untouched, which is every
      * session recorded before this existed and every one that was stopped by
@@ -345,6 +356,8 @@ object AutoStop {
         val cut = session.footer?.trimmedAfterTOffsetMs ?: return session
         if (session.samples.none { it.tOffsetMs > cut } &&
             session.heartRates.none { it.tOffsetMs > cut } &&
+            session.altitudes.none { it.tOffsetMs > cut } &&
+            session.speeds.none { it.tOffsetMs > cut } &&
             session.matchLog.none { it.tOffsetMs > cut }
         ) {
             return session
@@ -352,6 +365,8 @@ object AutoStop {
         return session.copy(
             samples = session.samples.filter { it.tOffsetMs <= cut },
             heartRates = session.heartRates.filter { it.tOffsetMs <= cut },
+            altitudes = session.altitudes.filter { it.tOffsetMs <= cut },
+            speeds = session.speeds.filter { it.tOffsetMs <= cut },
             matchLog = session.matchLog.filter { it.tOffsetMs <= cut },
         )
     }
