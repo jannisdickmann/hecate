@@ -52,6 +52,9 @@ interface SessionDao {
     @Upsert
     suspend fun upsertEvents(events: SessionEventsEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSeries(series: SessionSeriesEntity)
+
     @Query("SELECT COUNT(*) FROM session WHERE id = :id")
     suspend fun countById(id: String): Int
 
@@ -91,6 +94,9 @@ interface SessionDao {
 
     @Query("SELECT * FROM session_events WHERE session_id = :id")
     suspend fun events(id: String): SessionEventsEntity?
+
+    @Query("SELECT * FROM session_series WHERE session_id = :id")
+    suspend fun series(id: String): SessionSeriesEntity?
 
     @Query("SELECT * FROM session WHERE hc_write_state = :state ORDER BY started_at_utc")
     suspend fun byHcState(state: Int): List<SessionEntity>

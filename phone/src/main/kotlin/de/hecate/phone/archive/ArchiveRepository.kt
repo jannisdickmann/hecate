@@ -7,6 +7,7 @@ import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
+import de.hecate.core.model.Altitudes
 import de.hecate.core.model.HeartRates
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.SessionEvent
@@ -21,6 +22,7 @@ import de.hecate.core.archive.ArchiveCodec
 import de.hecate.phone.db.HecateDatabase
 import de.hecate.phone.db.MatchLogEntity
 import de.hecate.phone.db.SessionEventsEntity
+import de.hecate.phone.db.SessionSeriesEntity
 import de.hecate.phone.db.MetaEntity
 import de.hecate.phone.db.RouteEntity
 import de.hecate.phone.db.RouteMemberEntity
@@ -146,6 +148,23 @@ class ArchiveRepository(
             runCatching { BundleCodec.decodeEvents(row.payload.toString(Charsets.UTF_8)) }
                 .getOrDefault(emptyList())
         } ?: emptyList()
+        // The sensors' own series, from schema v8. Before it they were merged
+        // into the sample columns and discarded, so a backup of an older session
+        // carries the merged result and nothing to re-derive it from — which is
+        // exactly the loss the table was added to stop.
+        val series = db.sessions().series(session.id)
+        val rates = series?.heartRates?.let { blob ->
+            runCatching { BundleCodec.decodeRates(blob.toString(Charsets.UTF_8)) }
+                .getOrDefault(emptyList())
+        } ?: emptyList()
+        val altitudes = series?.altitudes?.let { blob ->
+            runCatching { BundleCodec.decodeReadings(blob.toString(Charsets.UTF_8)) }
+                .getOrDefault(emptyList())
+        } ?: emptyList()
+        val speeds = series?.speeds?.let { blob ->
+            runCatching { BundleCodec.decodeReadings(blob.toString(Charsets.UTF_8)) }
+                .getOrDefault(emptyList())
+        } ?: emptyList()
 
         return RecordedSession(
             header = SessionHeader(
@@ -157,6 +176,9 @@ class ArchiveRepository(
             ),
             samples = samples,
             events = events,
+            heartRates = rates,
+            altitudes = altitudes,
+            speeds = speeds,
             footer = SessionFooter(
                 endedAtUtcMs = session.endedAtUtc
                     ?: (session.startedAtUtc + (samples.lastOrNull()?.tOffsetMs ?: 0L)),
@@ -235,8 +257,17 @@ class ArchiveRepository(
                     // has to put them together too. A session without a separate
                     // series comes through unchanged.
                     db.sessions().insertSamples(
-                        HeartRates.merge(session.samples, session.heartRates).map { it.toEntity(row.id) },
+                        Altitudes.merge(
+                            HeartRates.merge(session.samples, session.heartRates),
+                            session.altitudes,
+                        ).map { it.toEntity(row.id) },
                     )
+                    if (session.heartRates.isNotEmpty() ||
+                        session.altitudes.isNotEmpty() ||
+                        session.speeds.isNotEmpty()
+                    ) {
+                        db.sessions().upsertSeries(seriesEntity(row.id, session))
+                    }
                     if (session.matchLog.isNotEmpty()) {
                         db.sessions().upsertMatchLog(matchLogEntity(row.id, session.matchLog))
                     }
@@ -345,6 +376,19 @@ class ArchiveRepository(
         fun eventsEntity(sessionId: String, events: List<SessionEvent>) = SessionEventsEntity(
             sessionId = sessionId,
             payload = BundleCodec.encodeEvents(events).toByteArray(Charsets.UTF_8),
+        )
+
+        fun seriesEntity(sessionId: String, session: RecordedSession) = SessionSeriesEntity(
+            sessionId = sessionId,
+            heartRates = session.heartRates
+                .takeIf { it.isNotEmpty() }
+                ?.let { BundleCodec.encodeRates(it).toByteArray(Charsets.UTF_8) },
+            altitudes = session.altitudes
+                .takeIf { it.isNotEmpty() }
+                ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
+            speeds = session.speeds
+                .takeIf { it.isNotEmpty() }
+                ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
         )
 
         fun SessionEntity.toArchive() = Archive.Session(

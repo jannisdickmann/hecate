@@ -46,6 +46,22 @@ class ExerciseSource(private val context: Context) {
         // by [supported] on an exercise type that does not produce it, and the
         // display falls back to the average *and says so*.
         DataType.SPEED,
+        // Altitude, and the only place it comes from: Health Services does not
+        // put one on the position. `LocationData.altitude` on a real Pixel Watch 4
+        // is Double.MAX_VALUE on every fix — the "no altitude here" sentinel, not
+        // a reading — which is why every wrist recording came back with a track
+        // and no height profile while a takeout import of the same ground carried
+        // an altitude on every sample (#6). The app had simply never asked for the
+        // data type that has one.
+        //
+        // The watch has a barometer, and its Health Services offers this under
+        // ABSOLUTE_ELEVATION for all five exercise types this app records. It is
+        // the absolute reading rather than ELEVATION_GAIN_TOTAL deliberately: a
+        // gain total would fill the Aufstieg row and draw no chart, and SKIING —
+        // the one type that would most like a profile — does not offer the gain
+        // at all. Battery, as for every type in this set; a barometer is among
+        // the cheapest sensors on the watch.
+        DataType.ABSOLUTE_ELEVATION,
     )
 
     private val wantedWarmUpTypes = setOf(DataType.LOCATION, DataType.HEART_RATE_BPM)

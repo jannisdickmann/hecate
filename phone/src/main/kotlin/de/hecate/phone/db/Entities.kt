@@ -211,6 +211,60 @@ data class SessionEventsEntity(
 }
 
 /**
+ * The series a session's sensors produced on their own schedules.
+ *
+ * One row per session holding all three, in the same shape as [SessionEventsEntity]
+ * and for the same reason: the watch writes them into the session file, and
+ * anything not kept here dies with that file when the watch deletes it.
+ *
+ * Until v8 none of this was kept. Heart rate was merged into the sample rows at
+ * ingest and the series discarded, which is why the merge tolerance can never be
+ * re-derived for a session already stored — the readings it would need are gone.
+ * Altitude would have been worse: the barometer reports about once every
+ * half-minute against a position a second, so a merge keeps roughly one sample in
+ * seven and throws the rest away. Keeping the series means the join stays a
+ * decision made on the way out, and changing it costs a redraw rather than a
+ * migration.
+ *
+ * Null where a session has no such series: every import carries its values per
+ * position instead, and so does every recording made before the watch wrote one.
+ */
+@Entity(
+    tableName = "session_series",
+    primaryKeys = ["session_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["session_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class SessionSeriesEntity(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "heart_rates", typeAffinity = ColumnInfo.BLOB) val heartRates: ByteArray?,
+    @ColumnInfo(name = "altitudes", typeAffinity = ColumnInfo.BLOB) val altitudes: ByteArray?,
+    @ColumnInfo(name = "speeds", typeAffinity = ColumnInfo.BLOB) val speeds: ByteArray?,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is SessionSeriesEntity &&
+            other.sessionId == sessionId &&
+            other.heartRates.contentEquals(heartRates) &&
+            other.altitudes.contentEquals(altitudes) &&
+            other.speeds.contentEquals(speeds)
+
+    override fun hashCode(): Int {
+        var h = sessionId.hashCode()
+        h = 31 * h + heartRates.contentHashCode()
+        h = 31 * h + altitudes.contentHashCode()
+        h = 31 * h + speeds.contentHashCode()
+        return h
+    }
+}
+
+
+/**
  * A precomputed heatmap raster: one row per picture, and there are two of them
  * ([CARD] and [FULL]).
  *

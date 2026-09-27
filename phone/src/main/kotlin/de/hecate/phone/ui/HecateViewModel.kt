@@ -27,6 +27,7 @@ import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
+import de.hecate.phone.export.GpxExporter
 import de.hecate.phone.tcx.TcxImporter
 import de.hecate.phone.work.Jobs
 import kotlinx.coroutines.Dispatchers
@@ -187,6 +188,14 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    /**
+     * A GPX file waiting for the share sheet. Held rather than fired so that it
+     * is not lost if the screen is not collecting at the instant it is ready;
+     * the screen clears it once it has started the chooser, as it does [status].
+     */
+    private val _share = MutableStateFlow<GpxExporter.Share?>(null)
+    val share: StateFlow<GpxExporter.Share?> = _share.asStateFlow()
 
     private val _routeDetail = MutableStateFlow<RouteDetail?>(null)
     val routeDetail: StateFlow<RouteDetail?> = _routeDetail.asStateFlow()
@@ -428,6 +437,34 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearStatus() {
         _status.value = null
+    }
+
+    fun clearShare() {
+        _share.value = null
+    }
+
+    /**
+     * Export what [screen] shows as GPX and queue it for the share sheet. Only
+     * the two detail screens have anything to export; anything else is ignored.
+     */
+    fun shareGpx(screen: Screen) = viewModelScope.launch {
+        if (screen !is Screen.SessionDetail && screen !is Screen.RouteDetail) return@launch
+        _busy.value = true
+        val result = runCatching {
+            when (screen) {
+                is Screen.SessionDetail -> AppGraph.gpx.session(screen.id)
+                is Screen.RouteDetail -> AppGraph.gpx.route(screen.id)
+                else -> null
+            }
+        }
+        _busy.value = false
+        result.fold(
+            onSuccess = { share ->
+                if (share != null) _share.value = share
+                else _status.value = "Keine Positionen zum Exportieren"
+            },
+            onFailure = { _status.value = "GPX-Export fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+        )
     }
 
     fun importTcx(uris: List<Uri>) = viewModelScope.launch {

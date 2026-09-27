@@ -767,6 +767,8 @@ private fun RecorderUiState.healthAt(nowMs: Long): RecordingHealth = recordingHe
         // been without it for its whole length, and saying so beats a blank.
         fixAgeMs = (lastFixAtMs.takeIf { it > 0 } ?: startedAtUtcMs.takeIf { it > 0 })
             ?.let { (nowMs - it).coerceAtLeast(0) },
+        gpsSignalLost = gpsSignalLost,
+        sinceResumeMs = resumedAtMs.takeIf { it > 0 }?.let { (nowMs - it).coerceAtLeast(0) },
         sinceLastWriteMs = lastWriteAtMs.takeIf { it > 0 }?.let { (nowMs - it).coerceAtLeast(0) },
         accuracyM = lastAccuracyM,
         offRoute = offRoute,

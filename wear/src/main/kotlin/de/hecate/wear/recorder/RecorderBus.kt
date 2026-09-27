@@ -77,6 +77,10 @@ data class RecorderUiState(
 
     // Health
     val gpsReady: Boolean = false,
+    /** Health Services has explicitly reported the fix gone (ACQUIRING or
+     *  NO_GNSS) since it was last acquired. Unlike `!gpsReady`, never set merely
+     *  because nothing has been reported, e.g. while paused. */
+    val gpsSignalLost: Boolean = false,
     val heartRateAvailable: Boolean = false,
     val locationPermission: Boolean = true,
     /** Wall clock of the last sample that was good enough to use, and of the
@@ -87,6 +91,10 @@ data class RecorderUiState(
     val lastWriteAtMs: Long = 0,
     val lastAccuracyM: Double? = null,
     val autoPaused: Boolean = false,
+    /** Wall clock of the last resume from a pause; zero if never paused. The
+     *  health line measures fix age from here at most, because no locations
+     *  are delivered while paused. */
+    val resumedAtMs: Long = 0,
 
     // Housekeeping
     val pendingUploads: Int = 0,

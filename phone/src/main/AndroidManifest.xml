@@ -67,6 +67,19 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- Hands a single exported GPX file to whichever app the user picks in
+             the share sheet, with a read grant for that file only
+             (GpxExporter). Not exported: the grant is the only way in. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Receives session assets from the watch (§5.4). -->
         <service
             android:name=".ingest.IngestService"

@@ -187,6 +187,30 @@ data class HeartRate(
     @SerialName("hr") val bpm: Int,
 )
 
+/**
+ * One reading from a sensor that measures on a schedule of its own.
+ *
+ * The generic successor to [HeartRate], which keeps its own shape only because
+ * every session file and every backup already written uses it. Everything added
+ * since — barometric altitude, fused speed — is this.
+ *
+ * The argument is the one [HeartRate] already paid for. A reading that arrives
+ * between two positions, or in a delivery that carried none, has nowhere to go
+ * in a per-position row and is lost. That is not hypothetical here: measured on
+ * a Pixel Watch 4, ABSOLUTE_ELEVATION arrives once every 20 to 60 seconds and
+ * irregularly, against a position a second, so joining it at write time kept 16
+ * samples in 101 and would have kept none at all through a GNSS dropout — where
+ * the barometer is in fact the one sensor still working.
+ *
+ * [value] is in the unit of whatever wrote it: metres for altitude, metres per
+ * second for speed. The line kind says which, and nothing here needs to know.
+ */
+@Serializable
+data class Reading(
+    @SerialName("t") val tOffsetMs: Long,
+    @SerialName("v") val value: Double,
+)
+
 /** Written as the last line of a session file. Its absence means the recording was
  *  interrupted; such a file is still uploaded and ingested (NFR-1). */
 @Serializable
@@ -225,6 +249,13 @@ data class RecordedSession(
      *  recorded before the watch wrote them, and for every import — a takeout
      *  or a TCX carries one rate per position and nothing between. */
     val heartRates: List<HeartRate> = emptyList(),
+    /** Barometric altitude in metres, at the barometer's own times. Empty for
+     *  every import — which carries an altitude per position instead — and for
+     *  anything recorded before the watch asked for the data type at all. */
+    val altitudes: List<Reading> = emptyList(),
+    /** Speed in metres per second as Health Services fuses it, at its own times.
+     *  Empty for imports and for recordings made before the watch kept it. */
+    val speeds: List<Reading> = emptyList(),
 ) {
     val id: String get() = header.sessionId
 

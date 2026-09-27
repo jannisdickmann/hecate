@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
@@ -89,6 +90,7 @@ import de.hecate.phone.R
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
+import de.hecate.phone.export.GpxExporter
 
 /**
  * §5.4: Recordings list → recording detail; Routes list → route detail; plus a
@@ -112,6 +114,7 @@ fun HecateApp(
     onRestoreArchive: () -> Unit,
     onImportMap: () -> Unit,
     onRequestHealthConnect: () -> Unit,
+    onShare: (GpxExporter.Share) -> Unit,
 ) {
     val screen by vm.screen.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
@@ -124,6 +127,16 @@ fun HecateApp(
         status?.let {
             snackbar.showSnackbar(it)
             vm.clearStatus()
+        }
+    }
+
+    // The share sheet needs the activity, so the file is handed up to it; the
+    // view model only builds it.
+    val share by vm.share.collectAsStateWithLifecycle()
+    LaunchedEffect(share) {
+        share?.let {
+            vm.clearShare()
+            onShare(it)
         }
     }
 
@@ -159,6 +172,14 @@ fun HecateApp(
                         navigationIcon = {
                             IconButton(onClick = { vm.back() }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zurück")
+                            }
+                        },
+                        // Up here rather than among the rows: it acts on the
+                        // whole recording or route, and it is the one thing on
+                        // these screens that sends something out of the app.
+                        actions = {
+                            IconButton(onClick = { vm.shareGpx(screen) }) {
+                                Icon(Icons.Filled.Share, contentDescription = "Als GPX teilen")
                             }
                         },
                     )
@@ -1136,9 +1157,17 @@ private fun ClusteringBanner() {
  * The altitude profile and the numbers read off it, under the track on both
  * detail screens.
  *
- * Absent rather than empty when there is nothing to draw: a recording from a
- * watch with no altitude, or a route last clustered before the elevation column
- * existed. A chart of a flat line at zero would be a claim about the ground.
+ * No chart when there is nothing to draw: a recording made before the watch
+ * asked Health Services for altitude at all, or a route last clustered before
+ * the elevation column existed. A chart of a flat line at zero would be a claim
+ * about the ground.
+ *
+ * But not *silence* either, which is what this used to be. A missing section and
+ * a genuinely flat ride look identical from the sofa, and the reasonable reading
+ * of an absent profile is that the ground was level — which for every recording
+ * made before #6 was landed is wrong. One line is enough to say which, and it
+ * keeps the rule it used to break: nothing here draws a number about height
+ * unless a height was measured.
  */
 @Composable
 private fun ElevationSection(
@@ -1146,7 +1175,15 @@ private fun ElevationSection(
     stats: Elevation.Stats?,
     peakHrBpm: Int,
 ) {
-    if (points.size < 2 || stats == null) return
+    if (points.size < 2 || stats == null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Kein Höhenprofil: die Uhr hat keine Höhe geliefert.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
     Spacer(Modifier.height(4.dp))
     SectionHeader("Höhenprofil")
     ElevationView(points, peakHrBpm = peakHrBpm)

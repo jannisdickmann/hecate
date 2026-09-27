@@ -386,6 +386,19 @@ object Tuning {
      * The cost of the threshold is that genuinely gentle ground reads as flatter
      * than it was: a long drag that gains 4 m per kilometre counts as nothing.
      * That is the right trade for a number a person compares between days.
+     *
+     * Reconsidered once the watch actually delivered altitude, and deliberately
+     * left alone. The barometer turns out to be far quieter than this: four
+     * readings over flat ground spanned 0.65 m, so at its half-minute cadence
+     * nothing like a 5 m false move can accumulate, and on the watch's own data
+     * this threshold is now conservative enough to flatten genuinely gentle
+     * ground. The reason it stays is that the same constant also governs every
+     * takeout and TCX import, whose altitude is per position, denser, and much
+     * noisier — and A.20's ski day at +9179/−9163 m is the only figure here that
+     * has ever been checked against reality. Lowering it would trade a verified
+     * number for an unverified one. It wants an outdoor ride recorded on the
+     * wrist, read against a takeout of the same ground, and then a value chosen
+     * per source rather than one for both.
      */
     const val ELEVATION_THRESHOLD_M: Double = 5.0
 
@@ -514,6 +527,61 @@ object Tuning {
      * colouring a descent.
      */
     const val HR_MERGE_TOLERANCE_MS: Long = 5_000L
+
+    /**
+     * How far apart two barometer readings may be and still describe one slope
+     * [ms].
+     *
+     * Altitude is recorded as its own series and put onto the sample times by
+     * interpolation ([de.hecate.core.model.Altitudes]), because the sensor reports
+     * far more slowly than positions arrive — and, it turns out, not at a rate at
+     * all. Measured on a Pixel Watch 4: four readings inside one ninety-second
+     * stretch, 57 s, 27 s and 2 s apart; then seven readings across a nineteen
+     * minute session, about one every two and a half minutes. That pattern says
+     * the data type is reported on *change* rather than on a clock, which is also
+     * why the quiet session was the flat one.
+     *
+     * So this bound is not "how long before interpolating becomes a guess". If
+     * the sensor speaks when the height changes, then a long silence is itself
+     * the statement that it did not change, and a straight line across that
+     * silence is the most accurate thing available — refusing to draw it throws
+     * away a profile the watch had in fact measured. Ten minutes is chosen well
+     * above the longest quiet interval yet observed, and the bound is kept for
+     * the case it is actually good for: a subscription that died, a recording
+     * resumed hours later, a gap where the sensor was absent rather than content.
+     *
+     * Ten minutes is a reasoned figure from two indoor sessions and not a
+     * verified one. What would settle it is one outdoor ride with real climbing,
+     * where the reading interval and what it does on a hill can both be seen.
+     */
+    const val ALTITUDE_INTERPOLATION_GAP_MS: Long = 600_000L
+
+    /**
+     * Width, in *readings*, of the median that de-spikes the barometer series
+     * before anything is interpolated from it.
+     *
+     * Not [ELEVATION_MEDIAN_WINDOW], and the difference is the whole point. That
+     * window is nine *samples* — nine seconds of the 1 Hz altitude-per-position a
+     * takeout or a TCX carries. Nine barometer readings at one every half-minute
+     * would be four and a half minutes, and a median that wide does not remove
+     * spikes, it removes hills.
+     *
+     * Three, which is the narrowest window that removes anything, and here that
+     * is the right end of the trade. A centred median costs its first and last
+     * half-window, where a sample follows its neighbourhood instead of itself —
+     * at 1 Hz that is four seconds and the existing comment can afford to call it
+     * 1–2 m, but at one reading per half-minute each extra pair of readings costs
+     * a *minute* at each end of the ride. Five would buy the ability to outvote
+     * two consecutive bad readings and would flatten the first and last minute of
+     * every profile to pay for it. Isolated spikes are what altimeters actually
+     * produce, and three removes those.
+     *
+     * The window still slides inward at the ends rather than truncating, which is
+     * what makes it remove the altimeter settling on the first reading or two —
+     * the same argument as [ELEVATION_MEDIAN_WINDOW], and the reason the cost
+     * above is worth paying at all.
+     */
+    const val ALTITUDE_READING_MEDIAN_WINDOW: Int = 3
 
     /**
      * Window [samples] of the rolling median over a recording's speed.
