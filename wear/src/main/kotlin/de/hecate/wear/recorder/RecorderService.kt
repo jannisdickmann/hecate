@@ -374,6 +374,7 @@ class RecorderService : Service() {
                 it.copy(
                     phase = if (paused) RecorderPhase.PAUSED else RecorderPhase.ACTIVE,
                     autoPaused = false,
+                    resumedAtMs = if (paused) it.resumedAtMs else System.currentTimeMillis(),
                 )
             }
             return
@@ -565,8 +566,19 @@ class RecorderService : Service() {
             if (availability is LocationAvailability) {
                 val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
                     availability == LocationAvailability.ACQUIRED_UNTETHERED
+                val lost = availability == LocationAvailability.ACQUIRING ||
+                    availability == LocationAvailability.NO_GNSS
                 val was = bus.state.value.gpsReady
-                bus.update { it.copy(gpsReady = ready) }
+                bus.update {
+                    it.copy(
+                        gpsReady = ready,
+                        gpsSignalLost = when {
+                            ready -> false
+                            lost -> true
+                            else -> it.gpsSignalLost
+                        },
+                    )
+                }
                 if (!was && ready) {
                     recordEvent(SessionEventType.GPS_ACQUIRED)
                     if (bus.state.value.phase == RecorderPhase.PREPARING) {
@@ -618,6 +630,11 @@ class RecorderService : Service() {
                     )
                     pausedSinceMs?.let { pausedTotalMs += (nowOffsetMs() - it).coerceAtLeast(0) }
                     pausedSinceMs = null
+                    // The resume event above is a write too, and dating it keeps a
+                    // long pause from reading as "Keine Aufzeichnung" until the
+                    // first sample after it lands.
+                    val now = System.currentTimeMillis()
+                    bus.update { it.copy(resumedAtMs = now, lastWriteAtMs = now) }
                 }
                 bus.update { it.copy(phase = RecorderPhase.ACTIVE, autoPaused = false) }
             }
