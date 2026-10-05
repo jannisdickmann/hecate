@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.health.connect.client.HealthConnectClient
 import androidx.work.WorkInfo
+import de.hecate.phone.map.BasemapPrefetchWorker
 import androidx.work.WorkManager
 import de.hecate.core.Tuning
 import de.hecate.core.geo.LatLon
@@ -61,9 +62,21 @@ sealed interface Screen {
     data class RouteDetail(val id: Long) : Screen
 }
 
+/** A map prefetch as the settings card shows it: [running] or waiting for an
+ *  unmetered network, and while running, which pass and which block of it. */
+data class MapPrefetch(
+    val running: Boolean,
+    val fine: Boolean = false,
+    val block: Int = 0,
+    val blocks: Int = 0,
+    /** Waiting after a run that was cut short, i.e. sitting out WorkManager's
+     *  backoff rather than waiting for WLAN. */
+    val interrupted: Boolean = false,
+)
+
 /** The heatmap raster together with the geometry drawn on top of it.
  *
- *  Named for the state rather than the view, because [HeatmapView] is the
+ *  Named for the state rather than the view, because [HecateMap] is the
  *  composable that draws it. */
 data class HeatmapState(val grid: HeatmapGrid, val routes: List<List<LatLon>>)
 
@@ -402,17 +415,29 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /**
-     * Whether a map prefetch is under way.
+     * The map prefetch, if there is one: waiting, or running and how far.
      *
-     * The same question the clustering banner answers, and asked the same way,
-     * but the answer means something different: a prefetch waits for an
-     * unmetered network, so ENQUEUED here can mean "later tonight" rather than
-     * "in a moment". The card says so.
+     * The two have to be told apart. A prefetch waits for an unmetered network,
+     * so ENQUEUED can mean "later tonight" — but RUNNING means downloading now,
+     * and the card used to say "sobald WLAN da ist" for both, which over an
+     * hour of downloading on WLAN read as being stuck.
      */
-    val mapPrefetching: StateFlow<Boolean> =
+    val mapPrefetch: StateFlow<MapPrefetch?> =
         WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.MAP_PREFETCH)
-            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+            .map { infos ->
+                infos.firstOrNull { it.state == WorkInfo.State.RUNNING }?.let { info ->
+                    val p = info.progress
+                    MapPrefetch(
+                        running = true,
+                        fine = p.getInt(BasemapPrefetchWorker.PROGRESS_STEP, 0) == 1,
+                        block = p.getInt(BasemapPrefetchWorker.PROGRESS_CHUNK, 0),
+                        blocks = p.getInt(BasemapPrefetchWorker.PROGRESS_CHUNKS, 0),
+                    )
+                } ?: infos.firstOrNull { it.state == WorkInfo.State.ENQUEUED }?.let {
+                    MapPrefetch(running = false, interrupted = it.runAttemptCount > 0)
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /** How much OpenStreetMap ground is stored, for the settings card (A.29). */
     val mapStats: StateFlow<TileStore.Stats> = AppGraph.basemap.stats
@@ -555,8 +580,8 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * second tap while a prefetch is waiting for WLAN should leave the waiting
      * one alone, not restart it.
      */
-    fun prefetchMap() = viewModelScope.launch {
-        Jobs.enqueueMapPrefetch(getApplication())
+    fun prefetchMap(restart: Boolean = false) = viewModelScope.launch {
+        Jobs.enqueueMapPrefetch(getApplication(), restart)
         _status.value = "Karte wird im Hintergrund geladen, sobald WLAN da ist"
     }
 

@@ -53,7 +53,7 @@ data class MapView(
      * the box completely.
      *
      * It matters that this covers the canvas *corners* and not the track's own
-     * bounding box. `PolylineView` pads by 16 px and centres what is left, so
+     * bounding box. A track map pads by 16 dp and centres what is left, so
      * there is always ground on screen that the track does not reach — and that
      * ground is exactly where a map is most worth having, because it is where
      * the streets the track did not take are.
@@ -67,7 +67,7 @@ data class MapView(
     companion object {
 
         /**
-         * The fit `PolylineView` has always done: one scale on both axes so the
+         * The fit every map has always had (`HecateMap`, formerly `PolylineView`): one scale on both axes so the
          * shape is the shape of the route, centred in what is left, and padded
          * so the outermost point is not the frame.
          *

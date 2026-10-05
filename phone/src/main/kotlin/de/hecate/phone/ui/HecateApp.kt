@@ -1,5 +1,9 @@
 package de.hecate.phone.ui
 
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.animation.AnimatedVisibility
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -67,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -503,10 +508,10 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
             )
         }
         Spacer(Modifier.height(12.dp))
-        PolylineView(d.geometry, peakHrBpm = peakHr)
+        TrackMapSection(d.geometry, peakHr, Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes))
         ElevationSection(d.elevation, d.elevationStats, peakHr)
-        SpeedSection("Geschwindigkeit", d.speed, d.speedStats, peakHr)
-        HeartRateSection("Herzfrequenz", d.heartRate, d.heartRateStats, peakHr)
+        ChartSection("Geschwindigkeit", d.speed, d.speedStats, ChartKind.SPEED, peakHr)
+        ChartSection("Herzfrequenz", d.heartRate, d.heartRateStats, ChartKind.HEART_RATE, peakHr)
         IntensityLegend(
             d.geometry.any { it.hrBpm != null } ||
                 d.elevation.any { it.hrBpm != null } ||
@@ -526,43 +531,51 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         )
         KeyValue("Quelle", Format.source(d.summary.source))
 
-        Spacer(Modifier.height(16.dp))
-        SectionHeader("Zuordnung")
         KeyValue("Route", d.routeName ?: "keine")
-        KeyValue("Festlegung bei", d.committedAtM?.let { Format.distance(it) } ?: "–")
-        // Both "Festlegung" rows describe what the watch's matcher did during the
-        // recording, so both are blank when it did nothing: an imported session
-        // has no match log, and saying "Spurverlauf" there claimed a decision that
-        // was never made — the route came from the clusterer afterwards.
-        KeyValue(
-            "Festlegung durch",
-            when (d.committedByPriority) {
-                null -> "–"
-                true -> "Priorität"
-                false -> "Spurverlauf"
-            },
-        )
-        KeyValue("Deckung", d.coverage?.let { String.format(java.util.Locale.GERMANY, "%.2f", it) } ?: "–")
-        KeyValue("Match-Log", "${d.matchLogSize} Einträge")
 
-        if (d.matchEvents.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            MonoCard(
-                d.matchEvents.map { e ->
-                    "%6.0fs  %-16s %s".format(e.tOffsetMs / 1000.0, e.event.name, e.routeId?.toString() ?: "")
+        // What the watch's matcher did, and what the recording logged along the
+        // way: worth having when a match looks wrong, and noise the rest of the
+        // time — so it is there, one tap away, and not in the way of the
+        // recording itself.
+        Spacer(Modifier.height(16.dp))
+        CollapsibleSection("Technische Details") {
+            SectionHeader("Zuordnung")
+            KeyValue("Festlegung bei", d.committedAtM?.let { Format.distance(it) } ?: "–")
+            // Both "Festlegung" rows describe what the watch's matcher did during
+            // the recording, so both are blank when it did nothing: an imported
+            // session has no match log, and saying "Spurverlauf" there claimed a
+            // decision that was never made — the route came from the clusterer
+            // afterwards.
+            KeyValue(
+                "Festlegung durch",
+                when (d.committedByPriority) {
+                    null -> "–"
+                    true -> "Priorität"
+                    false -> "Spurverlauf"
                 },
             )
-        }
+            KeyValue("Deckung", d.coverage?.let { String.format(java.util.Locale.GERMANY, "%.2f", it) } ?: "–")
+            KeyValue("Match-Log", "${d.matchLogSize} Einträge")
 
-        if (d.sessionEvents.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            SectionHeader("Verlauf der Aufzeichnung")
-            Spacer(Modifier.height(4.dp))
-            MonoCard(
-                d.sessionEvents.map { e ->
-                    "%6.0fs  %-18s %s".format(e.tOffsetMs / 1000.0, e.type.name, e.note.orEmpty())
-                },
-            )
+            if (d.matchEvents.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                MonoCard(
+                    d.matchEvents.map { e ->
+                        "%6.0fs  %-16s %s".format(e.tOffsetMs / 1000.0, e.event.name, e.routeId?.toString() ?: "")
+                    },
+                )
+            }
+
+            if (d.sessionEvents.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                SectionHeader("Verlauf der Aufzeichnung")
+                Spacer(Modifier.height(4.dp))
+                MonoCard(
+                    d.sessionEvents.map { e ->
+                        "%6.0fs  %-18s %s".format(e.tOffsetMs / 1000.0, e.type.name, e.note.orEmpty())
+                    },
+                )
+            }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -648,7 +661,9 @@ private fun RoutesScreen(vm: HecateViewModel) {
             // which is what you want once you are reading the list itself.
             heatmap?.let { h ->
                 item(key = "heatmap") {
-                    HeatmapCard(h, raster) { expanded = true; vm.openHeatmap() }
+                    MapCard(rememberHeatMap(h, raster), onOpen = { expanded = true; vm.openHeatmap() }) {
+                        Quiet(heatmapCaption(h))
+                    }
                     Spacer(Modifier.height(4.dp))
                 }
             }
@@ -659,45 +674,66 @@ private fun RoutesScreen(vm: HecateViewModel) {
     }
 
     if (expanded) {
-        HeatmapFullScreen(
-            state = full,
+        // A different picture from the card, not an enlargement of it: it
+        // covers every recording the radius filter kept, in whatever shape that
+        // ground is, so its raster is built here and lives only while it is up.
+        val fullMap = full?.let { f -> rememberHeatMap(f, rememberHeatmapRaster(f.grid)) }
+        MapFullScreen(
+            content = fullMap,
+            title = "Alle Aufzeichnungen",
             // The full picture's own numbers, and they differ from the card's:
             // it covers ground the card leaves out, so it leaves less out.
-            caption = full?.let { heatmapCaption(it) } ?: "Wird geladen…",
+            caption = full?.let { heatmapCaption(it) },
             onDismiss = { expanded = false; vm.closeHeatmap() },
         )
     }
 }
 
 /**
- * The heatmap, with a line underneath saying what it is made of, and a tap to
- * see it properly.
+ * A header that opens and closes what is under it, closed to begin with.
  *
- * The caption exists because the radius filter is otherwise invisible: a route
- * that was left out is a route missing from a picture, with nothing to say it
- * was ever considered.
- *
- * The card is a thumbnail — 15 m cells over a town is a raster several thousand
- * cells wide, and a card on a phone shows perhaps a thousand of them. Tapping it
- * opens the full-screen view, where the rest of that resolution is (A.21).
+ * Remembered across recomposition and rotation, not across screens: details
+ * opened on one recording are not a reason to open them on the next.
  */
 @Composable
-private fun HeatmapCard(
-    state: HeatmapState,
-    raster: androidx.compose.ui.graphics.ImageBitmap?,
-    onExpand: () -> Unit,
-) {
-    Card(
-        onClick = onExpand,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+private fun CollapsibleSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { open = !open }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HeatmapView(state.grid, state.routes, raster, Modifier.fillMaxWidth())
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Quiet(heatmapCaption(state))
-            Quiet("Antippen für Vollbild")
-        }
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (open) "Zuklappen" else "Aufklappen",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
+    AnimatedVisibility(open) {
+        Column(Modifier.fillMaxWidth(), content = content)
+    }
+}
+
+/**
+ * A recording's or a route's track as a map card, opening full screen.
+ *
+ * The same card and the same full-screen view as the heatmap on the routes
+ * list: one kind of map in the app, which opens and moves one way.
+ */
+@Composable
+private fun TrackMapSection(points: List<TrackPoint>, peakHr: Int, title: String) {
+    val map = rememberTrackMap(points, peakHr)
+    var open by rememberSaveable { mutableStateOf(false) }
+    MapCard(map, onOpen = { open = true })
+    if (open && map != null) MapFullScreen(map, title = title, caption = null, onDismiss = { open = false })
 }
 
 /** What the picture is made of, in one line — under the card and again under the
@@ -790,12 +826,12 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         }
 
         Spacer(Modifier.height(8.dp))
-        PolylineView(d.geometry, peakHrBpm = peakHr)
+        TrackMapSection(d.geometry, peakHr, d.name)
         ElevationSection(d.elevation, d.elevationStats, peakHr)
         // "Median" in both titles, because that is what a route is: the middle
         // of everything its members did here, not any one ride.
-        SpeedSection("Geschwindigkeit (Median)", d.speed, d.speedStats, peakHr)
-        HeartRateSection("Herzfrequenz (Median)", d.heartRate, d.heartRateStats, peakHr)
+        ChartSection("Geschwindigkeit (Median)", d.speed, d.speedStats, ChartKind.SPEED, peakHr)
+        ChartSection("Herzfrequenz (Median)", d.heartRate, d.heartRateStats, ChartKind.HEART_RATE, peakHr)
         IntensityLegend(
             d.geometry.any { it.hrBpm != null } ||
                 d.elevation.any { it.hrBpm != null } ||
@@ -984,7 +1020,7 @@ private fun SettingsScreen(
 @Composable
 private fun MapCard(vm: HecateViewModel, onImportMap: () -> Unit) {
     val stats by vm.mapStats.collectAsStateWithLifecycle()
-    val prefetching by vm.mapPrefetching.collectAsStateWithLifecycle()
+    val prefetch by vm.mapPrefetch.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
 
     Text("Kartendaten", style = MaterialTheme.typography.titleSmall)
@@ -1008,13 +1044,32 @@ private fun MapCard(vm: HecateViewModel, onImportMap: () -> Unit) {
     Quiet(KarteIndex.ATTRIBUTION)
 
     Spacer(Modifier.height(12.dp))
-    if (prefetching) {
-        // Enqueued is not the same as running here: the job waits for an
-        // unmetered network, so "sobald WLAN da ist" is the honest wording.
+    val running = prefetch
+    if (running != null) {
+        // Waiting and downloading are different things to be told: the job
+        // waits for an unmetered network, and once it has one it can still take
+        // a while — Overpass answers one polite request at a time.
         Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(12.dp))
-            Text("Wird geladen, sobald WLAN da ist…", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                when {
+                    // Two different waits. A job interrupted mid-run — by an app
+                    // update, say — sits out a backoff even with WLAN right
+                    // there, and saying "waiting for WLAN" then is just wrong.
+                    !running.running && running.interrupted -> "Unterbrochen, wird fortgesetzt…"
+                    !running.running -> "Wartet auf WLAN…"
+                    running.blocks == 0 -> "Kartendaten werden geladen…"
+                    else -> "Kartendaten werden geladen · " +
+                        (if (running.fine) "Details" else "Überblick") +
+                        " ${minOf(running.block + 1, running.blocks)}/${running.blocks}"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            if (!running.running) {
+                TextButton(onClick = { vm.prefetchMap(restart = true) }) { Text("Jetzt starten") }
+            }
         }
     } else {
         SettingsAction(
@@ -1191,13 +1246,14 @@ private fun ElevationSection(
     }
     Spacer(Modifier.height(4.dp))
     SectionHeader("Höhenprofil")
-    ElevationView(points, peakHrBpm = peakHrBpm)
-    // Climb and drop first: they are what the ground cost, and the one pair a
-    // rider compares between days. The band underneath says how high up all of
-    // this happened, without which "+240 m" could be a dyke or an alp.
+    // How high up all of this happened — without which "+240 m" could be a
+    // dyke or an alp — is on the chart itself now, at its highest and lowest
+    // points, rather than in a row of its own underneath.
+    Chart(points.asChart(), ChartKind.ELEVATION, peakHrBpm = peakHrBpm)
+    // Climb and drop: what the ground cost, and the one pair a rider compares
+    // between days.
     KeyValue("Aufstieg", Format.elevationSigned(stats.ascentM))
     KeyValue("Abstieg", Format.elevationSigned(-stats.descentM))
-    KeyValue("Höhe", Format.elevationBand(stats.minM, stats.maxM))
     // Only where it says something the two rows above do not: a loop nets zero
     // and the row would be noise, a one-way climb does not.
     if (kotlin.math.abs(stats.netM) >= Tuning.ELEVATION_THRESHOLD_M) {
@@ -1396,51 +1452,34 @@ private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
 }
 
 /**
- * Speed against time, and the range it covered.
+ * A time series under the altitude profile: speed or heart rate against time,
+ * coloured by effort, its highest and lowest points labelled on the line.
  *
  * Under the altitude profile rather than above it, because the ground is what
  * explains the speed: the reader has just seen the hill that the slow stretch is
- * on. Coloured by heart rate for the same reason — 30 km/h in blue is a descent
- * and 30 km/h in orange is work.
+ * on.
  *
- * The line underneath is the *range*, never an average: both screens already
- * carry an average of their own (distance over active time; the route's median
+ * Labels for the extremes, never an average: both screens already carry an
+ * average of their own (distance over active time; the route's median
  * duration), and a second "Ø" computed another way and disagreeing with it by a
  * tenth would be worse than no number at all.
- */
-@Composable
-private fun SpeedSection(
-    title: String,
-    points: List<Timeline.Point>,
-    stats: Timeline.Stats?,
-    peakHrBpm: Int,
-) {
-    if (points.size < 2 || stats == null) return
-    Spacer(Modifier.height(4.dp))
-    SectionHeader(title)
-    SpeedView(points, peakHrBpm = peakHrBpm)
-    Quiet(Format.speedRange(stats.min, stats.max))
-}
-
-/**
- * Heart rate against time, and the range it covered.
  *
- * Absent rather than flat when there is no rate to draw: a recording made
- * without a strap, or a route none of whose members wore one, gets no chart at
- * all. A line at zero would be a claim about a heart.
+ * Absent rather than flat when there is nothing to draw: a recording made
+ * without a strap gets no heart-rate chart at all, because a line at zero would
+ * be a claim about a heart.
  */
 @Composable
-private fun HeartRateSection(
+private fun ChartSection(
     title: String,
     points: List<Timeline.Point>,
     stats: Timeline.Stats?,
+    kind: ChartKind,
     peakHrBpm: Int,
 ) {
     if (points.size < 2 || stats == null) return
     Spacer(Modifier.height(4.dp))
     SectionHeader(title)
-    HeartRateView(points, peakHrBpm = peakHrBpm)
-    Quiet("${Format.hr(stats.min)}–${Format.hr(stats.max)} bpm")
+    Chart(points.asChart(), kind, peakHrBpm = peakHrBpm)
 }
 
 /**

@@ -209,7 +209,7 @@ data class BasemapColors(
             )
         }
 
-        /** For `PolylineView`: water is blue, because nothing else on the
+        /** For track maps (`rememberTrackMap`): water is blue, because nothing else on the
          *  picture is. */
         fun forTrack(dark: Boolean): BasemapColors = base(
             dark,

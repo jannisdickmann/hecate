@@ -168,33 +168,47 @@ class BasemapRepository(
         refreshStats()
     }
 
-    /** Everything the prefetch worker needs, so it holds no store of its own. */
+    /**
+     * Everything the prefetch worker needs, so it holds no store of its own.
+     *
+     * The fetch lock is taken per block, not for the run. A whole prefetch can
+     * take the better part of an hour, and held for all of it, it made every
+     * map opened meanwhile wait for the end before it could fetch its own
+     * ground. And each block is announced as it lands ([generation], [stats])
+     * rather than once at the end, so the maps on screen fill in while the
+     * download runs instead of after it.
+     */
     internal suspend fun fill(level: Level, tiles: List<TileId>, onProgress: (Int, Int) -> Unit): Int {
         var written = 0
-        fetching.withLock {
-            val missing = store.missing(level, tiles)
-            val chunks = FetchPlanner.plan(missing)
-            for ((i, chunk) in chunks.withIndex()) {
-                onProgress(i, chunks.size)
+        val chunks = FetchPlanner.plan(store.missing(level, tiles))
+        for ((i, chunk) in chunks.withIndex()) {
+            onProgress(i, chunks.size)
+            fetching.withLock {
+                // A map on screen may have fetched some of it in the meantime.
+                if (store.missing(level, chunk.tiles).isEmpty()) return@withLock
                 try {
                     val body = client.fetch(OverpassQuery.build(chunk.bounds, level))
                     val result = BasemapBuilder.build(OsmJson.parse(body), level, chunk.tiles)
                     for (tile in result.tiles) store.write(tile)
                     written += result.tiles.size
+                    cache.clear()
+                    _generation.value += 1
                 } catch (e: Exception) {
                     // Every completed tile is already on disk, so a run that
                     // dies half way is resumed rather than restarted.
                     Log.w(TAG, "Vorladen: Block ${i + 1}/${chunks.size} fehlgeschlagen: ${e.message}")
                 }
             }
-            if (written > 0) {
-                cache.clear()
-                asked.clear()
-                store.refreshIndex()
-                _generation.value += 1
-            }
             refreshStats()
         }
+        onProgress(chunks.size, chunks.size)
+        if (written > 0) {
+            fetching.withLock {
+                asked.clear()
+                store.refreshIndex()
+            }
+        }
+        refreshStats()
         return written
     }
 

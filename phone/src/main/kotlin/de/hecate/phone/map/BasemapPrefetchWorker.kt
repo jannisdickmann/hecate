@@ -64,9 +64,7 @@ class BasemapPrefetchWorker(context: Context, params: WorkerParameters) :
         val fine = detailTiles(positions, coarse)
 
         Log.i(TAG, "${regions.size} Regionen, ${coarse.size} grobe und ${fine.size} feine Kacheln")
-        setProgress(progress(0, 2))
         repository.fill(Level.GROB, coarse.toList()) { i, n -> report(0, i, n) }
-        setProgress(progress(1, 2))
         repository.fill(Level.FEIN, fine.toList()) { i, n -> report(1, i, n) }
 
         repository.store.refreshIndex(regions.map { MapRegion.of(it.name, it.bounds) })
@@ -100,16 +98,27 @@ class BasemapPrefetchWorker(context: Context, params: WorkerParameters) :
         return out
     }
 
+    /** Logged, and published for the settings card, which used to say "sobald
+     *  WLAN da ist" for an hour of downloading because it could not tell a job
+     *  that was waiting from one that was running. */
     private fun report(phase: Int, chunk: Int, chunks: Int) {
-        Log.i(TAG, "Vorladen ${if (phase == 0) "grob" else "fein"}: Block ${chunk + 1}/$chunks")
+        val pass = if (phase == 0) "grob" else "fein"
+        Log.i(TAG, if (chunk < chunks) "Vorladen $pass: Block ${chunk + 1}/$chunks" else "Vorladen $pass: fertig")
+        setProgressAsync(
+            Data.Builder()
+                .putInt(PROGRESS_STEP, phase)
+                .putInt(PROGRESS_STEPS, 2)
+                .putInt(PROGRESS_CHUNK, chunk)
+                .putInt(PROGRESS_CHUNKS, chunks)
+                .build(),
+        )
     }
-
-    private fun progress(step: Int, steps: Int): Data =
-        Data.Builder().putInt(PROGRESS_STEP, step).putInt(PROGRESS_STEPS, steps).build()
 
     companion object {
         private const val TAG = "BasemapPrefetch"
         const val PROGRESS_STEP = "step"
         const val PROGRESS_STEPS = "steps"
+        const val PROGRESS_CHUNK = "chunk"
+        const val PROGRESS_CHUNKS = "chunks"
     }
 }

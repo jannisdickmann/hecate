@@ -9,8 +9,16 @@ import de.hecate.core.Tuning
  * than pixels: one tile is read by a route drawing, the heatmap card and the
  * full-screen view, and those have three different projections between them.
  *
- * Not thread-safe by itself; every caller here holds it on one background
- * dispatcher.
+ * Thread-safe. It used to say it did not need to be, because every caller held
+ * it on one background dispatcher — but that dispatcher is a pool, and with a
+ * map card and a full-screen map drawing at once two threads walked the access
+ * order of the same `LinkedHashMap`. The `ConcurrentModificationException` that
+ * followed was caught and logged as an unreadable map, so the map simply was
+ * not drawn: the card showed no streets while the full screen did.
+ *
+ * The lock is held only around the map itself. A tile is read from disk outside
+ * it, so one slow read does not stall every other view; two views missing the
+ * same tile at once both read it, and the second write is the same tile.
  */
 class TileCache(private val maxTiles: Int = Tuning.MAP_TILE_CACHE) {
 
@@ -28,19 +36,23 @@ class TileCache(private val maxTiles: Int = Tuning.MAP_TILE_CACHE) {
      */
     fun get(level: Level, id: TileId, load: (Level, TileId) -> Tile?): Tile? {
         val key = Key(level, id)
-        if (entries.containsKey(key)) return entries[key]
+        synchronized(entries) {
+            if (entries.containsKey(key)) return entries[key]
+        }
         val tile = load(level, id)
-        entries[key] = tile
-        while (entries.size > maxTiles) {
-            val eldest = entries.keys.firstOrNull() ?: break
-            entries.remove(eldest)
+        synchronized(entries) {
+            entries[key] = tile
+            while (entries.size > maxTiles) {
+                val eldest = entries.keys.firstOrNull() ?: break
+                entries.remove(eldest)
+            }
         }
         return tile
     }
 
-    fun clear() = entries.clear()
+    fun clear() = synchronized(entries) { entries.clear() }
 
-    val size: Int get() = entries.size
+    val size: Int get() = synchronized(entries) { entries.size }
 }
 
 /**

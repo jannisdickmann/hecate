@@ -32,18 +32,9 @@ object Format {
         return String.format(DE, "%.1f", kmh)
     }
 
-    /**
-     * "0,0–9,0 km/h", the range a chart covers.
-     *
-     * Not [speed] twice: that renders anything at or below zero as "–", which is
-     * right for an average nobody could compute and wrong for the slowest moment
-     * of a walk. Standing at a junction is a speed, and on a seven-hour hike it
-     * is most of the interesting part of the range.
-     */
-    fun speedRange(minKmh: Double, maxKmh: Double): String {
-        if (!minKmh.isFinite() || !maxKmh.isFinite()) return "–"
-        return String.format(DE, "%.1f–%.1f km/h", minKmh.coerceAtLeast(0.0), maxKmh.coerceAtLeast(0.0))
-    }
+    /** "28,4 km/h", a speed as a chart labels it. Zero is zero, not a dash:
+     *  standing at a light is the slowest a ride was. */
+    fun speedLabel(kmh: Double): String = String.format(DE, "%.1f km/h", kmh.coerceAtLeast(0.0))
 
     /** km/h from a distance and the active time taken over it. */
     fun speedFrom(meters: Double, activeMs: Long): Double? {
@@ -108,10 +99,6 @@ object Format {
         val v = meters.roundToInt()
         return if (v < 0) String.format(DE, "−%d m", -v) else String.format(DE, "+%d m", v)
     }
-
-    /** "412–652 m", the band the route lives in. */
-    fun elevationBand(minM: Double, maxM: Double): String =
-        String.format(DE, "%d–%d m", minM.roundToInt(), maxM.roundToInt())
 
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
 

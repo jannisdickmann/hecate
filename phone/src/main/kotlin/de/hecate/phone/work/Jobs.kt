@@ -45,10 +45,15 @@ object Jobs {
      * that is not low, and it is resumable, because every completed tile is
      * already on disk.
      */
-    fun enqueueMapPrefetch(context: Context) {
+    fun enqueueMapPrefetch(context: Context, restart: Boolean = false) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             MAP_PREFETCH,
-            ExistingWorkPolicy.KEEP,
+            // KEEP by default, so a second tap leaves a waiting job alone.
+            // REPLACE when the user asks for it now: a job that was interrupted
+            // — by an app update, say — sits out a 15-minute backoff before it
+            // runs again, with WLAN right there. Replacing it costs nothing,
+            // since a prefetch only ever fetches what is still missing.
+            if (restart) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<BasemapPrefetchWorker>()
                 .setConstraints(
                     Constraints.Builder()

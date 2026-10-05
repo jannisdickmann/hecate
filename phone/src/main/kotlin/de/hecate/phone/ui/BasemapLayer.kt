@@ -255,7 +255,15 @@ fun DrawScope.drawBasemap(
                 topLeft = topLeft,
                 drawStyle = Stroke(width = haloPx, join = StrokeJoin.Round, cap = StrokeCap.Round),
             )
-            drawText(layout, color = colors.label, topLeft = topLeft)
+            // Fill said explicitly: the halo's stroke stays on the layout's
+            // paint, and a pass that does not override it strokes the name
+            // too — which is what made every label look bold and smudged.
+            drawText(
+                layout,
+                color = colors.label,
+                topLeft = topLeft,
+                drawStyle = androidx.compose.ui.graphics.drawscope.Fill,
+            )
         }
     }
 }
