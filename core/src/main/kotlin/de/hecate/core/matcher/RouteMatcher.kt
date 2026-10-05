@@ -55,9 +55,12 @@ class RouteMatcher(
         var offsetM: Double = Double.MAX_VALUE,
         /** Travel accumulated while this route was neither near nor tracking. */
         var unseenM: Double = 0.0,
-        /** Smoothed advance along this route per metre actually travelled.
-         *  About 1 while the route is being followed, about -1 for its reverse. */
+        /** Advance along this route per metre actually covered, over the last
+         *  [Tuning.TRACK_RATIO_WINDOW_M] of travel ([trail]). About 1 while the
+         *  route is being followed, about -1 for its reverse. */
         var trackRatio: Double = 1.0,
+        /** Recent (travelled, position, place) triples the ratio is read off. */
+        val trail: ArrayDeque<TrailPoint> = ArrayDeque(),
         /** How far the position has run backwards along the route since it last
          *  stood at its furthest. See [Tuning.BRANCH_SWITCH_RETREAT_M]. */
         var retreatM: Double = 0.0,
@@ -68,6 +71,8 @@ class RouteMatcher(
     ) {
         val routeId: Long get() = entry.geometry.routeId
     }
+
+    private class TrailPoint(val travelledM: Double, val positionM: Double, val at: LatLon)
 
     /** Candidates by route id, iterated in ascending id order for determinism. */
     private val cands = LinkedHashMap<Long, Cand>()
@@ -250,15 +255,11 @@ class RouteMatcher(
 
             var switched = false
             if (previousPos >= 0.0 && p != null && !dropout) {
-                if (step > 0.5) {
-                    val ratio = ((hit.positionM - previousPos) / step).coerceIn(-2.0, 2.0)
-                    c.trackRatio = Tuning.TRACK_RATIO_SMOOTHING * c.trackRatio +
-                        (1 - Tuning.TRACK_RATIO_SMOOTHING) * ratio
-                }
+                updateTrackRatio(c, hit.positionM, here)
                 c.retreatM = (c.retreatM - (hit.positionM - previousPos)).coerceAtLeast(0.0)
-                // Both: far enough back, and going backwards as a habit rather
-                // than once. A GNSS spike forwards and back leaves a drawdown of
-                // its own size but only dents the smoothed ratio.
+                // Both: far enough back, and going backwards over the whole
+                // ratio window rather than once. A GNSS spike forwards and back
+                // leaves a drawdown of its own size but covers no distance.
                 if (c.retreatM >= Tuning.BRANCH_SWITCH_RETREAT_M &&
                     c.trackRatio < Tuning.BRANCH_SWITCH_MAX_RATIO
                 ) {
@@ -273,6 +274,13 @@ class RouteMatcher(
             if (switched) {
                 c.trackRatio = 1.0
                 c.retreatM = 0.0
+            }
+            // A position that did not come from following the route — the
+            // first, one after a dropout, one on the other leg — starts the
+            // trail afresh: progress measured across it would be the jump.
+            if (previousPos < 0.0 || dropout || switched) {
+                c.trail.clear()
+                c.trail.addLast(TrailPoint(travelledM, hit.positionM, here))
             }
             if (previousPos < 0.0) anchor(c, hit)
             c.positionM = hit.positionM
@@ -313,6 +321,42 @@ class RouteMatcher(
     // ------------------------------------------------------------------ internals
 
     private fun clampLL(x: Double): Double = max(-Tuning.MAX_ABS_LOG_LIK, x)
+
+    /**
+     * Whether the user is following this route forwards: progress along it over
+     * the last [Tuning.TRACK_RATIO_WINDOW_M] of travel, divided by the straight
+     * distance actually covered in that time.
+     *
+     * It used to be progress per step, smoothed — progress divided by the path
+     * the fixes traced. Both halves of that broke on real walks. Round a U-turn
+     * the projection snaps a few metres ahead to the far side of the bend and
+     * then creeps back while the user walks the bend, and five such steps put a
+     * route the user never left below [Tuning.MIN_TRACKING_RATIO]. A GNSS spike
+     * out and back adds fifty metres of path and no progress at all. Over a
+     * window both come out in the wash: the bend is progress, and a spike that
+     * returns covers no distance. A route walked the wrong way is still -1.
+     *
+     * Standing still, or nearly, the distance covered is too small to divide by
+     * ([Tuning.TRACK_RATIO_MIN_DISPLACEMENT_M]), and the last reading stands;
+     * likewise at the finish ([Tuning.FINISH_HOLD_M]).
+     */
+    private fun updateTrackRatio(c: Cand, positionM: Double, here: LatLon) {
+        // At the finish there is nowhere further along to go: the position
+        // stands at the route's end while the user walks the last metres to
+        // the door, and read as progress that is "not following". Every walk
+        // used to be demoted in its final seconds that way.
+        if (positionM >= c.poly.lengthM - Tuning.FINISH_HOLD_M) return
+        val trail = c.trail
+        trail.addLast(TrailPoint(travelledM, positionM, here))
+        while (trail.size > 2 && travelledM - trail[1].travelledM >= Tuning.TRACK_RATIO_WINDOW_M) {
+            trail.removeFirst()
+        }
+        val from = trail.first()
+        if (travelledM - from.travelledM < Tuning.TRACK_RATIO_WINDOW_M) return
+        val covered = Geo.haversine(from.at, here)
+        if (covered < Tuning.TRACK_RATIO_MIN_DISPLACEMENT_M) return
+        c.trackRatio = ((positionM - from.positionM) / covered).coerceIn(-2.0, 2.0)
+    }
 
     /**
      * Active time between two consecutive samples the matcher consumed.
@@ -428,6 +472,8 @@ class RouteMatcher(
             c.offsetM = hit.distanceM
             c.trackRatio = 1.0
             c.retreatM = 0.0
+            c.trail.clear()
+            c.trail.addLast(TrailPoint(travelledM, hit.positionM, here))
             c.logW = ln(Tuning.REENTRY_WEIGHT)
             admitted = true
             logRaw(MatchEvent.ADMIT, id)
@@ -542,6 +588,16 @@ class RouteMatcher(
                 // so it is re-decided for as long as the tie exists.
                 committedByPriority && contenders.size > 1 ->
                     winner?.routeId == committedRouteId
+                // A commitment the evidence earned holds for as long as its
+                // route is still one of the routes the user could be on. On
+                // ground two routes share they explain every sample alike, the
+                // old evidence decays, the weights drift back to a half each,
+                // and the weight rule below demoted a correct commitment half
+                // way through every commute that shares its middle with
+                // another — about half of each ride. Only the geometry
+                // separating them again can say anything new, and then the
+                // route the user is not on stops being a contender.
+                contenders.size > 1 -> contenders.any { it.routeId == committedRouteId }
                 // Everything else holds on the ordinary weight rule with its
                 // hysteresis — including when routes converge again at a shared
                 // finish. Three kilometres of accumulated evidence is exactly

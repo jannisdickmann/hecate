@@ -361,6 +361,32 @@ class MatcherTest {
     }
 
     @Test
+    fun `a commitment holds through a long stretch shared with another route`() {
+        // The commute: two ways out of town that join for three kilometres in the
+        // middle and part again at the end. Committed before the shared stretch,
+        // the matcher used to let go half way along it, as the old evidence
+        // decayed and the two weights drifted back to a half each.
+        val a = Synthetic.path(listOf(Synthetic.at(0.0, 0.0), Synthetic.at(1000.0, 0.0), Synthetic.at(1000.0, 500.0), Synthetic.at(4000.0, 500.0), Synthetic.at(4000.0, 1500.0)))
+        val b = Synthetic.path(listOf(Synthetic.at(0.0, 0.0), Synthetic.at(0.0, 500.0), Synthetic.at(4000.0, 500.0), Synthetic.at(4000.0, -500.0)))
+        val sessions = buildList {
+            repeat(3) { add(Synthetic.record("a$it", a, day(it), seed = 70 + it)) }
+            repeat(3) { add(Synthetic.record("b$it", b, day(10 + it), seed = 80 + it)) }
+        }
+        val bundle = BundleBuilder.bundleFrom(sessions.mapNotNull { Track.of(it) }, sessions.associate { it.id to it.samples })
+        assertEquals(2, bundle.routes.size)
+
+        val states = replay(Synthetic.record("today", a, day(75), seed = 1012), bundle)
+        val firstCommit = states.indexOfFirst { it.phase == MatchPhase.COMMITTED }
+        assertTrue(firstCommit >= 0 && states[firstCommit].travelledM < 1500.0, "never committed before the shared stretch")
+        val routeA = states[firstCommit].committedRouteId
+        val afterwards = states.drop(firstCommit)
+        assertTrue(
+            afterwards.all { it.phase == MatchPhase.COMMITTED && it.committedRouteId == routeA },
+            "let go at ${afterwards.firstOrNull { it.phase != MatchPhase.COMMITTED }?.travelledM?.toInt()} m",
+        )
+    }
+
+    @Test
     fun `a biking session ignores running routes`() {
         val b = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(71), seed = 1008, type = ExerciseType.BIKING)

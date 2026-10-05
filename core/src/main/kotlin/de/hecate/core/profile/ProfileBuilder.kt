@@ -144,10 +144,23 @@ object ProfileBuilder {
                 lost = true
             }
             val p: LatLon = track.points[i]
-            val hit = if (lost) {
+            var hit = if (lost) {
                 geometry.localise(p, lastPos.coerceAtLeast(0.0), Tuning.LOCALISE_TIE_M)
             } else {
                 geometry.projectWindow(p, lastPos, lastPos + Tuning.SEARCH_WINDOW_M)
+            }
+            // Off the route within reach of the window: either the member is on
+            // a stretch of its own, or it has come back further along than the
+            // window looks. Looked for over the rest of the route, forwards
+            // only. Without this a member that took a variant for a few hundred
+            // metres was never found again until the next GPS gap — one commute
+            // was timed for its first 830 m of 17 km, and every member lost
+            // like that left the median over the bins after it to a different
+            // set of riders, which is what put 40–100 s steps into the last few
+            // hundred metres of every commute route.
+            if (!lost && hit.distanceM > Tuning.CLUSTER_TOL_M * 2) {
+                val rejoined = geometry.localise(p, lastPos, Tuning.LOCALISE_TIE_M, minM = lastPos)
+                if (rejoined.distanceM <= Tuning.CLUSTER_TOL_M * 2) hit = rejoined
             }
             if (hit.distanceM > Tuning.CLUSTER_TOL_M * 2) continue
             val pos = if (lost) hit.positionM else maxOf(hit.positionM, lastPos)
@@ -173,7 +186,50 @@ object ProfileBuilder {
         // step: the profile of "Arbeit zurück" rose 89 s within one bin, and
         // ahead/behind with it.
         fillInterior(times)
+        extendEnds(times, (Tuning.PROFILE_END_EXTEND_M / binM).toInt())
         return MemberCurve(times, hrs, alts)
+    }
+
+    /**
+     * Carry a member that stopped just short of the route's end — or started
+     * just past its start — the rest of the way, at its own pace.
+     *
+     * The route's ends are wherever its reference ride happened to start and
+     * stop recording, and every other member starts and stops a few metres
+     * either side. Left alone, the last bins were reached only by the members
+     * that stopped furthest along, and on one commute that was the two slowest
+     * of seven: the median rose 157 s over the final 10 m. The first bins had
+     * the same problem the other way round.
+     *
+     * At the end, the missing bins are extrapolated at the pace of the member's
+     * last [maxBins] reached. At the start, the whole curve moves later by the
+     * time the member would have taken over the bins it did not record, so time
+     * is measured from the route's start for everyone — the profile's version
+     * of measuring a live workout from where the user joined. Only within
+     * [maxBins] of either end: a member that is missing more than that did not
+     * ride that part, and says nothing about it.
+     */
+    internal fun extendEnds(v: DoubleArray, maxBins: Int) {
+        val first = v.indexOfFirst { !it.isNaN() }
+        val last = v.indexOfLast { !it.isNaN() }
+        if (first < 0 || last - first < 2) return
+
+        val tailMissing = v.size - 1 - last
+        if (tailMissing in 1..maxBins) {
+            val from = maxOf(first, last - maxBins)
+            val pace = (v[last] - v[from]) / (last - from)
+            if (pace > 0.0) for (k in 1..tailMissing) v[last + k] = v[last] + pace * k
+        }
+
+        if (first in 1..maxBins) {
+            val to = minOf(last, first + maxBins)
+            val pace = (v[to] - v[first]) / (to - first)
+            if (pace > 0.0) {
+                val shift = pace * first - v[first]
+                for (i in first..v.lastIndex) if (!v[i].isNaN()) v[i] += shift
+                for (i in 0 until first) v[i] = pace * i
+            }
+        }
     }
 
     /** Linear interpolation over NaN runs between known values; the ends are left

@@ -68,10 +68,10 @@ object Tuning {
      *  reached in about twenty seconds of walking. */
     const val BRANCH_SWITCH_RETREAT_M: Double = 30.0
 
-    /** ...and the smoothed advance per metre travelled has to be below this:
-     *  net backwards, sample after sample. One GNSS spike forwards and back
-     *  costs a drawdown the size of the spike but cannot bring the ratio under
-     *  zero on its own; following the wrong leg does so within ten samples. */
+    /** ...and the candidate's advance per metre covered ([TRACK_RATIO_WINDOW_M])
+     *  has to be below this: net backwards over the whole window, not once. A
+     *  GNSS spike forwards and back costs a drawdown the size of the spike but
+     *  covers no distance; following the wrong leg reads as -1. */
     const val BRANCH_SWITCH_MAX_RATIO: Double = 0.0
 
     /** Uncertainty [m] in how far along a route one sample interval should have
@@ -85,10 +85,22 @@ object Tuning {
     const val ADVANCE_SIGMA_M: Double = 5.0
     const val ADVANCE_SIGMA_FRACTION: Double = 0.3
 
-    /** Smoothing applied to a candidate's advance-per-travelled-metre ratio.
-     *  ~10 samples of memory: long enough to see through GNSS jitter, short
-     *  enough to notice within a few seconds that a candidate stopped tracking. */
-    const val TRACK_RATIO_SMOOTHING: Double = 0.90
+    /** How much travel [m] a candidate's advance-per-metre ratio is read over.
+     *  Long enough that a U-turn's few metres of projection creeping back, or a
+     *  GNSS spike out and back, are a small part of it; short enough that a
+     *  route run the wrong way is rejected within half a minute of walking and a
+     *  few seconds of riding. */
+    const val TRACK_RATIO_WINDOW_M: Double = 40.0
+
+    /** Below this straight-line distance [m] covered across the window the ratio
+     *  is not read at all: it would be a few metres of jitter divided by a few
+     *  more, which is a random number. */
+    const val TRACK_RATIO_MIN_DISPLACEMENT_M: Double = 15.0
+
+    /** Within this distance [m] of a route's end the advance ratio is not read:
+     *  the position cannot advance past the finish, and walking the last metres
+     *  to the door is not leaving the route. */
+    const val FINISH_HOLD_M: Double = 30.0
 
     /** Below this smoothed ratio a candidate is not considered to be tracking at
      *  all. A route being followed reads about 1.0; a route being run backwards
@@ -229,6 +241,13 @@ object Tuning {
      *  this fraction of its length from its start. Further along it is far
      *  more likely the way back, found at its finish beside the front door. */
     const val JOIN_ANCHOR_MAX_FRACTION: Double = 0.5
+
+    /** A route member that starts or stops recording within this distance [m]
+     *  of the route's own start or end is carried the rest of the way at its
+     *  own pace when the profile is built (`ProfileBuilder.extendEnds`), so the
+     *  first and last bins are medians over everybody rather than over whoever
+     *  happened to start earliest or stop latest. */
+    const val PROFILE_END_EXTEND_M: Double = 100.0
 
     /** Clamp on the observed-vs-median pace ratio k used for the ETA. A ratio
      *  outside this range is a measurement problem, not a performance. */

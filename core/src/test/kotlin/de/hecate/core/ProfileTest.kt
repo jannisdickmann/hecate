@@ -67,6 +67,51 @@ class ProfileTest {
     }
 
     @Test
+    fun `members that stop a few metres apart do not put a step into the finish`() {
+        // Everybody stops recording somewhere near the door, and the route ends
+        // wherever its reference ride did. Only the slowest of seven riders
+        // reaching the last bins put a 157 s step into a real commute's finish.
+        val day = Synthetic.DAY_MS
+        fun ending(shortM: Double) = Synthetic.path(
+            listOf(Synthetic.at(0.0, 0.0), Synthetic.at(2000.0, 0.0), Synthetic.at(2000.0, 1500.0), Synthetic.at(3000.0 - shortM, 1500.0)),
+        )
+        val tracks = listOf(
+            Track.of(Synthetic.record("fast", ending(40.0), Synthetic.MONDAY_0730_UTC, speedMps = 4.0, seed = 1))!!,
+            Track.of(Synthetic.record("mid", ending(20.0), Synthetic.MONDAY_0730_UTC + day, speedMps = 3.0, seed = 2))!!,
+            Track.of(Synthetic.record("slow", ending(0.0), Synthetic.MONDAY_0730_UTC + 2 * day, speedMps = 2.0, seed = 3))!!,
+        )
+        val prof = BundleBuilder.computeRoutes(tracks, minMembers = 3)[0].profile
+        val worst = (prof.size - 10 until prof.size).maxOf { prof[it] - prof[it - 1] }
+        assertTrue(worst < 8.0, "the median steps by $worst s in the last 100 m")
+    }
+
+    @Test
+    fun `a member that leaves the route for a while is timed again once it is back`() {
+        // A 400 m variant around a block, then back on the route and on to the
+        // end. It used to be lost for good at the variant: the projection only
+        // looked 150 m ahead of where it last matched.
+        val route = de.hecate.core.geo.Polyline.of(Synthetic.workRoute)
+        val variant = Track.of(
+            Synthetic.record(
+                "variant",
+                Synthetic.path(
+                    listOf(
+                        Synthetic.at(0.0, 0.0), Synthetic.at(800.0, 0.0), Synthetic.at(800.0, -200.0),
+                        Synthetic.at(1200.0, -200.0), Synthetic.at(1200.0, 0.0), Synthetic.at(2000.0, 0.0),
+                        Synthetic.at(2000.0, 1500.0), Synthetic.at(3000.0, 1500.0),
+                    ),
+                ),
+                Synthetic.MONDAY_0730_UTC,
+                seed = 4,
+            ),
+        )!!
+        val bins = (route.lengthM / 10.0).toInt() + 1
+        val curve = ProfileBuilder.memberCurve(route, variant, bins, 10.0, null)
+        val reached = curve.timesS.count { !it.isNaN() }
+        assertTrue(reached > bins * 0.95, "timed over only $reached of $bins bins")
+    }
+
+    @Test
     fun `gaps are interpolated`() {
         val v = doubleArrayOf(Double.NaN, 10.0, Double.NaN, Double.NaN, 40.0, Double.NaN)
         ProfileBuilder.fillGaps(v)
