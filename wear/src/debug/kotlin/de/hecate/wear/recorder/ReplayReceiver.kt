@@ -34,6 +34,12 @@ class ReplayReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_REPLAY -> begin(context, intent)
             ACTION_REPLAY_STOP -> RecorderService.command(context, RecorderService.ACTION_STOP)
+            // The phone's acknowledgement, for emulators that have no paired
+            // phone to send one: confirms the session the end-of-recording
+            // screen is waiting for, through the same path a real ack takes.
+            ACTION_FAKE_ACK -> de.hecate.wear.AppGraph.recorder.state.value.handoff?.let {
+                de.hecate.wear.AppGraph.uploader.onAck(it.sessionId)
+            }
             else -> Log.w(TAG, "Unbekannte Aktion: ${intent.action}")
         }
     }
@@ -83,6 +89,7 @@ class ReplayReceiver : BroadcastReceiver() {
 
         const val ACTION_REPLAY = "de.hecate.wear.REPLAY"
         const val ACTION_REPLAY_STOP = "de.hecate.wear.REPLAY_STOP"
+        const val ACTION_FAKE_ACK = "de.hecate.wear.FAKE_ACK"
         const val EXTRA_FILE = "file"
         const val EXTRA_SPEED = "speed"
 

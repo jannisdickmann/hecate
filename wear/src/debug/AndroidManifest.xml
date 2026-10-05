@@ -18,6 +18,7 @@
             <intent-filter>
                 <action android:name="de.hecate.wear.REPLAY" />
                 <action android:name="de.hecate.wear.REPLAY_STOP" />
+                <action android:name="de.hecate.wear.FAKE_ACK" />
             </intent-filter>
         </receiver>
     </application>

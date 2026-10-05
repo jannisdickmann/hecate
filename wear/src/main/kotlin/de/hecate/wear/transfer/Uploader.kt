@@ -75,7 +75,16 @@ class Uploader(
     /** Called when the phone confirms the session is in its database (US-2). */
     fun onAck(sessionId: String) {
         sessions.markAcked(sessionId)
-        AppGraph.recorder.update { it.copy(pendingUploads = sessions.unacked().size) }
+        AppGraph.recorder.update {
+            it.copy(
+                pendingUploads = sessions.unacked().size,
+                // The confirmation the end-of-recording screen is waiting for.
+                handoff = it.handoff
+                    ?.takeIf { h -> h.sessionId == sessionId && !h.confirmed }
+                    ?.copy(confirmed = true, confirmedAtMs = System.currentTimeMillis())
+                    ?: it.handoff,
+            )
+        }
         // Drop the now-redundant data item so the Data Layer does not keep it.
         runCatching {
             Wearable.getDataClient(context).deleteDataItems(

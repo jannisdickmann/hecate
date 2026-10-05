@@ -21,6 +21,8 @@ import de.hecate.core.Tuning
 import de.hecate.core.display.RouteBelief
 import de.hecate.core.display.RouteBeliefKind
 import de.hecate.core.display.routeBelief
+import de.hecate.core.display.HeadingUp
+import de.hecate.core.geo.LatLon
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchState
@@ -100,6 +102,8 @@ class RecorderService : Service() {
     private var autoStopVerdict: AutoStopVerdict? = null
     private var lastState: MatchState? = null
     private var routeNames: Map<Long, String> = emptyMap()
+    /** Each route's shape for the map page, read once with the bundle. */
+    private var routeShapes: Map<Long, List<LatLon>> = emptyMap()
     private var lastNotificationUpdateMs = 0L
     private var sawFirstLocation = false
     private var samplesWritten = 0
@@ -261,6 +265,10 @@ class RecorderService : Service() {
 
         val bundle = AppGraph.bundles.load()
         routeNames = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+        routeShapes = bundle.routes.associate { r ->
+            r.geometry.routeId to r.geometry.points.map { LatLon(it.lat, it.lon) }
+        }
+        bus.update { it.copy(trail = emptyList(), followedRoute = null) }
 
         if (replay == null) {
             val w = SessionWriter(AppGraph.sessions.fileFor(id))
@@ -586,6 +594,13 @@ class RecorderService : Service() {
         Haptics.tick(this)
         // A replay produced no file, so there is nothing new to offer the phone
         // and no reason to wake the Data Layer on its account.
+        // Watched from the start screen until the phone confirms it (or the user
+        // stops watching). Set before the upload starts, so a phone quick enough
+        // to acknowledge while uploadPending is still running cannot confirm a
+        // handoff that does not exist yet.
+        if (!replaying && !empty) {
+            bus.update { it.copy(handoff = Handoff(id, startedAtMs = System.currentTimeMillis())) }
+        }
         if (!replaying) AppGraph.uploader.uploadPending()
         bus.reset()
         bus.update { it.copy(pendingUploads = AppGraph.sessions.unacked().size) }
@@ -1022,6 +1037,13 @@ class RecorderService : Service() {
     private fun onSample(sample: Sample) {
         writer?.writeSample(sample)
         samplesWritten++
+        // The map page's own track. Usable fixes only: a 200 m error ellipse
+        // drawn as a zig-zag across the face is exactly the deviation the page
+        // exists to show, and it would not be one.
+        if (sample.usable) {
+            val fix = LatLon(sample.lat, sample.lon)
+            bus.update { it.copy(trail = HeadingUp.extend(it.trail, fix)) }
+        }
         // The two facts the health line is made of, both wall-clock because the
         // user's question is "how long has this been going on". The fix age is
         // taken from a sample that actually passed [Sample.usable] rather than
@@ -1089,9 +1111,22 @@ class RecorderService : Service() {
         val arrival = state.etaSecondsFromNow
             ?.takeIf { it.isFinite() && it >= 0 }
             ?.let { System.currentTimeMillis() + (it * 1000).toLong() }
+        // The route the numbers are about is the route the map draws: the
+        // commitment, or the leader while the headline names it as a guess.
+        val followedId = state.committedRouteId
+            ?: state.leaderRouteId?.takeIf { belief.hasRoute }
         bus.update {
+            val followed = when {
+                followedId == null -> null
+                it.followedRoute?.routeId == followedId &&
+                    it.followedRoute.assumed == (state.committedRouteId == null) -> it.followedRoute
+                else -> routeShapes[followedId]?.let { pts ->
+                    FollowedRoute(followedId, pts, assumed = state.committedRouteId == null)
+                }
+            }
             it.copy(
                 belief = belief,
+                followedRoute = followed,
                 remainingM = if (belief.hasRoute) state.remainingM else null,
                 arrivalAtUtcMs = if (belief.hasRoute) arrival else null,
                 progressFraction = if (belief.hasRoute) state.progressFraction else null,

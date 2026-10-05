@@ -995,4 +995,43 @@ object Tuning {
      *  about a quarter degree — 500 km² here — the public instances start
      *  timing out rather than answering slowly. */
     const val MAP_MAX_CHUNK_DEG: Double = 0.25
+
+    // ------------------------------------------------------------ watch map
+
+    /**
+     * How much ground the watch's map page shows: metres from the centre of the
+     * face to its edge, fixed per sport.
+     *
+     * Fixed rather than fitted, because the page is read at a glance and a scale
+     * that changed under the user would make the same deviation look different
+     * from one minute to the next. Chosen so the next minute or so of travel is
+     * on the face — enough to see a turn coming and to see a few metres of
+     * drift from the route line, which at this scale is a visible gap.
+     */
+    fun watchMapRadiusM(type: ExerciseType): Double = when (type) {
+        ExerciseType.WALKING -> 150.0
+        ExerciseType.HIKING -> 200.0
+        ExerciseType.RUNNING -> 250.0
+        ExerciseType.BIKING -> 600.0
+        ExerciseType.SKIING -> 800.0
+    }
+
+    /** Path [m] the direction of travel is read over (`HeadingUp.heading`):
+     *  long enough to see through GNSS jitter at the sport's pace, short enough
+     *  that the map has turned by the time the user has rounded a corner. */
+    fun headingLookbackM(type: ExerciseType): Double = when (type) {
+        ExerciseType.WALKING, ExerciseType.HIKING -> 25.0
+        ExerciseType.RUNNING -> 35.0
+        ExerciseType.BIKING, ExerciseType.SKIING -> 70.0
+    }
+
+    /** Share of the way the map turns towards a new direction per update, about
+     *  once a second: a corner takes a few seconds to come round, a wobble does
+     *  not move it. */
+    const val HEADING_SMOOTHING: Double = 0.35
+
+    /** The watch keeps at most this many recent positions for the map page,
+     *  each at least [WATCH_TRAIL_MIN_SPACING_M] from the last. */
+    const val WATCH_TRAIL_MAX_POINTS: Int = 600
+    const val WATCH_TRAIL_MIN_SPACING_M: Double = 3.0
 }

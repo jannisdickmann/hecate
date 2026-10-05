@@ -1,6 +1,7 @@
 package de.hecate.wear.recorder
 
 import de.hecate.core.display.RouteBelief
+import de.hecate.core.geo.LatLon
 import de.hecate.core.display.RouteBeliefKind
 import de.hecate.core.model.ExerciseType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +76,14 @@ data class RecorderUiState(
     val offRoute: Boolean = false,
     val matcherDisabled: Boolean = false,
 
+    // The map page
+    /** The route the numbers above are about, as a shape to draw: the
+     *  commitment, or the leader while it is named provisionally. */
+    val followedRoute: FollowedRoute? = null,
+    /** The user's own recent positions, thinned and bounded
+     *  (`HeadingUp.extend`), oldest first. */
+    val trail: List<LatLon> = emptyList(),
+
     // Health
     val gpsReady: Boolean = false,
     /** Health Services has explicitly reported the fix gone (ACQUIRING or
@@ -98,6 +107,10 @@ data class RecorderUiState(
 
     // Housekeeping
     val pendingUploads: Int = 0,
+    /** The session that just ended, on its way to the phone. Outlives the
+     *  session (see [RecorderBus.reset]) because its whole job is to report on
+     *  something that happens after it. */
+    val handoff: Handoff? = null,
     val bundleVersion: Long = 0,
     val message: String? = null,
     /** Set while a stored session is being replayed instead of recorded (§6.5).
@@ -110,6 +123,26 @@ data class RecorderUiState(
 ) {
     val isRecording: Boolean get() = phase == RecorderPhase.ACTIVE || phase == RecorderPhase.PAUSED
 }
+
+/** A route as the map page draws it. [assumed] is true while it is only the
+ *  leading candidate, which the page draws fainter. */
+data class FollowedRoute(val routeId: Long, val points: List<LatLon>, val assumed: Boolean)
+
+/**
+ * A finished recording on its way to the phone.
+ *
+ * [confirmed] is the phone's own acknowledgement that the session is in its
+ * database — not that the Data Layer accepted it, which says nothing about
+ * whether the phone ever will. [dismissed] means the user has stopped watching;
+ * the transfer itself goes on regardless, as it always has.
+ */
+data class Handoff(
+    val sessionId: String,
+    val startedAtMs: Long,
+    val confirmed: Boolean = false,
+    val confirmedAtMs: Long = 0,
+    val dismissed: Boolean = false,
+)
 
 /**
  * The single place the service publishes to and the UI reads from.
@@ -139,6 +172,7 @@ class RecorderBus {
         val was = _state.value
         _state.value = RecorderUiState(
             pendingUploads = was.pendingUploads,
+            handoff = was.handoff,
             bundleVersion = was.bundleVersion,
             message = was.message,
             messageAtMs = was.messageAtMs,

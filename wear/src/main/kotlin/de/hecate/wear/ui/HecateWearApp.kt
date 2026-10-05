@@ -115,6 +115,7 @@ fun HecateWearApp() {
                 RecordingPager(state)
             } else {
                 StartScreen(state)
+                HandoffOverlay(state.handoff)
             }
         }
     }
@@ -240,7 +241,10 @@ private val ExerciseType.iconRes: Int
 
 @Composable
 private fun RecordingPager(state: RecorderUiState) {
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    // Map on the left, controls on the right, and the live page in the middle
+    // where a recording opens: the two things you look at while moving are one
+    // swipe either side of each other, and Beenden stays where it always was.
+    val pagerState = rememberPagerState(initialPage = PAGE_LIVE, pageCount = { 3 })
     // HorizontalPagerScaffold supplies the curved page indicator, which fades
     // itself out once you stop paging — the hand-rolled dots it replaces were
     // always on, eating pixels the numbers now use.
@@ -248,13 +252,17 @@ private fun RecordingPager(state: RecorderUiState) {
         HorizontalPager(state = pagerState) { page ->
             AnimatedPage(pageIndex = page, pagerState = pagerState) {
                 when (page) {
-                    0 -> LivePage(state)
+                    PAGE_MAP -> MapPage(state)
+                    PAGE_LIVE -> LivePage(state)
                     else -> ControlPage(state)
                 }
             }
         }
     }
 }
+
+private const val PAGE_MAP = 0
+private const val PAGE_LIVE = 1
 
 // ------------------------------------------------------------ size adaptation
 
@@ -274,7 +282,7 @@ private fun RecordingPager(state: RecorderUiState) {
  * for other entries in the numeral scale: one style is known to fit this layout
  * on both faces, and a size on it is a change this file can reason about.
  */
-private data class LiveLayout(
+internal data class LiveLayout(
     val large: Boolean,
     val arcStroke: Dp,
     val arcInset: Dp,
@@ -290,7 +298,7 @@ private data class LiveLayout(
 )
 
 @Composable
-private fun rememberLiveLayout(): LiveLayout {
+internal fun rememberLiveLayout(): LiveLayout {
     val large = LocalConfiguration.current.screenWidthDp >= LARGE_SCREEN_DP
     val numeral = MaterialTheme.typography.numeralSmall
     return LiveLayout(
@@ -652,7 +660,7 @@ private const val MIN_METRIC_SP = 16f
  * empty says "no route yet", a bar that is absent says nothing at all.
  */
 @Composable
-private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
+internal fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
     // Progress needs one specific route — it is a position along that route.
     // The delta does not: it is pooled across whatever the matcher is still
     // weighing, so the right-hand bar keeps working while the left one waits.
