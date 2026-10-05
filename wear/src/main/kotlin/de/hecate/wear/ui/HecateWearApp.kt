@@ -138,6 +138,15 @@ private fun StartScreen(state: RecorderUiState) {
         value = withContext(Dispatchers.IO) { AppGraph.bundles.load() }
     }
     val types = bundle?.typesByFrequency() ?: ExerciseType.entries.toList()
+    // The clock the footer's "vor 45 Min." is read against, ticking once a
+    // minute: read once at composition, it froze at whatever it said when the
+    // screen came up, and the start screen can stay up a long time.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            kotlinx.coroutines.delay(60_000L)
+            value = System.currentTimeMillis()
+        }
+    }
     ScreenScaffold(listState) { contentPadding ->
         ScalingLazyColumn(
             state = listState,
@@ -179,7 +188,7 @@ private fun StartScreen(state: RecorderUiState) {
                             append("Noch keine Routen – Aufzeichnung geht trotzdem")
                         } else {
                             append(Format.routeCount(routes.size))
-                            append(" · ").append(Format.age(bundle!!.builtAtUtcMs, System.currentTimeMillis()))
+                            append(" · ").append(Format.age(bundle!!.builtAtUtcMs, now))
                         }
                         if (state.pendingUploads > 0) append(" · ${state.pendingUploads} offen")
                     },

@@ -71,8 +71,8 @@ object Format {
     }
 
     /**
-     * How long ago the watch's routes were worked out: "heute", "gestern",
-     * "vor 3 Tagen", "vor 5 Wochen".
+     * How long ago the watch's routes were worked out: "gerade eben",
+     * "vor 45 Min.", "vor 3 Std.", "gestern", "vor 20 Tagen".
      *
      * This replaced the bundle's version number, which was on the start screen
      * for a while and answered nothing: the version is a counter the phone bumps
@@ -80,16 +80,30 @@ object Format {
      * or three weeks stale, which is the only thing worth knowing about them
      * before you press start. The counter is still what the Data Layer and the
      * session header use; it is simply not a fact about the user's day.
+     *
+     * Minutes and hours for the last day, because "heute" could not tell a
+     * rebuild after this morning's ride from one after the walk an hour ago —
+     * and that is exactly the question after a walk: has the phone sent the
+     * routes yet? Past a day, calendar days in the watch's own time zone, so
+     * "gestern" means yesterday and not "24 to 48 hours ago". Days rather than
+     * weeks even far out: "vor 20 Tagen" is a number you can act on.
      */
-    fun age(builtAtUtcMs: Long, nowMs: Long): String {
-        val days = ((nowMs - builtAtUtcMs) / 86_400_000L).toInt()
-        return when {
-            days <= 0 -> "heute"
-            days == 1 -> "gestern"
-            days < 14 -> "vor $days Tagen"
-            else -> "vor ${days / 7} Wochen"
-        }
+    fun age(
+        builtAtUtcMs: Long,
+        nowMs: Long,
+        zone: java.util.TimeZone = java.util.TimeZone.getDefault(),
+    ): String {
+        val minutes = ((nowMs - builtAtUtcMs) / 60_000L).coerceAtLeast(0L)
+        if (minutes < 1) return "gerade eben"
+        if (minutes < 60) return "vor $minutes Min."
+        if (minutes < 24 * 60) return "vor ${minutes / 60} Std."
+        val days = localDay(nowMs, zone) - localDay(builtAtUtcMs, zone)
+        return if (days <= 1L) "gestern" else "vor $days Tagen"
     }
+
+    /** Days since the epoch on the local calendar of [zone]. */
+    private fun localDay(utcMs: Long, zone: java.util.TimeZone): Long =
+        Math.floorDiv(utcMs + zone.getOffset(utcMs), 86_400_000L)
 
     /** "4 Routen", "1 Route". */
     fun routeCount(n: Int): String = if (n == 1) "1 Route" else "$n Routen"
