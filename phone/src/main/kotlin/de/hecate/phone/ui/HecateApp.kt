@@ -295,7 +295,10 @@ private fun RecordingsScreen(vm: HecateViewModel) {
     val types by vm.activityTypes.collectAsStateWithLifecycle()
     val filter by vm.activityFilter.collectAsStateWithLifecycle()
     val standouts by vm.standouts.collectAsStateWithLifecycle()
+    val loaded by vm.sessionsLoaded.collectAsStateWithLifecycle()
 
+    // Nothing rather than the empty-state text while the first query is out.
+    if (!loaded) return
     if (all.isEmpty()) {
         Empty(
             "Noch keine Aufzeichnungen.\n\nWas die Uhr aufnimmt, erscheint hier automatisch. " +
@@ -612,6 +615,8 @@ private fun RoutesScreen(vm: HecateViewModel) {
     val routes by vm.routes.collectAsStateWithLifecycle()
     val clustering by vm.clustering.collectAsStateWithLifecycle()
     val heatmap by vm.heatmap.collectAsStateWithLifecycle()
+    val loaded by vm.routesLoaded.collectAsStateWithLifecycle()
+    if (!loaded) return
     if (routes.isEmpty() && !clustering) {
         Empty(
             "Noch keine Routen.\n\nEine Route entsteht, sobald drei ähnliche Aufzeichnungen " +

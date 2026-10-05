@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Hecate" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- The window behind Compose, which is what the system draws while the app
+         starts and wherever Compose has not painted yet. Everything visible is
+         themed in Compose (ui/Theme.kt); this only has to agree with it about
+         light and dark. It used to be light only, so a dark-mode launch opened
+         on a white window, and the system's "expand dark theme to more apps"
+         treated the whole app as a light one to be inverted.
+
+         forceDarkAllowed=false for the same reason: the app does its own dark
+         mode, and a system inversion over it can only turn readable colours
+         into unreadable ones. -->
+    <style name="Theme.Hecate" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
 </resources>

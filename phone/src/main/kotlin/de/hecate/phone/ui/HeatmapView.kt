@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
@@ -175,8 +178,12 @@ fun rememberHeatmapRaster(
  * is built here rather than hoisted, so that it exists while this dialog does
  * and not a moment longer.
  *
- * A `Dialog` with the platform's own width rule turned off, so it covers the
- * navigation bar too — the alternative, another entry in the app's screen enum,
+ * A `Dialog` with the platform's own width rule turned off and drawn behind both
+ * system bars, so the picture's surface runs to every edge in light and dark
+ * alike rather than stopping at a grey (light) or black (dark) strip top and
+ * bottom; only the controls are kept clear of the bars. The bars' icons are set
+ * to match the surface explicitly, since a dialog window does not inherit the
+ * activity's edge-to-edge styling — the alternative, another entry in the app's screen enum,
  * would put a picture into the back stack beside the panels and the details,
  * which it is not.
  *
@@ -190,9 +197,27 @@ fun HeatmapFullScreen(
     caption: String,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        val dark = androidx.compose.foundation.isSystemInDarkTheme()
+        val view = androidx.compose.ui.platform.LocalView.current
+        androidx.compose.runtime.SideEffect {
+            val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+            if (window != null) {
+                androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.systemBars),
+            ) {
                 val density = androidx.compose.ui.platform.LocalDensity.current
                 val widthPx = with(density) { maxWidth.toPx() }
                 val heightPx = with(density) { maxHeight.toPx() }

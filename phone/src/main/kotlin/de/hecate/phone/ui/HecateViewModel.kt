@@ -203,8 +203,20 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     private val _sessionDetail = MutableStateFlow<SessionDetail?>(null)
     val sessionDetail: StateFlow<SessionDetail?> = _sessionDetail.asStateFlow()
 
-    val sessions: StateFlow<List<SessionSummary>> = db.sessions().summaries()
+    /** Null until the database has answered once. An empty list before that
+     *  is not "no recordings", and showing the empty-state text for the frame
+     *  it takes the query to return made a full history flash "Noch keine
+     *  Aufzeichnungen" on every launch. */
+    private val sessionsOrNull: StateFlow<List<SessionSummary>?> = db.sessions().summaries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val sessions: StateFlow<List<SessionSummary>> = sessionsOrNull
+        .map { it.orEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val sessionsLoaded: StateFlow<Boolean> = sessionsOrNull
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /**
      * The activities the filter offers: the ones that actually occur, commonest
@@ -276,8 +288,17 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         .map { rows -> rows.firstOrNull()?.toIntOrNull() ?: Tuning.DEFAULT_PEAK_HR_BPM }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Tuning.DEFAULT_PEAK_HR_BPM)
 
-    val routes: StateFlow<List<RouteSummary>> = db.routes().summaries()
+    /** Null until the database has answered once; see [sessionsOrNull]. */
+    private val routesOrNull: StateFlow<List<RouteSummary>?> = db.routes().summaries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val routes: StateFlow<List<RouteSummary>> = routesOrNull
+        .map { it.orEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val routesLoaded: StateFlow<Boolean> = routesOrNull
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /**
      * The card's heatmap, and the geometry of the routes it accepted (US-8).
