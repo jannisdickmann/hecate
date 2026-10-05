@@ -61,6 +61,9 @@ class RouteMatcher(
         /** How far the position has run backwards along the route since it last
          *  stood at its furthest. See [Tuning.BRANCH_SWITCH_RETREAT_M]. */
         var retreatM: Double = 0.0,
+        /** Usual time [s] this route takes to reach where the user joined it,
+         *  less the time they had already spent getting there. See [anchor]. */
+        var anchorS: Double = 0.0,
         var dropped: Boolean = false,
     ) {
         val routeId: Long get() = entry.geometry.routeId
@@ -168,7 +171,17 @@ class RouteMatcher(
      */
     fun update(sample: Sample): MatchState {
         if (disabled) return MatchState(sample.tOffsetMs, phase, committedRouteId, disabled = true)
-        lastAnySample?.let { lastActiveMs += ActiveClock.elapsed(it, sample) }
+        // Late, and therefore no longer evidence about where the user is.
+        // Health Services sometimes delivers positions after newer ones have
+        // already been handed over — on a walk of 5 Oct, 34 times, by 3 to 21 s.
+        // Consumed in arrival order, each one moved the user backwards along the
+        // route: the position retreated, the route was demoted and re-committed
+        // a dozen times, the travelled distance came out 60 % long, and
+        // ahead/behind swung with every one. The sample is already in the session
+        // file; the matcher only answers "where is the user now", which a
+        // position from twenty seconds ago does not.
+        lastAnySample?.let { if (sample.tOffsetMs <= it.tOffsetMs) return state(it.tOffsetMs) }
+        lastAnySample?.let { lastActiveMs += activeBetween(it, sample) }
         lastAnySample = sample
         if (!sample.usable) {
             if (sample.paused) {
@@ -261,6 +274,7 @@ class RouteMatcher(
                 c.trackRatio = 1.0
                 c.retreatM = 0.0
             }
+            if (previousPos < 0.0) anchor(c, hit)
             c.positionM = hit.positionM
             c.offsetM = hit.distanceM
             val onRoute = hit.distanceM <= Tuning.MATCH_RADIUS_M &&
@@ -299,6 +313,48 @@ class RouteMatcher(
     // ------------------------------------------------------------------ internals
 
     private fun clampLL(x: Double): Double = max(-Tuning.MAX_ABS_LOG_LIK, x)
+
+    /**
+     * Active time between two consecutive samples the matcher consumed.
+     *
+     * [ActiveClock]'s rule, which is what the route profiles were measured on —
+     * except across a hole longer than it trusts. In a stored session such a
+     * hole is an auto-pause or a dropout. Here it can also be a hole the
+     * matcher made itself, by refusing positions that arrived late: the
+     * samples that would have filled it exist, they just came after newer ones.
+     * Counting nothing for it put a walk 72 s further ahead than it was. So
+     * across a long hole the watch's own active time decides, bounded by the
+     * wall time: an auto-pause adds none, a stretch of late arrivals adds what
+     * it lasted.
+     */
+    private fun activeBetween(previous: Sample, next: Sample): Long {
+        val rule = ActiveClock.elapsed(previous, next)
+        val dt = next.tOffsetMs - previous.tOffsetMs
+        if (rule > 0L || previous.paused || next.paused || dt <= Tuning.MAX_INTERPOLATION_GAP_MS) return rule
+        return (next.activeMs - previous.activeMs).coerceIn(0L, dt)
+    }
+
+    /**
+     * Measure ahead/behind from where the user joined this route, the first
+     * time it is found under them.
+     *
+     * A recording started a hundred metres in has no time for those hundred
+     * metres, while the route's usual time for them is a minute; compared
+     * from the start of the route, the user was a minute ahead before they had
+     * taken a step. So the usual time to the joining point, less whatever the
+     * user spent getting there, is set aside for the rest of the workout.
+     *
+     * Only ever forwards (a slow start is today's time, not an offset), only
+     * where the route is actually under the user, and only in its first half —
+     * a route found at its far end at the start of a session is the way back,
+     * not one being joined half-way.
+     */
+    private fun anchor(c: Cand, hit: Polyline.Hit) {
+        if (hit.distanceM > Tuning.MATCH_RADIUS_M) return
+        if (hit.positionM > Tuning.JOIN_ANCHOR_MAX_FRACTION * c.poly.lengthM) return
+        val usual = c.entry.profile.medianTimeAt(hit.positionM)
+        c.anchorS = (usual - lastActiveMs / 1000.0).coerceAtLeast(0.0)
+    }
 
     /**
      * The other place this route passes [here], when the candidate has been
@@ -779,9 +835,11 @@ class RouteMatcher(
         return pooledMedianTimeAtPosition()
     }
 
+    /** The usual time to have got here on this route, from where the user
+     *  joined it ([anchor]). */
     private fun medianTimeOn(c: Cand): Double? {
         if (c.dropped || c.positionM < 0.0) return null
-        return c.entry.profile.medianTimeAt(c.positionM).takeIf { it > 0.0 }
+        return (c.entry.profile.medianTimeAt(c.positionM) - c.anchorS).takeIf { it > 0.0 }
     }
 
     /** Every still-plausible candidate, by weight. Candidates that share the
@@ -810,8 +868,9 @@ class RouteMatcher(
     private fun estimateEta(c: Cand, elapsedS: Double): Double? {
         val atPos = c.entry.profile.medianTimeAt(c.positionM)
         val total = c.entry.profile.totalMedianTimeS
-        if (atPos <= 0.0 || total <= atPos) return null
-        val kRaw = (elapsedS / atPos).coerceIn(Tuning.ETA_K_MIN, Tuning.ETA_K_MAX)
+        val sinceJoin = atPos - c.anchorS
+        if (sinceJoin <= 0.0 || total <= atPos) return null
+        val kRaw = (elapsedS / sinceJoin).coerceIn(Tuning.ETA_K_MIN, Tuning.ETA_K_MAX)
         kWindow.addLast(kRaw)
         kSum += kRaw
         while (kWindow.size > Tuning.ETA_SMOOTH_SAMPLES) kSum -= kWindow.removeFirst()

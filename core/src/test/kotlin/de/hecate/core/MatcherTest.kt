@@ -315,6 +315,52 @@ class MatcherTest {
     }
 
     @Test
+    fun `positions that arrive late do not move the user backwards`() {
+        // Health Services sometimes hands over a few seconds of positions after
+        // newer ones. Fed as they arrive, each of those used to pull the user
+        // back along the route.
+        val b = learnedBundle()
+        val today = Synthetic.record("today", Synthetic.workRoute, day(73), seed = 1010)
+        val inOrder = replay(today, b)
+
+        // Every 60 samples, the next 5 arrive after the 5 that follow them.
+        val arrival = today.samples.chunked(10).flatMapIndexed { i, chunk ->
+            if (i % 6 == 3 && chunk.size == 10) chunk.drop(5) + chunk.take(5) else chunk
+        }
+        val m = RouteMatcher(b, today.header.exerciseType, today.header.startedAtUtcMs, today.header.tzOffsetMinutes)
+        val late = arrival.map { m.update(it) }
+
+        assertEquals(inOrder.last().phase, late.last().phase)
+        val ratio = late.last().travelledM / inOrder.last().travelledM
+        assertTrue(ratio in 0.97..1.01, "travelled ${"%.2f".format(ratio)} x the in-order distance")
+        val committedAt = late.indexOfFirst { it.phase == MatchPhase.COMMITTED }
+        assertTrue(committedAt >= 0)
+        assertTrue(
+            late.drop(committedAt).all { it.phase == MatchPhase.COMMITTED },
+            "late positions demoted the route",
+        )
+    }
+
+    @Test
+    fun `starting a recording part-way along the route is not a head start`() {
+        val b = learnedBundle()
+        // Learned at 3 m/s; today at the same pace, but the first 300 m — about
+        // 100 s of the route's usual time — were never recorded.
+        val full = Synthetic.record("today", Synthetic.workRoute, day(74), seed = 1011)
+        val joinedLate = full.copy(
+            samples = full.samples.filter { it.cumDistanceM == null || it.cumDistanceM!! >= 300.0 }
+                .let { rest -> rest.map { it.copy(tOffsetMs = it.tOffsetMs - rest.first().tOffsetMs, activeMs = it.activeMs - rest.first().activeMs) } },
+        )
+        val states = replay(joinedLate, b)
+        val early = states.filter { it.deltaVsMedianS != null && it.travelledM in 400.0..800.0 }
+        assertTrue(early.isNotEmpty())
+        assertTrue(
+            early.all { abs(it.deltaVsMedianS!!) < 30.0 },
+            "a steady pace read as ${"%+.0f".format(early.first().deltaVsMedianS)} s",
+        )
+    }
+
+    @Test
     fun `a biking session ignores running routes`() {
         val b = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(71), seed = 1008, type = ExerciseType.BIKING)

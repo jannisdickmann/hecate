@@ -224,6 +224,12 @@ object Tuning {
      *  placed at its far end — never comes near it. */
     const val DELTA_TIE_MIN_WEIGHT: Double = 0.20
 
+    /** A route found under the user at the start of a session is taken to have
+     *  been joined there — ahead/behind measured from that point — only within
+     *  this fraction of its length from its start. Further along it is far
+     *  more likely the way back, found at its finish beside the front door. */
+    const val JOIN_ANCHOR_MAX_FRACTION: Double = 0.5
+
     /** Clamp on the observed-vs-median pace ratio k used for the ETA. A ratio
      *  outside this range is a measurement problem, not a performance. */
     const val ETA_K_MIN: Double = 0.60
