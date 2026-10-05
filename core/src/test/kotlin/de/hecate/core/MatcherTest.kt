@@ -288,6 +288,33 @@ class MatcherTest {
     }
 
     @Test
+    fun `a lollipop holds through a dropout on its stem`() {
+        // "Abendrunde": learned from walks on the outbound pavement, then walked
+        // today on the far one — so after a dropout on the stem the way home is
+        // the nearer geometry, which is what put the real walk on it.
+        val walks = (0 until 3).map {
+            Synthetic.record("walk$it", Synthetic.lollipop(), day(it), seed = it + 61, speedMps = 1.4, type = ExerciseType.WALKING)
+        }
+        val bundle = BundleBuilder.bundleFrom(walks.mapNotNull { Track.of(it) }, walks.associate { it.id to it.samples })
+        assertEquals(1, bundle.routes.size)
+        val today = Synthetic.record(
+            "today", Synthetic.lollipop(outboundEastM = 5.0), day(72), seed = 1009, speedMps = 1.4,
+            jitterM = 1.0, type = ExerciseType.WALKING, dropoutAfterS = 300.0, dropoutDurationS = 25.0,
+        )
+        val states = replay(today, bundle)
+
+        val afterDropout = states.filter { it.tOffsetMs in 330_000L..600_000L }
+        assertTrue(afterDropout.isNotEmpty())
+        assertTrue(
+            afterDropout.all { (it.candidates.firstOrNull()?.positionM ?: 0.0) < 1200.0 },
+            "re-localised onto the way home after the dropout",
+        )
+        val committedShare = states.count { it.phase == MatchPhase.COMMITTED }.toDouble() / states.size
+        assertTrue(committedShare > 0.8, "committed for only ${"%.0f".format(committedShare * 100)} % of the walk")
+        assertEquals(MatchPhase.COMMITTED, states.last().phase)
+    }
+
+    @Test
     fun `a biking session ignores running routes`() {
         val b = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(71), seed = 1008, type = ExerciseType.BIKING)

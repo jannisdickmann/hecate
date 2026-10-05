@@ -129,22 +129,29 @@ object ProfileBuilder {
         val altitude = Elevation.despike(track.altM)
 
         var lastPos = -1.0
+        var lost = true
         var runIdx = 0
         for (i in track.points.indices) {
-            // A new run means the member was somewhere unobserved in between;
-            // allow the projection to jump forward by searching from lastPos on.
+            // A new run means the member was somewhere unobserved in between, so
+            // the projection may jump — but on ground the route covers twice
+            // (a lollipop's stem, a loop's start and finish) to the pass that
+            // continues from where it was, not to whichever is nearer. Taking the
+            // nearest put members of "Abendrunde" on the way home a few hundred
+            // metres in, and left the profile's median flat for most of a
+            // kilometre.
             if (runIdx + 1 < track.runStarts.size && i == track.runStarts[runIdx + 1]) {
                 runIdx++
-                lastPos = -1.0
+                lost = true
             }
             val p: LatLon = track.points[i]
-            val hit = if (lastPos < 0.0) {
-                geometry.projectAll(p)
+            val hit = if (lost) {
+                geometry.localise(p, lastPos.coerceAtLeast(0.0), Tuning.LOCALISE_TIE_M)
             } else {
                 geometry.projectWindow(p, lastPos, lastPos + Tuning.SEARCH_WINDOW_M)
             }
             if (hit.distanceM > Tuning.CLUSTER_TOL_M * 2) continue
-            val pos = if (lastPos < 0.0) hit.positionM else maxOf(hit.positionM, lastPos)
+            val pos = if (lost) hit.positionM else maxOf(hit.positionM, lastPos)
+            lost = false
             lastPos = pos
 
             val b = (pos / binM).toInt().coerceIn(0, bins - 1)
@@ -157,7 +164,30 @@ object ProfileBuilder {
                 alts[b] = altitude.getOrElse(i) { Double.NaN }
             }
         }
+        // Between two bins this member did reach, it passed every bin in between,
+        // at a time between the two. Left as gaps, those bins were medians over
+        // a different set of members than their neighbours — a ride at 6 m/s
+        // skips a 10 m bin every few seconds, and a member off the geometry for a
+        // stretch skips hundreds — so the median jumped between one subset of
+        // riders and another, and [makeMonotone] then held every upward jump as a
+        // step: the profile of "Arbeit zurück" rose 89 s within one bin, and
+        // ahead/behind with it.
+        fillInterior(times)
         return MemberCurve(times, hrs, alts)
+    }
+
+    /** Linear interpolation over NaN runs between known values; the ends are left
+     *  alone, since a member that never got there says nothing about them. */
+    internal fun fillInterior(v: DoubleArray) {
+        var last = -1
+        for (i in v.indices) {
+            if (v[i].isNaN()) continue
+            if (last >= 0 && i > last + 1) {
+                val span = i - last
+                for (k in 1 until span) v[last + k] = v[last] + (v[i] - v[last]) * k / span
+            }
+            last = i
+        }
     }
 
     private fun nearestHr(samples: List<Sample>, activeMs: Long): Double {

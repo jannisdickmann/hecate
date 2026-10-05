@@ -48,6 +48,25 @@ class ProfileTest {
     }
 
     @Test
+    fun `a member missing a stretch does not put a step into the median`() {
+        // The slowest of three has a minute-long dropout. Over that stretch the
+        // median used to be taken over the other two only — a faster pair — so
+        // it dipped, was held flat by the monotone pass, and came back as a step
+        // the size of the gap between the riders: the shape that made
+        // ahead/behind jump by half a minute on a real commute.
+        val day = Synthetic.DAY_MS
+        val tracks = listOf(
+            Track.of(Synthetic.record("slow", Synthetic.workRoute, Synthetic.MONDAY_0730_UTC, speedMps = 2.5, seed = 1, dropoutAfterS = 500.0, dropoutDurationS = 60.0))!!,
+            Track.of(Synthetic.record("mid", Synthetic.workRoute, Synthetic.MONDAY_0730_UTC + day, speedMps = 3.0, seed = 2))!!,
+            Track.of(Synthetic.record("fast", Synthetic.workRoute, Synthetic.MONDAY_0730_UTC + 2 * day, speedMps = 4.0, seed = 3))!!,
+        )
+        val prof = BundleBuilder.computeRoutes(tracks, minMembers = 3)[0].profile
+        // At the median rider's 3 m/s a 10 m bin takes 3.3 s.
+        val worst = (1 until prof.size).maxOf { prof[it] - prof[it - 1] }
+        assertTrue(worst < 10.0, "the median steps by $worst s within one bin")
+    }
+
+    @Test
     fun `gaps are interpolated`() {
         val v = doubleArrayOf(Double.NaN, 10.0, Double.NaN, Double.NaN, 40.0, Double.NaN)
         ProfileBuilder.fillGaps(v)

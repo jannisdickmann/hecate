@@ -4,6 +4,7 @@ import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Polyline
+import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.Candidate
 import de.hecate.core.model.DayBucket
 import de.hecate.core.model.ExerciseType
@@ -57,6 +58,9 @@ class RouteMatcher(
         /** Smoothed advance along this route per metre actually travelled.
          *  About 1 while the route is being followed, about -1 for its reverse. */
         var trackRatio: Double = 1.0,
+        /** How far the position has run backwards along the route since it last
+         *  stood at its furthest. See [Tuning.BRANCH_SWITCH_RETREAT_M]. */
+        var retreatM: Double = 0.0,
         var dropped: Boolean = false,
     ) {
         val routeId: Long get() = entry.geometry.routeId
@@ -69,7 +73,11 @@ class RouteMatcher(
     private var nullLogW: Double
     private var travelledM = 0.0
     private var prev: Sample? = null
+    /** Active time on [ActiveClock]'s rule, not the watch's own figure: the
+     *  route profiles this is compared against were measured on that clock, and
+     *  the watch's keeps running through samples it has flagged as paused. */
     private var lastActiveMs = 0L
+    private var lastAnySample: Sample? = null
 
     /** Session time of the last sample that carried evidence, and the last delta
      *  computed from one. Together they are how the display learns that what it
@@ -79,6 +87,8 @@ class RouteMatcher(
      *  lateness. */
     private var lastUsableTOffsetMs = -1L
     private var lastDelta: Double? = null
+    /** The route the delta was last read off on its own. See [medianTimeAtPosition]. */
+    private var deltaRouteId: Long? = null
 
     private var commitHold = 0
     private var commitHoldRouteId: Long? = null
@@ -158,7 +168,8 @@ class RouteMatcher(
      */
     fun update(sample: Sample): MatchState {
         if (disabled) return MatchState(sample.tOffsetMs, phase, committedRouteId, disabled = true)
-        lastActiveMs = sample.activeMs
+        lastAnySample?.let { lastActiveMs += ActiveClock.elapsed(it, sample) }
+        lastAnySample = sample
         if (!sample.usable) {
             if (sample.paused) {
                 prev = null // do not measure travel across a pause
@@ -192,15 +203,6 @@ class RouteMatcher(
         prev = sample
         travelledM += step
 
-        // A dropout invalidates dead reckoning: every candidate must re-localise
-        // over its whole geometry rather than inside a window around a stale guess.
-        if (dropout) {
-            for (id in orderedIds) {
-                val c = cands[id] ?: continue
-                if (!c.dropped) c.positionM = -1.0
-            }
-        }
-
         admitNearby(here)
 
         val sigma = max(Tuning.GPS_SIGMA_M, sample.accuracyM ?: 0.0)
@@ -211,25 +213,56 @@ class RouteMatcher(
             if (c.dropped) continue
 
             val previousPos = c.positionM
-            val hit = if (previousPos < 0.0) {
-                c.poly.projectAll(here)
-            } else {
+            var hit = when {
+                // Nothing to go on yet: the start of the route, where workouts
+                // start, wins any tie — on a closed loop the finish is just as near.
+                previousPos < 0.0 -> c.poly.localise(here, 0.0, Tuning.LOCALISE_TIE_M)
+                // A dropout invalidates dead reckoning, so the whole geometry is
+                // searched rather than a window around a stale guess — but where
+                // the route passes this spot twice, the pass that continues from
+                // where the user was last seen is the one they are on.
+                dropout -> c.poly.localise(
+                    here,
+                    previousPos - Tuning.BACKTRACK_SLACK_M,
+                    Tuning.LOCALISE_TIE_M,
+                )
                 // Asymmetric by design: a long reach forwards for uncertainty in
                 // the travelled distance, almost none backwards.
-                c.poly.projectWindow(
+                else -> c.poly.projectWindow(
                     here,
                     previousPos - Tuning.BACKTRACK_SLACK_M,
                     previousPos + step + Tuning.SEARCH_WINDOW_M,
                 )
             }
+
+            var switched = false
+            if (previousPos >= 0.0 && p != null && !dropout) {
+                if (step > 0.5) {
+                    val ratio = ((hit.positionM - previousPos) / step).coerceIn(-2.0, 2.0)
+                    c.trackRatio = Tuning.TRACK_RATIO_SMOOTHING * c.trackRatio +
+                        (1 - Tuning.TRACK_RATIO_SMOOTHING) * ratio
+                }
+                c.retreatM = (c.retreatM - (hit.positionM - previousPos)).coerceAtLeast(0.0)
+                // Both: far enough back, and going backwards as a habit rather
+                // than once. A GNSS spike forwards and back leaves a drawdown of
+                // its own size but only dents the smoothed ratio.
+                if (c.retreatM >= Tuning.BRANCH_SWITCH_RETREAT_M &&
+                    c.trackRatio < Tuning.BRANCH_SWITCH_MAX_RATIO
+                ) {
+                    otherLeg(c.poly, here, hit)?.let {
+                        hit = it
+                        switched = true
+                    }
+                }
+            } else {
+                c.retreatM = 0.0
+            }
+            if (switched) {
+                c.trackRatio = 1.0
+                c.retreatM = 0.0
+            }
             c.positionM = hit.positionM
             c.offsetM = hit.distanceM
-
-            if (previousPos >= 0.0 && step > 0.5 && p != null && !dropout) {
-                val ratio = ((hit.positionM - previousPos) / step).coerceIn(-2.0, 2.0)
-                c.trackRatio = Tuning.TRACK_RATIO_SMOOTHING * c.trackRatio +
-                    (1 - Tuning.TRACK_RATIO_SMOOTHING) * ratio
-            }
             val onRoute = hit.distanceM <= Tuning.MATCH_RADIUS_M &&
                 c.trackRatio >= Tuning.MIN_TRACKING_RATIO
             c.unseenM = if (onRoute) 0.0 else c.unseenM + step
@@ -240,7 +273,7 @@ class RouteMatcher(
             // consistent with how far the user demonstrably went. Skipped when
             // there is no usable previous position — after a dropout or a pause
             // the two are not comparable.
-            if (previousPos >= 0.0 && p != null && !dropout) {
+            if (previousPos >= 0.0 && p != null && !dropout && !switched) {
                 val advance = hit.positionM - previousPos
                 val sigmaAdv = max(Tuning.ADVANCE_SIGMA_M, Tuning.ADVANCE_SIGMA_FRACTION * step)
                 val err = advance - step
@@ -268,6 +301,40 @@ class RouteMatcher(
     private fun clampLL(x: Double): Double = max(-Tuning.MAX_ABS_LOG_LIK, x)
 
     /**
+     * The other place this route passes [here], when the candidate has been
+     * caught running backwards along the one it is on.
+     *
+     * Ground a route covers twice — the stem of a lollipop, an out-and-back, the
+     * first metres of a closed loop — gives the same fix two positions, and the
+     * windowed projection will faithfully follow whichever it was given, in
+     * reverse if need be. Localisation prefers the right one, but a candidate
+     * that ends up on the wrong leg anyway would otherwise go on retreating until
+     * it is dropped, and a dropped route is only ever re-admitted further along,
+     * which is exactly where the wrong leg already is.
+     *
+     * Only a leg at least as close as a tie allows qualifies. A route's own
+     * reverse, run the wrong way round, has no second leg and so is never
+     * rescued by this: it is rejected by its direction exactly as before.
+     */
+    private fun otherLeg(poly: Polyline, here: LatLon, current: Polyline.Hit): Polyline.Hit? {
+        val gap = Tuning.SEARCH_WINDOW_M
+        val limit = minOf(current.distanceM + Tuning.LOCALISE_TIE_M, Tuning.MATCH_RADIUS_M)
+        val ahead = if (current.positionM + gap < poly.lengthM) {
+            poly.localise(here, current.positionM + gap, Tuning.LOCALISE_TIE_M, minM = current.positionM + gap)
+        } else {
+            null
+        }
+        val behind = if (current.positionM - gap > 0.0) {
+            poly.projectWindow(here, 0.0, current.positionM - gap)
+        } else {
+            null
+        }
+        return listOfNotNull(ahead, behind)
+            .filter { it.distanceM <= limit && kotlin.math.abs(it.positionM - current.positionM) > gap }
+            .minByOrNull { it.distanceM }
+    }
+
+    /**
      * Bring back a candidate the user has come close to again.
      *
      * The subtlety is that "close to the geometry" is not the same as "back on
@@ -292,7 +359,9 @@ class RouteMatcher(
             if (!c.dropped) continue
 
             val from = c.positionM.coerceAtLeast(0.0)
-            val hit = c.poly.projectWindow(here, from, c.poly.lengthM)
+            // Forwards from where it was, and the first pass rather than the
+            // nearest: a lollipop's way home lies forwards too.
+            val hit = c.poly.localise(here, from, Tuning.LOCALISE_TIE_M, minM = from)
             if (hit.distanceM > Tuning.MATCH_RADIUS_M) continue
 
             // Re-admit at a deliberately small weight: rejoining a route after a
@@ -302,6 +371,7 @@ class RouteMatcher(
             c.positionM = hit.positionM
             c.offsetM = hit.distanceM
             c.trackRatio = 1.0
+            c.retreatM = 0.0
             c.logW = ln(Tuning.REENTRY_WEIGHT)
             admitted = true
             logRaw(MatchEvent.ADMIT, id)
@@ -590,21 +660,6 @@ class RouteMatcher(
         else (tOffsetMs - lastUsableTOffsetMs).coerceAtLeast(0L)
         val stale = staleMs > Tuning.STALE_POSITION_MS
 
-        val elapsedS = lastActiveMs / 1000.0
-        val delta = if (stale) {
-            // Frozen, not recomputed: with the position standing still, elapsed
-            // time alone would make the user look steadily slower for as long as
-            // the GNSS outage lasts. The last value computed against a real
-            // position is the honest one, and [positionStaleMs] says so.
-            lastDelta
-        } else {
-            val pooledMedian = pooledMedianTimeAtPosition()
-            val d = if (phase == MatchPhase.UNKNOWN || pooledMedian == null) null
-            else elapsedS - pooledMedian
-            lastDelta = d
-            d
-        }
-
         // The route every route-relative number below is about: the commitment,
         // or — when there is none — the leader, if it holds enough of the belief
         // to be worth naming. A.4b's complaint was that a route family sharing a
@@ -627,10 +682,25 @@ class RouteMatcher(
         }
         val focus = committed ?: provisionalCand
 
+        val elapsedS = lastActiveMs / 1000.0
+        val delta = if (stale) {
+            // Frozen, not recomputed: with the position standing still, elapsed
+            // time alone would make the user look steadily slower for as long as
+            // the GNSS outage lasts. The last value computed against a real
+            // position is the honest one, and [positionStaleMs] says so.
+            lastDelta
+        } else {
+            val pooledMedian = medianTimeAtPosition(focus, elapsedS)
+            val d = if (phase == MatchPhase.UNKNOWN || pooledMedian == null) null
+            else elapsedS - pooledMedian
+            lastDelta = d
+            d
+        }
+
+
         var remaining: Double? = null
         var eta: Double? = null
         var progress: Double? = null
-        var scale: Double? = null
         if (focus != null && focus.positionM >= 0.0) {
             val lengthM = focus.entry.geometry.lengthM
             remaining = (lengthM - focus.positionM).coerceAtLeast(0.0)
@@ -638,7 +708,6 @@ class RouteMatcher(
             // No arrival time off a standing position: an ETA is a claim about
             // the next few minutes, and there is nothing current to make it from.
             if (!stale) eta = estimateEta(focus, elapsedS)
-            scale = focus.entry.profile.deltaFullScaleS()
         }
 
         return MatchState(
@@ -657,7 +726,7 @@ class RouteMatcher(
             contenderCount = contenderCount,
             provisional = committed == null && focus != null,
             progressFraction = progress,
-            deltaScaleS = scale,
+            deltaScaleS = Tuning.deltaFullScaleS(exerciseType),
             noRoutesKnown = cands.isEmpty(),
             positionStaleMs = staleMs,
             deviationAlert = deviationFired,
@@ -667,10 +736,57 @@ class RouteMatcher(
     }
 
     /**
-     * US-5: the pooled median time at the current position, averaged over every
-     * still-plausible candidate. Candidates that share the traversed prefix share
-     * its history, so this is meaningful long before the route is identified.
+     * US-5: the usual time to have got this far.
+     *
+     * From one route whenever there is one to name — the commitment, or the
+     * leader the display is already naming — and, once a route has been the
+     * one, from that route for as long as it remains among the tied: routes
+     * that merge again late in a ride make the commitment lapse, but the rider
+     * is still on the road they were on, and switching to a different route's
+     * usual time made the delta jump by half a minute at the junction.
+     *
+     * With no such route, from all the tied ones equally: their weights there
+     * are GNSS noise flipping around a half, and two routes that reached this
+     * street by different ways have different usual times for it, so weighting
+     * by noise made the delta swing while the rider held a steady pace. A tied
+     * route has to hold a real share of the belief to count, though: equal
+     * weights would hand a route admitted a second ago — a way home, placed at
+     * its far end — the same say as the route being ridden. Only when nothing is
+     * even tracking does it fall back to the weighted pool.
      */
+    private fun medianTimeAtPosition(focus: Cand?, elapsedS: Double): Double? {
+        if (focus != null) {
+            deltaRouteId = focus.routeId
+            return medianTimeOn(focus)
+        }
+        val contenders = contenders()
+        // Kept on the low bar every live candidate clears, not the tie bar: on
+        // shared ground its weight wanders around a half and dips below a fifth
+        // often enough to make the delta flick to the other route and back.
+        contenders.firstOrNull { it.routeId == deltaRouteId && weight(it) >= Tuning.LIVE_CANDIDATE_MIN_WEIGHT }
+            ?.let { return medianTimeOn(it) }
+        deltaRouteId = null
+        val tied = contenders.filter { weight(it) >= Tuning.DELTA_TIE_MIN_WEIGHT }
+        if (tied.isNotEmpty()) {
+            // A route on which today's pace would be impossible is not one the
+            // user is on: at the front door, yesterday's ride home is at its
+            // finish, seventeen kilometres "done" in six seconds.
+            val times = tied.mapNotNull { medianTimeOn(it) }
+                .filter { elapsedS / it in Tuning.ETA_K_MIN..Tuning.ETA_K_MAX }
+            return if (times.isEmpty()) null else times.average()
+        }
+        if (contenders.isNotEmpty()) return null
+        return pooledMedianTimeAtPosition()
+    }
+
+    private fun medianTimeOn(c: Cand): Double? {
+        if (c.dropped || c.positionM < 0.0) return null
+        return c.entry.profile.medianTimeAt(c.positionM).takeIf { it > 0.0 }
+    }
+
+    /** Every still-plausible candidate, by weight. Candidates that share the
+     *  traversed prefix share its history, so this is meaningful long before the
+     *  route is identified. */
     private fun pooledMedianTimeAtPosition(): Double? {
         var wSum = 0.0
         var acc = 0.0

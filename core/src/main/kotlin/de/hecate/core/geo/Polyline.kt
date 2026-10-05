@@ -52,6 +52,65 @@ class Polyline(
         return projectRange(p, lo, hi)
     }
 
+    /**
+     * Find [p] on the route with nothing recent to go on — the first fix of a
+     * workout, the first after a dropout — on geometry that may pass the same
+     * spot more than once.
+     *
+     * The nearest point is the wrong question there. A lollipop walks its stem
+     * out and back, so every point on it has two positions a few metres apart,
+     * one early and one late; a closed loop puts its finish beside its start.
+     * Which of the two is nearer is decided by GNSS noise, and choosing the late
+     * one is not a small error: the position then runs backwards while the user
+     * walks forwards, the route looks abandoned, and the matcher drops a route
+     * the user is standing on.
+     *
+     * So the polyline is read as stretches — maximal runs of segments that pass
+     * within [toleranceM] of the nearest distance — each one a distinct place the
+     * route goes by here, and the first stretch that reaches [preferFromM] wins.
+     * With nothing to go on that is 0, the start of the route, which is where
+     * workouts begin; after a dropout it is where the user was last seen, since
+     * they were moving forwards. Only when every tied stretch lies behind it does
+     * the nearest one win, as before. A stretch [toleranceM] further away than
+     * the nearest is a different street, not an ambiguity, and is never chosen.
+     *
+     * [minM] cuts off everything earlier, for callers that may only move forwards.
+     */
+    fun localise(p: LatLon, preferFromM: Double, toleranceM: Double, minM: Double = 0.0): Hit {
+        if (size < 2) return Hit(0.0, Double.MAX_VALUE, 0)
+        val first = segmentAt(max(0.0, minM))
+        val last = size - 2
+        val dist = DoubleArray(last - first + 1)
+        val pos = DoubleArray(dist.size)
+        var nearest = Double.MAX_VALUE
+        var nearestIdx = 0
+        for (k in dist.indices) {
+            val i = first + k
+            val pr = Geo.projectToSegment(p, LatLon(lat[i], lon[i]), LatLon(lat[i + 1], lon[i + 1]))
+            dist[k] = pr.distanceM
+            pos[k] = cum[i] + pr.t * (cum[i + 1] - cum[i])
+            if (pr.distanceM < nearest) {
+                nearest = pr.distanceM
+                nearestIdx = k
+            }
+        }
+        val limit = nearest + toleranceM
+        var k = 0
+        while (k < dist.size) {
+            if (dist[k] > limit) { k++; continue }
+            // One stretch: its nearest point, and how far along the route it runs.
+            var best = k
+            var end = k
+            while (end + 1 < dist.size && dist[end + 1] <= limit) {
+                end++
+                if (dist[end] < dist[best]) best = end
+            }
+            if (cum[first + end + 1] >= preferFromM) return Hit(pos[best], dist[best], first + best)
+            k = end + 1
+        }
+        return Hit(pos[nearestIdx], dist[nearestIdx], first + nearestIdx)
+    }
+
     private fun projectRange(p: LatLon, firstSeg: Int, lastSeg: Int): Hit {
         if (size < 2) return Hit(0.0, Double.MAX_VALUE, 0)
         val a = firstSeg.coerceIn(0, size - 2)

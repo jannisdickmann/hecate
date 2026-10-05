@@ -1,5 +1,7 @@
 package de.hecate.core
 
+import de.hecate.core.model.ExerciseType
+
 /**
  * NFR-5: every tuning constant in the system lives here, with its unit and the
  * reasoning behind its value. Nothing algorithmic may hardcode a number that a
@@ -50,6 +52,27 @@ object Tuning {
      *  which is what keeps loops and out-and-backs unambiguous. Only enough slack
      *  to absorb projection jitter under GNSS noise. */
     const val BACKTRACK_SLACK_M: Double = 10.0
+
+    /** Two places a route passes [m] that are this close in distance from the
+     *  user are the same answer as far as GNSS can tell, and position along the
+     *  route has to choose between them instead (`Polyline.localise`). Covers
+     *  the two legs of an out-and-back a street's width apart, and the gap
+     *  between a closed loop's start and its finish, which on "Abendrunde" was
+     *  23 m — and stays well under the distance to a genuinely different street. */
+    const val LOCALISE_TIE_M: Double = 40.0
+
+    /** Net distance [m] a candidate's position has to run *backwards* along its
+     *  route, while the user is moving, before the matcher concludes it sits on
+     *  the wrong leg of ground the route covers twice and moves it to the other
+     *  one. Comfortably above what GNSS jitter at a standstill adds up to, and
+     *  reached in about twenty seconds of walking. */
+    const val BRANCH_SWITCH_RETREAT_M: Double = 30.0
+
+    /** ...and the smoothed advance per metre travelled has to be below this:
+     *  net backwards, sample after sample. One GNSS spike forwards and back
+     *  costs a drawdown the size of the spike but cannot bring the ratio under
+     *  zero on its own; following the wrong leg does so within ten samples. */
+    const val BRANCH_SWITCH_MAX_RATIO: Double = 0.0
 
     /** Uncertainty [m] in how far along a route one sample interval should have
      *  moved the user, given how far they demonstrably travelled. Floor; for fast
@@ -193,6 +216,13 @@ object Tuning {
     /** Candidates below this weight contribute nothing to the pooled ahead/behind
      *  estimate (US-5). Keeps a long tail of near-dead routes out of the average. */
     const val LIVE_CANDIDATE_MIN_WEIGHT: Double = 0.05
+
+    /** While routes are tied, the ahead/behind estimate averages them equally,
+     *  and a route needs this much of the belief to be one of them. Two routes
+     *  over the same ground sit near a half each; a route that is only there
+     *  because its geometry passes underneath — a freshly admitted way home,
+     *  placed at its far end — never comes near it. */
+    const val DELTA_TIE_MIN_WEIGHT: Double = 0.20
 
     /** Clamp on the observed-vs-median pace ratio k used for the ETA. A ratio
      *  outside this range is a measurement problem, not a performance. */
@@ -670,33 +700,28 @@ object Tuning {
     const val STALE_POSITION_MS: Long = 20_000L
 
     /**
-     * Full-scale deflection of the ahead/behind bar, as a multiple of the
-     * route's own interquartile spread at the finish.
+     * Full-scale deflection of the ahead/behind bar [s], one fixed number per
+     * sport.
      *
-     * A bar needs a scale, and the only defensible one is the route's own
-     * history: being a minute down means something quite different on a
-     * fifteen-minute commute that never varies than on a two-hour ride that
-     * varies by ten. Two IQRs pins the bar at "further outside your usual spread
-     * than three quarters of your attempts ever get".
+     * It used to be the route's own interquartile spread, which made the same
+     * minute fill a different share of the bar on every route, and — because a
+     * tie between routes has no single spread — made the scale jump whenever the
+     * matcher committed or let go. A bar is read by its length at a glance; that
+     * only works if the length always means the same thing. Beyond full scale
+     * the bar stays full and says so (the watch draws an arrow at its tip), and
+     * the number beside it is exact either way.
      *
-     * Taken at the *end* of the route, not at the current position, so the scale
-     * is one number for the whole workout: a bar whose scale moved underneath it
-     * would swing while the user held a steady pace, which is the opposite of
-     * what it is for.
+     * Chosen as "clearly a different day" for each sport: a few minutes on a
+     * commute or an evening walk, less on a run, where a minute is a lot, and
+     * ten on the long and weather-bound days hiking and touring are.
      */
-    const val DELTA_SCALE_IQR_MULTIPLE: Double = 2.0
-
-    /** Floor under [DELTA_SCALE_IQR_MULTIPLE] as a fraction of the route's median
-     *  total time, for a route whose members are so alike — or so few — that its
-     *  quartiles almost touch. Without it a metronomic commute produces a bar
-     *  that slams to full scale over a few seconds of traffic light. */
-    const val DELTA_SCALE_MIN_FRACTION: Double = 0.04
-
-    /** Absolute bounds on the bar's scale [s]. The floor keeps a short route's
-     *  bar from being a hair trigger; the ceiling keeps a long one's from being
-     *  a bar that never visibly moves. */
-    const val DELTA_SCALE_MIN_S: Double = 45.0
-    const val DELTA_SCALE_MAX_S: Double = 900.0
+    fun deltaFullScaleS(type: ExerciseType): Double = when (type) {
+        ExerciseType.RUNNING -> 120.0
+        ExerciseType.WALKING -> 180.0
+        ExerciseType.BIKING -> 180.0
+        ExerciseType.HIKING -> 600.0
+        ExerciseType.SKIING -> 600.0
+    }
 
     /**
      * How long since the last usable position fix before the watch says so.

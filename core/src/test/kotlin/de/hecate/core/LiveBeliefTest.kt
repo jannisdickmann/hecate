@@ -76,7 +76,7 @@ class LiveBeliefTest {
         assertTrue(progress > 0.5, "near the end of the route, progress should be well advanced: $progress")
         assertNotNull(committed.remainingM)
         val scale = assertNotNull(committed.deltaScaleS, "no full-scale deflection for the ahead/behind bar")
-        assertTrue(scale >= Tuning.DELTA_SCALE_MIN_S)
+        assertEquals(Tuning.deltaFullScaleS(today.header.exerciseType), scale)
     }
 
     @Test

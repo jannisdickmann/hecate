@@ -149,7 +149,13 @@ object ReplayMain {
                         s.nullWeight,
                         s.deltaVsMedianS?.let { "Δ=%+.0fs ".format(it) } ?: "",
                         if (s.deviationAlert) "!! ABWEICHUNG" else "",
-                    ),
+                    ) + if (verbose) {
+                        s.candidates.take(3).joinToString(" ", prefix = "  ") {
+                            "%d:%.2f@%.0f/%.0fm".format(it.routeId, it.weight, it.positionM, it.offsetM)
+                        }
+                    } else {
+                        ""
+                    },
                 )
                 lastPhase = s.phase
                 lastRoute = s.committedRouteId

@@ -9,7 +9,7 @@ import de.hecate.core.display.routeBelief
 import de.hecate.core.model.Candidate
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
-import de.hecate.core.model.RouteProfile
+import de.hecate.core.model.ExerciseType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -306,36 +306,11 @@ class DisplayTest {
 
     // ------------------------------------------------------------- bar scaling
 
-    private fun profile(median: List<Double>, p25: List<Double>, p75: List<Double>) =
-        RouteProfile(routeId = 1L, binM = 10.0, medianCumTimeS = median, p25S = p25, p75S = p75)
-
     @Test
-    fun `the bar scales with the route's own spread`() {
-        val p = profile(listOf(0.0, 1800.0), listOf(0.0, 1700.0), listOf(0.0, 1900.0))
-        // 2 × a 200 s interquartile spread, which is well clear of both bounds.
-        assertEquals(400.0, p.deltaFullScaleS(), 1e-9)
-    }
-
-    @Test
-    fun `a route nobody ever varies on still gets a usable scale`() {
-        val p = profile(listOf(0.0, 3600.0), listOf(0.0, 3600.0), listOf(0.0, 3600.0))
-        // No spread at all: 4 % of the median hour, not a bar that slams to full
-        // scale at one traffic light.
-        assertEquals(144.0, p.deltaFullScaleS(), 1e-9)
-    }
-
-    @Test
-    fun `the scale is bounded at both ends`() {
-        val tiny = profile(listOf(0.0, 60.0), listOf(0.0, 60.0), listOf(0.0, 60.0))
-        assertEquals(Tuning.DELTA_SCALE_MIN_S, tiny.deltaFullScaleS(), 1e-9)
-
-        val huge = profile(listOf(0.0, 20_000.0), listOf(0.0, 15_000.0), listOf(0.0, 25_000.0))
-        assertEquals(Tuning.DELTA_SCALE_MAX_S, huge.deltaFullScaleS(), 1e-9)
-    }
-
-    @Test
-    fun `a profile without quartiles falls back rather than reporting no scale`() {
-        val p = RouteProfile(routeId = 1L, binM = 10.0, medianCumTimeS = listOf(0.0, 2400.0))
-        assertEquals(96.0, p.deltaFullScaleS(), 1e-9)
+    fun `the bar has one scale per sport, whatever the route`() {
+        val committed = ExerciseType.entries.associateWith { Tuning.deltaFullScaleS(it) }
+        assertTrue(committed.values.all { it in 60.0..900.0 }, "$committed")
+        // A minute matters more on a run than on a ride.
+        assertTrue(Tuning.deltaFullScaleS(ExerciseType.RUNNING) < Tuning.deltaFullScaleS(ExerciseType.BIKING))
     }
 }

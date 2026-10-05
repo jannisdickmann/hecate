@@ -218,6 +218,21 @@ object Synthetic {
         ),
     )
 
+    /**
+     * "Abendrunde" in miniature: out along a street, round a block, and home
+     * along the same street on the other pavement, [lollipopReturnEastM] over.
+     * The stem is ground the route covers twice, and the finish is the start.
+     */
+    fun lollipop(outboundEastM: Double = 0.0): List<LatLon> = path(
+        listOf(
+            at(outboundEastM, 0.0), at(outboundEastM, 600.0),
+            at(400.0, 600.0), at(400.0, 1000.0), at(0.0, 1000.0), at(0.0, 600.0),
+            at(lollipopReturnEastM, 600.0), at(lollipopReturnEastM, 0.0),
+        ),
+    )
+
+    const val lollipopReturnEastM = 6.0
+
     /** Monday 2024-03-04, 07:30 UTC. */
     const val MONDAY_0730_UTC = 1_709_537_400_000L
     const val DAY_MS = 86_400_000L

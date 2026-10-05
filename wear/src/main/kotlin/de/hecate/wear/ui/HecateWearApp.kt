@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
@@ -632,9 +633,10 @@ private const val MIN_METRIC_SP = 16f
  *    grows the way the workout does.
  *  - **Right**, anchored at 0° (three o'clock) with the sign of the sweep doing
  *    the work: negative runs anticlockwise, which is upwards, for ahead; positive
- *    runs down for behind. Full scale is [de.hecate.core.model.RouteProfile.deltaFullScaleS],
- *    the route's own interquartile spread rather than an arbitrary number of
- *    minutes.
+ *    runs down for behind. Full scale is one fixed number per sport
+ *    ([de.hecate.core.Tuning.deltaFullScaleS]), so the same length always means
+ *    the same number of minutes. Past it the bar stays full and an arrowhead
+ *    beyond its tip points on, the way a gauge says "off the scale".
  *
  * Both stop well short of twelve and six o'clock, where the clock and the pager
  * indicator live. An empty track is always drawn: a bar that is present and
@@ -651,6 +653,7 @@ private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
         null
     }
     val deltaFraction = deltaFractionOf(state)
+    val deltaOverflow = deltaOverflowOf(state)
 
     // Animated because the recorder publishes about once a second and an
     // un-animated bar steps visibly on every one of them.
@@ -691,6 +694,34 @@ private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
         if (progress != null) arc(progressColour, LEFT_START, ARC_SWEEP * shownProgress)
         if (deltaFraction != null) arc(deltaColour, 0f, -HALF_SWEEP * shownDelta)
 
+        // Off the scale: an arrowhead just past the full bar's rounded tip,
+        // pointing further along the track, in the bar's own colour. Only once
+        // the animation has arrived, so it never floats ahead of a moving bar.
+        if (deltaOverflow != 0 && abs(shownDelta) > OVERFLOW_ARROW_FROM) {
+            val radius = diameter / 2f
+            val centre = Offset(size.width / 2f, size.height / 2f)
+            // Ahead runs anticlockwise (negative degrees), behind clockwise.
+            val sign = if (deltaOverflow > 0) -1f else 1f
+            val rad = (Math.PI / 180.0).toFloat()
+            val baseDeg = HALF_SWEEP + (strokePx * 0.9f / radius) / rad
+            val tipDeg = baseDeg + (strokePx * 1.6f / radius) / rad
+            fun at(deg: Float, r: Float) = Offset(
+                centre.x + r * kotlin.math.cos(sign * deg * rad),
+                centre.y + r * kotlin.math.sin(sign * deg * rad),
+            )
+            val halfWidth = strokePx * 0.95f
+            val path = Path().apply {
+                val a = at(baseDeg, radius - halfWidth)
+                val b = at(baseDeg, radius + halfWidth)
+                val t = at(tipDeg, radius)
+                moveTo(a.x, a.y)
+                lineTo(b.x, b.y)
+                lineTo(t.x, t.y)
+                close()
+            }
+            drawPath(path, deltaColour)
+        }
+
         // The median, ticked across the right-hand track so that a bar sitting
         // near zero is readably near zero rather than merely short.
         val radius = diameter / 2f
@@ -706,36 +737,43 @@ private fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
 }
 
 /**
- * Today's delta as a fraction of full scale, positive for ahead.
+ * Today's delta as a fraction of full scale, positive for ahead, or null when
+ * there is nothing to draw.
  *
  * The sign flip is deliberate: [de.hecate.core.model.MatchState.deltaVsMedianS]
  * is positive when *slower*, and a bar that grew upwards as the user fell behind
  * would be read backwards by everyone including its author.
- */
-/**
- * The ahead/behind bar's deflection, or null when there is nothing to draw.
  *
- * The delta itself is pooled across the live candidates rather than taken from
- * one route, so it exists as soon as the matcher has any of them — including
- * while two routes are still indistinguishable. Only the *scale* comes from a
- * single route's own quartiles, and that is the one thing a tie cannot supply.
- * Falling back to a fixed scale there keeps the bar on screen through exactly
- * the stretch of a workout it used to vanish for: a route family sharing a long
- * prefix, where the watch knows perfectly well that you are a minute up.
- *
- * The fallback is deliberately coarse. It is a reading of "about how far ahead",
- * not a measurement against this route's own spread, and [DEFAULT_DELTA_SCALE_S]
- * is wide enough that a normal day sits well inside it rather than pinned.
+ * The scale is the sport's, fixed for the whole workout. It used to be the
+ * route's own spread, with a five-minute fallback while routes were tied, so
+ * the bar rescaled every time the matcher committed or let go — a bar whose
+ * length changed while the number beside it did not.
  */
 private fun deltaFractionOf(state: RecorderUiState): Float? {
     val delta = state.deltaVsMedianS ?: return null
-    val scale = state.deltaScaleS?.takeIf { it > 0.0 } ?: DEFAULT_DELTA_SCALE_S
-    return (-delta / scale).coerceIn(-1.0, 1.0).toFloat()
+    return (-delta / deltaScaleOf(state)).coerceIn(-1.0, 1.0).toFloat()
 }
 
-/** Full-scale deflection when no single route owns the bar: five minutes either
- *  way. See [deltaFractionOf]. */
-private const val DEFAULT_DELTA_SCALE_S = 300.0
+/** +1 when further ahead than the bar can show, −1 when further behind, else 0. */
+private fun deltaOverflowOf(state: RecorderUiState): Int {
+    val delta = state.deltaVsMedianS ?: return 0
+    val scale = deltaScaleOf(state)
+    return when {
+        -delta > scale -> 1
+        delta > scale -> -1
+        else -> 0
+    }
+}
+
+private fun deltaScaleOf(state: RecorderUiState): Double =
+    state.deltaScaleS?.takeIf { it > 0.0 } ?: DEFAULT_DELTA_SCALE_S
+
+/** Only for a state that predates the matcher reporting a scale; every live
+ *  state carries its sport's. */
+private const val DEFAULT_DELTA_SCALE_S = 180.0
+
+/** How full the animated bar must be before the overflow arrow is drawn. */
+private const val OVERFLOW_ARROW_FROM = 0.98f
 
 /** Where the arcs sit, in `drawArc` degrees. Both leave room at twelve and six
  *  o'clock for the clock and the pager indicator. */

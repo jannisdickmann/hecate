@@ -64,8 +64,10 @@ object ActiveClock {
         return out
     }
 
-    /** How much active time lies between two consecutive samples, in ms. */
-    private fun elapsed(previous: Sample, next: Sample): Long {
+    /** How much active time lies between two consecutive samples, in ms. Public
+     *  so the live matcher can run the very clock its route profiles were
+     *  measured on, one sample at a time. */
+    fun elapsed(previous: Sample, next: Sample): Long {
         if (previous.paused || next.paused) return 0L
         val dt = next.tOffsetMs - previous.tOffsetMs
         if (dt <= 0 || dt > Tuning.MAX_INTERPOLATION_GAP_MS) return 0L

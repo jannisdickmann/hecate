@@ -77,6 +77,38 @@ class GeoTest {
     }
 
     @Test
+    fun `localisation takes the pass that continues, not the nearer one`() {
+        // The stem is walked out at east 0 and home at east 6; this fix is on the
+        // way home's pavement, so the way home is nearer by a few metres.
+        val pl = Polyline.of(Synthetic.lollipop())
+        val p = Synthetic.at(5.0, 300.0)
+        assertTrue(pl.projectAll(p).positionM > 1500.0, "the fixture must make the late pass the nearer one")
+
+        // Nothing to go on: the start of the route wins.
+        assertEquals(300.0, pl.localise(p, 0.0, Tuning.LOCALISE_TIE_M).positionM, 10.0)
+        // Last seen on the way home: the way home it is.
+        assertTrue(pl.localise(p, 2000.0, Tuning.LOCALISE_TIE_M).positionM > 2000.0)
+    }
+
+    @Test
+    fun `a closed loop is started at its start, however near its finish is`() {
+        val pl = Polyline.of(Synthetic.lollipop())
+        val atHome = Synthetic.at(5.0, 2.0)
+        assertTrue(pl.projectAll(atHome).positionM > pl.lengthM - 20.0)
+        assertTrue(pl.localise(atHome, 0.0, Tuning.LOCALISE_TIE_M).positionM < 20.0)
+    }
+
+    @Test
+    fun `a different street is not a tie`() {
+        // Beside the loop's east side, 380 m from the stem: one stretch is near and
+        // nothing else is, so localising is plain nearest-point projection.
+        val pl = Polyline.of(Synthetic.lollipop())
+        val p = Synthetic.at(380.0, 800.0)
+        val hit = pl.localise(p, 0.0, Tuning.LOCALISE_TIE_M)
+        assertEquals(pl.projectAll(p).positionM, hit.positionM, 1e-6)
+    }
+
+    @Test
     fun `pointAt walks the polyline`() {
         val pl = Polyline.of(Synthetic.path(listOf(Synthetic.at(0.0, 0.0), Synthetic.at(500.0, 0.0)), 5.0))
         val mid = pl.pointAt(250.0)

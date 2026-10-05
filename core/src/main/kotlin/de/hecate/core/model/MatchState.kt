@@ -84,10 +84,9 @@ data class MatchState(
     /** How far along the route the user is, 0..1, from the same route as
      *  [remainingM]. Null when no route is being followed. */
     val progressFraction: Double? = null,
-    /** Full-scale deflection for an ahead/behind indicator [s], derived from the
-     *  route's own quartiles (`Tuning.DELTA_SCALE_*`). Null when no route is
-     *  being followed, which is also when [deltaVsMedianS] has no single route
-     *  behind it. */
+    /** Full-scale deflection for an ahead/behind indicator [s]: one fixed
+     *  number for the sport ([de.hecate.core.Tuning.deltaFullScaleS]), so the
+     *  bar never rescales underneath the user. */
     val deltaScaleS: Double? = null,
     /** The bundle holds no route of this exercise type at all. Different from
      *  [MatchPhase.UNKNOWN], which means the user is off every route there is —
