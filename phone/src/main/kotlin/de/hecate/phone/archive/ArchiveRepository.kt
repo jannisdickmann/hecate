@@ -1,18 +1,14 @@
 package de.hecate.phone.archive
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
 import androidx.room.withTransaction
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Track
 import de.hecate.core.io.BundleCodec
-import de.hecate.core.model.Altitudes
-import de.hecate.core.model.HeartRates
-import de.hecate.core.model.MatchLogEntry
-import de.hecate.core.model.SessionEvent
 import de.hecate.core.model.RecordedSession
-import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
 import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
@@ -20,21 +16,22 @@ import de.hecate.core.model.SessionSource
 import de.hecate.core.archive.Archive
 import de.hecate.core.archive.ArchiveCodec
 import de.hecate.phone.db.HecateDatabase
-import de.hecate.phone.db.MatchLogEntity
-import de.hecate.phone.db.SessionEventsEntity
-import de.hecate.phone.db.SessionSeriesEntity
 import de.hecate.phone.db.MetaEntity
 import de.hecate.phone.db.RouteEntity
 import de.hecate.phone.db.RouteMemberEntity
 import de.hecate.phone.db.RoutePointEntity
 import de.hecate.phone.db.RouteProfileEntity
-import de.hecate.phone.db.SampleEntity
 import de.hecate.phone.db.SessionEntity
+import de.hecate.phone.db.decodeOrEmpty
+import de.hecate.phone.db.duplicateOf
+import de.hecate.phone.db.insertBlobs
+import de.hecate.phone.db.mergedSamples
+import de.hecate.phone.db.toEntity
+import de.hecate.phone.db.toSample
 import de.hecate.phone.io.CacheFile
 import de.hecate.phone.work.Jobs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * Moves the database in and out of the backup archive (§1.3 of the open points).
@@ -125,46 +122,20 @@ class ArchiveRepository(
      * by however long the session spent paused.
      */
     private suspend fun recordedSession(session: SessionEntity): RecordedSession {
-        val samples = db.sessions().samples(session.id).map {
-            Sample(
-                tOffsetMs = it.tOffsetMs,
-                activeMs = it.activeMs,
-                lat = it.lat,
-                lon = it.lon,
-                altM = it.altM,
-                hrBpm = it.hrBpm,
-                accuracyM = it.accuracyM,
-                paused = it.paused,
-            )
-        }
-        val matchLog = db.sessions().matchLog(session.id)?.let { row ->
-            runCatching { BundleCodec.decodeMatchLog(row.payload.toString(Charsets.UTF_8)) }
-                .getOrDefault(emptyList())
-        } ?: emptyList()
+        val samples = db.sessions().samples(session.id).map { it.toSample() }
+        val matchLog = db.sessions().matchLog(session.id)?.payload.decodeOrEmpty(BundleCodec::decodeMatchLog)
         // Empty for anything ingested before schema v3, which had nowhere to keep
         // these. ArchiveCodec has always written an events section; until now it
         // was always writing nothing into it.
-        val events = db.sessions().events(session.id)?.let { row ->
-            runCatching { BundleCodec.decodeEvents(row.payload.toString(Charsets.UTF_8)) }
-                .getOrDefault(emptyList())
-        } ?: emptyList()
+        val events = db.sessions().events(session.id)?.payload.decodeOrEmpty(BundleCodec::decodeEvents)
         // The sensors' own series, from schema v8. Before it they were merged
         // into the sample columns and discarded, so a backup of an older session
         // carries the merged result and nothing to re-derive it from — which is
         // exactly the loss the table was added to stop.
         val series = db.sessions().series(session.id)
-        val rates = series?.heartRates?.let { blob ->
-            runCatching { BundleCodec.decodeRates(blob.toString(Charsets.UTF_8)) }
-                .getOrDefault(emptyList())
-        } ?: emptyList()
-        val altitudes = series?.altitudes?.let { blob ->
-            runCatching { BundleCodec.decodeReadings(blob.toString(Charsets.UTF_8)) }
-                .getOrDefault(emptyList())
-        } ?: emptyList()
-        val speeds = series?.speeds?.let { blob ->
-            runCatching { BundleCodec.decodeReadings(blob.toString(Charsets.UTF_8)) }
-                .getOrDefault(emptyList())
-        } ?: emptyList()
+        val rates = series?.heartRates.decodeOrEmpty(BundleCodec::decodeRates)
+        val altitudes = series?.altitudes.decodeOrEmpty(BundleCodec::decodeReadings)
+        val speeds = series?.speeds.decodeOrEmpty(BundleCodec::decodeReadings)
 
         return RecordedSession(
             header = SessionHeader(
@@ -256,24 +227,8 @@ class ArchiveRepository(
                     // two series exactly as the watch wrote them, so a restore
                     // has to put them together too. A session without a separate
                     // series comes through unchanged.
-                    db.sessions().insertSamples(
-                        Altitudes.merge(
-                            HeartRates.merge(session.samples, session.heartRates),
-                            session.altitudes,
-                        ).map { it.toEntity(row.id) },
-                    )
-                    if (session.heartRates.isNotEmpty() ||
-                        session.altitudes.isNotEmpty() ||
-                        session.speeds.isNotEmpty()
-                    ) {
-                        db.sessions().upsertSeries(seriesEntity(row.id, session))
-                    }
-                    if (session.matchLog.isNotEmpty()) {
-                        db.sessions().upsertMatchLog(matchLogEntity(row.id, session.matchLog))
-                    }
-                    if (session.events.isNotEmpty()) {
-                        db.sessions().upsertEvents(eventsEntity(row.id, session.events))
-                    }
+                    db.sessions().insertSamples(session.mergedSamples().map { it.toEntity(row.id) })
+                    db.sessions().insertBlobs(row.id, session)
                 }
                 restored++
             } catch (e: Exception) {
@@ -349,47 +304,19 @@ class ArchiveRepository(
      * gives the clusterer two members for one journey and quietly inflates every
      * route's member count.
      */
-    private suspend fun isDuplicateImport(row: Archive.Session): Boolean {
-        if (!row.source.isImport) return false
-        return db.sessions().near(row.startedAtUtc, Tuning.DUPLICATE_START_WINDOW_MS).any {
-            Track.likelyDuplicate(
-                it.startedAtUtc, it.activeDurationMs,
-                row.startedAtUtc, row.activeDurationMs,
-            )
-        }
-    }
+    private suspend fun isDuplicateImport(row: Archive.Session): Boolean =
+        row.source.isImport && db.sessions().duplicateOf(row.startedAtUtc, row.activeDurationMs) != null
 
     // ---------------------------------------------------------------- plumbing
 
     private fun appVersion(): String = runCatching {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        context.packageManager
+            .getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+            .versionName
     }.getOrNull() ?: ""
 
     private companion object {
         const val TAG = "ArchiveRepository"
-
-        fun matchLogEntity(sessionId: String, entries: List<MatchLogEntry>) = MatchLogEntity(
-            sessionId = sessionId,
-            payload = BundleCodec.encodeMatchLog(entries).toByteArray(Charsets.UTF_8),
-        )
-
-        fun eventsEntity(sessionId: String, events: List<SessionEvent>) = SessionEventsEntity(
-            sessionId = sessionId,
-            payload = BundleCodec.encodeEvents(events).toByteArray(Charsets.UTF_8),
-        )
-
-        fun seriesEntity(sessionId: String, session: RecordedSession) = SessionSeriesEntity(
-            sessionId = sessionId,
-            heartRates = session.heartRates
-                .takeIf { it.isNotEmpty() }
-                ?.let { BundleCodec.encodeRates(it).toByteArray(Charsets.UTF_8) },
-            altitudes = session.altitudes
-                .takeIf { it.isNotEmpty() }
-                ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
-            speeds = session.speeds
-                .takeIf { it.isNotEmpty() }
-                ?.let { BundleCodec.encodeReadings(it).toByteArray(Charsets.UTF_8) },
-        )
 
         fun SessionEntity.toArchive() = Archive.Session(
             id = id,
@@ -458,18 +385,6 @@ class ArchiveRepository(
             // first. A 9 becomes the top of the new scale, which is what it
             // meant.
             priority = priority.coerceIn(Tuning.MIN_ROUTE_PRIORITY, Tuning.MAX_ROUTE_PRIORITY),
-        )
-
-        fun Sample.toEntity(sessionId: String) = SampleEntity(
-            sessionId = sessionId,
-            tOffsetMs = tOffsetMs,
-            activeMs = activeMs,
-            lat = lat,
-            lon = lon,
-            altM = altM,
-            hrBpm = hrBpm,
-            accuracyM = accuracyM,
-            paused = paused,
         )
     }
 }

@@ -58,13 +58,10 @@ object Format {
 
     /** "Mo, 04.03.2024 · 08:30" in the session's own time zone. */
     fun dateTime(utcMs: Long, tzOffsetMinutes: Int): String {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
-            timeInMillis = utcMs + tzOffsetMinutes * 60_000L
-        }
-        val days = arrayOf("So", "Mo", "Di", "Mi", "Do", "Fr", "Sa")
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
         return String.format(
             DE, "%s, %02d.%02d.%d · %02d:%02d",
-            days[cal.get(Calendar.DAY_OF_WEEK) - 1],
+            DAYS[cal.get(Calendar.DAY_OF_WEEK) - 1],
             cal.get(Calendar.DAY_OF_MONTH),
             cal.get(Calendar.MONTH) + 1,
             cal.get(Calendar.YEAR),
@@ -74,9 +71,7 @@ object Format {
     }
 
     fun date(utcMs: Long, tzOffsetMinutes: Int): String {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
-            timeInMillis = utcMs + tzOffsetMinutes * 60_000L
-        }
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
         return String.format(
             DE, "%02d.%02d.%02d",
             cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.YEAR) % 100,
@@ -84,11 +79,19 @@ object Format {
     }
 
     fun timeOfDay(utcMs: Long, tzOffsetMinutes: Int): String {
-        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
-            timeInMillis = utcMs + tzOffsetMinutes * 60_000L
-        }
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
         return String.format(DE, "%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
     }
+
+    /** A UTC calendar shifted by the session's own offset, so its fields read
+     *  as the wall clock where the session was recorded — not where the phone
+     *  is now. */
+    private fun localCalendar(utcMs: Long, tzOffsetMinutes: Int): Calendar =
+        Calendar.getInstance(TimeZone.getTimeZone("UTC"), DE).apply {
+            timeInMillis = utcMs + tzOffsetMinutes * 60_000L
+        }
+
+    private val DAYS = arrayOf("So", "Mo", "Di", "Mi", "Do", "Fr", "Sa")
 
     /** "412 m", rounded — a metre of altitude is already more precision than a
      *  barometer deserves, and a decimal point would only invite belief in it. */
@@ -101,6 +104,9 @@ object Format {
     }
 
     fun hr(value: Double?): String = value?.let { String.format(DE, "%d", it.roundToInt()) } ?: "–"
+
+    /** A route match's coverage as "0,87". */
+    fun coverage(value: Double?): String = value?.let { String.format(DE, "%.2f", it) } ?: "–"
 
     /**
      * A route name short enough to sit in a list row: at most

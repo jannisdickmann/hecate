@@ -7,16 +7,15 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -30,7 +29,6 @@ import de.hecate.core.map.LabelCandidate
 import de.hecate.core.map.LabelPlacer
 import de.hecate.core.map.MapClass
 import de.hecate.core.map.MapFeature
-import de.hecate.core.map.MapPlace
 import de.hecate.core.map.MapScene
 import de.hecate.core.map.MapView
 import de.hecate.core.map.PlaceClass
@@ -82,9 +80,7 @@ fun rememberBasemapScene(
     // Level of detail in **dp** per metre, never pixels: a 3x screen must not
     // show a denser map than a 1x one at the same apparent size.
     val dpPerM = view.pxPerM * zoom / density
-    // Quantised, so a pinch does not rebuild the scene sixty times a second.
-    // Six steps over 1..8, which is one rebuild per halving of the ground.
-    val zoomKey = remember(zoom) { (log2(zoom.coerceAtLeast(0.01f).toDouble()) * 2).roundToInt() }
+    val zoomKey = zoomStep(zoom)
     val generation by repository.generation.collectAsState()
 
     val state = produceState<BasemapScene?>(
@@ -152,7 +148,7 @@ fun rememberPlacedLabels(
 ): List<PlacedLabel> {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val zoomKey = (log2(zoom.coerceAtLeast(0.01f).toDouble()) * 2).roundToInt()
+    val zoomKey = zoomStep(zoom)
     return remember(scene, visible, zoomKey, density) {
         if (scene == null || scene.labels.isEmpty()) return@remember emptyList()
         val areaDp2 = with(density) {
@@ -179,6 +175,11 @@ fun rememberPlacedLabels(
         )
     }
 }
+
+/** [zoom] quantised, so a pinch does not rebuild the scene or re-place the labels
+ *  sixty times a second. Six steps over 1..8, which is one rebuild per halving
+ *  of the ground. */
+private fun zoomStep(zoom: Float): Int = (log2(zoom.coerceAtLeast(0.01f).toDouble()) * 2).roundToInt()
 
 private fun styleFor(cls: PlaceClass) = TextStyle(
     // In sp, so the names follow the user's font scale — and not the map's
@@ -262,7 +263,7 @@ fun DrawScope.drawBasemap(
                 layout,
                 color = colors.label,
                 topLeft = topLeft,
-                drawStyle = androidx.compose.ui.graphics.drawscope.Fill,
+                drawStyle = Fill,
             )
         }
     }

@@ -26,9 +26,7 @@ class TcxImporter(
         val duplicates: Int = 0,
         val failed: Int = 0,
         val messages: List<String> = emptyList(),
-    ) {
-        val total: Int get() = imported + duplicates + failed
-    }
+    )
 
     /** Import a multi-selection from the file picker. */
     suspend fun import(uris: List<Uri>): Report = withContext(Dispatchers.IO) {
@@ -40,7 +38,7 @@ class TcxImporter(
         for (uri in uris) {
             try {
                 val sessions = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    TcxParser.parse(stream) { startedAt, index -> idFor(uri, startedAt, index) }
+                    TcxParser.parse(stream, idFor = ::idFor)
                 } ?: emptyList()
 
                 for (session in sessions) {
@@ -67,9 +65,11 @@ class TcxImporter(
 
     /**
      * A stable id derived from the start time, so re-importing the same export
-     * is recognised as the same session even before the time-window check.
+     * is recognised as the same session even before the time-window check. Not
+     * the file it came from: the same export saved under another name is still
+     * the same workout.
      */
-    private fun idFor(uri: Uri, startedAtUtcMs: Long, index: Int): String {
+    private fun idFor(startedAtUtcMs: Long, index: Int): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest("tcx|$startedAtUtcMs|$index".toByteArray(Charsets.UTF_8))
         val hex = digest.take(16).joinToString("") { "%02x".format(it) }

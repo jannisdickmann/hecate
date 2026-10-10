@@ -17,7 +17,9 @@ import de.hecate.core.io.BundleCodec
 import de.hecate.core.map.TileStore
 import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
+import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEvent
 import de.hecate.core.profile.Elevation
 import de.hecate.core.profile.Series
@@ -26,8 +28,12 @@ import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HeatmapEntity
+import de.hecate.phone.db.MetaEntity
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
+import de.hecate.phone.db.Settings
+import de.hecate.phone.db.decodeOrEmpty
+import de.hecate.phone.db.toSummary
 import de.hecate.phone.export.GpxExporter
 import de.hecate.phone.tcx.TcxImporter
 import de.hecate.phone.work.Jobs
@@ -161,7 +167,7 @@ data class SessionDetail(
 )
 
 /**
- * One view model for the whole phone app. Three screens do not need three.
+ * One view model for the whole phone app. Five screens do not need five.
  */
 class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -221,15 +227,15 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      *  it takes the query to return made a full history flash "Noch keine
      *  Aufzeichnungen" on every launch. */
     private val sessionsOrNull: StateFlow<List<SessionSummary>?> = db.sessions().summaries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, WHILE_SHOWN, null)
 
     val sessions: StateFlow<List<SessionSummary>> = sessionsOrNull
         .map { it.orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, WHILE_SHOWN, emptyList())
 
     val sessionsLoaded: StateFlow<Boolean> = sessionsOrNull
         .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        .stateIn(viewModelScope, WHILE_SHOWN, false)
 
     /**
      * The activities the filter offers: the ones that actually occur, commonest
@@ -254,7 +260,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
                 .filter { counts.containsKey(it) }
                 .sortedByDescending { counts.getValue(it) }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, WHILE_SHOWN, emptyList())
 
     /**
      * Which activity the recordings list is restricted to, or null for all of
@@ -281,13 +287,13 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      */
     val activityFilter: StateFlow<ExerciseType?> =
         combine(_activityFilter, activityTypes) { picked, types -> picked?.takeIf { it in types } }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+            .stateIn(viewModelScope, WHILE_SHOWN, null)
 
     /** The recordings the list shows: [sessions] through [activityFilter]. */
     val filteredSessions: StateFlow<List<SessionSummary>> =
         combine(sessions, activityFilter) { list, filter ->
             if (filter == null) list else list.filter { it.exerciseType == filter }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        }.stateIn(viewModelScope, WHILE_SHOWN, emptyList())
 
     /**
      * The heart rate the intensity bands are measured against.
@@ -297,21 +303,21 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * otherwise — see [Tuning.DEFAULT_PEAK_HR_BPM] for why it is a placeholder
      * rather than a calculation.
      */
-    val peakHr: StateFlow<Int> = db.meta().watch(de.hecate.phone.db.Settings.PEAK_HR_BPM)
+    val peakHr: StateFlow<Int> = db.meta().watch(Settings.PEAK_HR_BPM)
         .map { rows -> rows.firstOrNull()?.toIntOrNull() ?: Tuning.DEFAULT_PEAK_HR_BPM }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Tuning.DEFAULT_PEAK_HR_BPM)
+        .stateIn(viewModelScope, WHILE_SHOWN, Tuning.DEFAULT_PEAK_HR_BPM)
 
     /** Null until the database has answered once; see [sessionsOrNull]. */
     private val routesOrNull: StateFlow<List<RouteSummary>?> = db.routes().summaries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, WHILE_SHOWN, null)
 
     val routes: StateFlow<List<RouteSummary>> = routesOrNull
         .map { it.orEmpty() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, WHILE_SHOWN, emptyList())
 
     val routesLoaded: StateFlow<Boolean> = routesOrNull
         .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        .stateIn(viewModelScope, WHILE_SHOWN, false)
 
     /**
      * The card's heatmap, and the geometry of the routes it accepted (US-8).
@@ -333,7 +339,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         // stored raster is millions of cells, and inflating and parsing it is
         // real work rather than the microseconds a 192x108 grid used to be.
         .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, WHILE_SHOWN, null)
 
     /**
      * The full-screen heatmap: everything inside the radius, loaded only while
@@ -412,7 +418,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     val clustering: StateFlow<Boolean> =
         WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.CLUSTER)
             .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED } }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+            .stateIn(viewModelScope, WHILE_SHOWN, false)
 
     /**
      * The map prefetch, if there is one: waiting, or running and how far.
@@ -437,7 +443,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
                     MapPrefetch(running = false, interrupted = it.runAttemptCount > 0)
                 }
             }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+            .stateIn(viewModelScope, WHILE_SHOWN, null)
 
     /** How much OpenStreetMap ground is stored, for the settings card (A.29). */
     val mapStats: StateFlow<TileStore.Stats> = AppGraph.basemap.stats
@@ -451,7 +457,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      */
     val standouts: StateFlow<Map<String, Standout>> = sessions
         .map(Standouts::compute)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+        .stateIn(viewModelScope, WHILE_SHOWN, emptyMap())
 
     fun show(screen: Screen) {
         val current = _screen.value
@@ -494,22 +500,17 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * the two detail screens have anything to export; anything else is ignored.
      */
     fun shareGpx(screen: Screen) = viewModelScope.launch {
-        if (screen !is Screen.SessionDetail && screen !is Screen.RouteDetail) return@launch
-        _busy.value = true
-        val result = runCatching {
-            when (screen) {
-                is Screen.SessionDetail -> AppGraph.gpx.session(screen.id)
-                is Screen.RouteDetail -> AppGraph.gpx.route(screen.id)
-                else -> null
-            }
+        val result = when (screen) {
+            is Screen.SessionDetail -> busyWhile { AppGraph.gpx.session(screen.id) }
+            is Screen.RouteDetail -> busyWhile { AppGraph.gpx.route(screen.id) }
+            else -> return@launch
         }
-        _busy.value = false
         result.fold(
             onSuccess = { share ->
                 if (share != null) _share.value = share
                 else _status.value = "Keine Positionen zum Exportieren"
             },
-            onFailure = { _status.value = "GPX-Export fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+            onFailure = { _status.value = failure("GPX-Export fehlgeschlagen", it) },
         )
     }
 
@@ -540,14 +541,11 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * to decide; the app neither knows nor asks (NFR-7).
      */
     fun exportArchive(uri: Uri) = viewModelScope.launch {
-        _busy.value = true
-        val result = runCatching { AppGraph.archive.export(uri) }
-        _busy.value = false
-        _status.value = result.fold(
+        _status.value = busyWhile { AppGraph.archive.export(uri) }.fold(
             onSuccess = { r ->
                 "Gesichert: ${r.sessions} Aufzeichnungen, ${r.routes} Routen (${Format.fileSize(r.bytes)})"
             },
-            onFailure = { "Sicherung fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+            onFailure = { failure("Sicherung fehlgeschlagen", it) },
         )
     }
 
@@ -556,10 +554,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * this can never cost the user data they still have.
      */
     fun restoreArchive(uri: Uri) = viewModelScope.launch {
-        _busy.value = true
-        val result = runCatching { AppGraph.archive.restore(uri) }
-        _busy.value = false
-        _status.value = result.fold(
+        _status.value = busyWhile { AppGraph.archive.restore(uri) }.fold(
             onSuccess = { r: Archive.RestoreReport ->
                 buildString {
                     append("${r.sessionsRestored} Aufzeichnungen wiederhergestellt")
@@ -568,7 +563,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
                     if (r.failed > 0) append(", ${r.failed} fehlgeschlagen")
                 }
             },
-            onFailure = { "Wiederherstellen fehlgeschlagen: ${it.message ?: "unbekannter Fehler"}" },
+            onFailure = { failure("Wiederherstellen fehlgeschlagen", it) },
         )
     }
 
@@ -587,15 +582,12 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     /** „Karte einlesen": take a store built on a laptop. */
     fun importMap(uri: Uri) = viewModelScope.launch {
-        _busy.value = true
-        val result = runCatching { AppGraph.basemap.import(uri) }
-        _busy.value = false
-        _status.value = result.fold(
+        _status.value = busyWhile { AppGraph.basemap.import(uri) }.fold(
             onSuccess = { taken ->
                 if (taken == 0) "Keine Kartenkacheln in der Datei"
                 else "$taken Kartenkacheln übernommen"
             },
-            onFailure = { "Karte konnte nicht eingelesen werden: ${it.message ?: "unbekannter Fehler"}" },
+            onFailure = { failure("Karte konnte nicht eingelesen werden", it) },
         )
     }
 
@@ -605,9 +597,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      * unconditionally.
      */
     fun deleteMap() = viewModelScope.launch {
-        _busy.value = true
-        runCatching { AppGraph.basemap.delete() }
-        _busy.value = false
+        busyWhile { AppGraph.basemap.delete() }
         _status.value = "Kartendaten gelöscht"
     }
 
@@ -644,9 +634,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setPeakHr(bpm: Int) = viewModelScope.launch {
         val clamped = bpm.coerceIn(Tuning.MIN_PEAK_HR_BPM, Tuning.MAX_PEAK_HR_BPM)
-        db.meta().put(
-            de.hecate.phone.db.MetaEntity(de.hecate.phone.db.Settings.PEAK_HR_BPM, clamped.toString()),
-        )
+        db.meta().put(MetaEntity(Settings.PEAK_HR_BPM, clamped.toString()))
         _status.value = "Maximalpuls $clamped bpm"
     }
 
@@ -739,8 +727,8 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val dao = db.routes()
         val route = dao.byId(routeId) ?: return@launch
         val points = dao.points(routeId)
-        val durations = dao.memberDurations(routeId)
         val members = dao.memberSessions(routeId)
+        val durations = members.map { it.activeDurationMs }
         val profileRows = dao.profile(routeId)
 
         // Straight off the profile bins, which are Tuning.RESAMPLE_M apart by
@@ -795,12 +783,8 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val entity = dao.byId(id) ?: return@launch
         val samples = dao.samples(id)
         val route = entity.matchedRouteId?.let { db.routes().byId(it) }
-        val log = dao.matchLog(id)?.let {
-            runCatching { BundleCodec.decodeMatchLog(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
-        } ?: emptyList()
-        val events = dao.events(id)?.let {
-            runCatching { BundleCodec.decodeEvents(it.payload.toString(Charsets.UTF_8)) }.getOrDefault(emptyList())
-        } ?: emptyList()
+        val log = dao.matchLog(id)?.payload.decodeOrEmpty(BundleCodec::decodeMatchLog)
+        val events = dao.events(id)?.payload.decodeOrEmpty(BundleCodec::decodeEvents)
 
         // Paused samples are dropped once, here, so that the track drawing, the
         // altitude profile and the smoothed heart rate all index the same series
@@ -841,7 +825,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         // the fault that found it (`ActiveClock`).
         val charted = ActiveClock.repair(
             moving.mapIndexed { i, it ->
-                de.hecate.core.model.Sample(
+                Sample(
                     tOffsetMs = it.tOffsetMs,
                     activeMs = it.activeMs,
                     lat = it.lat,
@@ -857,19 +841,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val chartedHeartRate = Timeline.simplify(Timeline.heartRateOfSamples(charted), CHART_POINTS)
 
         _sessionDetail.value = SessionDetail(
-            summary = SessionSummary(
-                id = entity.id,
-                startedAtUtc = entity.startedAtUtc,
-                tzOffsetMinutes = entity.tzOffsetMinutes,
-                exerciseType = entity.exerciseType,
-                activeDurationMs = entity.activeDurationMs,
-                totalDistanceM = entity.totalDistanceM,
-                source = entity.source,
-                hcWriteState = entity.hcWriteState,
-                matchedRouteId = entity.matchedRouteId,
-                routeName = route?.name,
-                avgHr = entity.avgHr,
-            ),
+            summary = entity.toSummary(route?.name),
             geometry = moving.mapIndexed { i, it -> TrackPoint(LatLon(it.lat, it.lon), hrAt(i)) },
             routeName = route?.name,
             coverage = entity.matchCoverage,
@@ -878,11 +850,11 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             hcError = entity.hcError,
             matchLogSize = log.size,
             committedByPriority = log.lastOrNull {
-                it.event == de.hecate.core.model.MatchEvent.COMMIT ||
-                    it.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY
-            }?.let { it.event == de.hecate.core.model.MatchEvent.COMMIT_BY_PRIORITY },
+                it.event == MatchEvent.COMMIT ||
+                    it.event == MatchEvent.COMMIT_BY_PRIORITY
+            }?.let { it.event == MatchEvent.COMMIT_BY_PRIORITY },
             // Only the interesting lines: commits, demotions, deviations.
-            matchEvents = log.filter { it.event != de.hecate.core.model.MatchEvent.SAMPLE }.take(50),
+            matchEvents = log.filter { it.event != MatchEvent.SAMPLE }.take(50),
             // Uncapped on purpose: a handful per session, and the one that
             // matters is usually the one you did not expect to be there.
             sessionEvents = events,
@@ -900,6 +872,22 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * Run [block] with the busy indicator up, and hand back how it went.
+     *
+     * Every failure is caught, so the indicator always comes down again: a
+     * spinner left running over a failed backup reads as a backup still going.
+     */
+    private suspend fun <T> busyWhile(block: suspend () -> T): Result<T> {
+        _busy.value = true
+        val result = runCatching { block() }
+        _busy.value = false
+        return result
+    }
+
+    /** The status line for a failed operation: [what] went wrong, and why. */
+    private fun failure(what: String, e: Throwable) = "$what: ${e.message ?: "unbekannter Fehler"}"
+
     private fun List<Long>.median(): Long? {
         if (isEmpty()) return null
         val s = sorted()
@@ -909,10 +897,14 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val BACK_STACK_LIMIT = 16
 
-        /** Points kept for an elevation chart. A phone is a few hundred pixels
-         *  wide and an hour's ride is thousands of samples — see
-         *  [Elevation.simplify], which keeps the peaks rather than averaging
-         *  them away. */
+        /** How long a flow the screen stopped collecting stays hot: long enough
+         *  to ride out a configuration change without re-running its query. */
+        private val WHILE_SHOWN = SharingStarted.WhileSubscribed(5000)
+
+        /** Points kept for a chart — elevation, speed or heart rate. A phone is a
+         *  few hundred pixels wide and an hour's ride is thousands of samples —
+         *  see [Elevation.simplify], which keeps the peaks rather than averaging
+         *  them away, and [Timeline.simplify], which deliberately does not. */
         private const val CHART_POINTS = 400
     }
 }

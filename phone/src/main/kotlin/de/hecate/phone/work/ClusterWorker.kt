@@ -16,10 +16,12 @@ import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.heat.RouteTrack
 import de.hecate.core.heat.SessionTrack
+import de.hecate.core.matcher.RouteMatcher
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteEntry
 import de.hecate.core.model.RouteGeometry
 import de.hecate.core.model.RoutePoint
+import de.hecate.core.model.RoutePrior
 import de.hecate.core.model.RouteProfile
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEndReason
@@ -27,10 +29,12 @@ import de.hecate.core.model.SessionFooter
 import de.hecate.core.model.SessionHeader
 import de.hecate.phone.AppGraph
 import de.hecate.phone.db.HeatmapEntity
+import de.hecate.phone.db.MetaEntity
 import de.hecate.phone.db.RouteEntity
 import de.hecate.phone.db.RouteMemberEntity
 import de.hecate.phone.db.RoutePointEntity
 import de.hecate.phone.db.RouteProfileEntity
+import de.hecate.phone.db.toSample
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
@@ -69,18 +73,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val localHourBySession = HashMap<String, Int>(sessions.size)
 
         for (s in sessions) {
-            val samples = sessionDao.samples(s.id).map {
-                Sample(
-                    tOffsetMs = it.tOffsetMs,
-                    activeMs = it.activeMs,
-                    lat = it.lat,
-                    lon = it.lon,
-                    altM = it.altM,
-                    hrBpm = it.hrBpm,
-                    accuracyM = it.accuracyM,
-                    paused = it.paused,
-                )
-            }
+            val samples = sessionDao.samples(s.id).map { it.toSample() }
             if (samples.size < 2) continue
             val recorded = RecordedSession(
                 header = SessionHeader(
@@ -226,7 +219,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val priors = HashMap<String, Int>()
             for (sessionId in members) {
                 val s = db.sessions().byId(sessionId) ?: continue
-                val key = de.hecate.core.matcher.RouteMatcher.contextKeyOf(
+                val key = RouteMatcher.contextKeyOf(
                     s.exerciseType, s.startedAtUtc, s.tzOffsetMinutes,
                 )
                 priors[key] = (priors[key] ?: 0) + 1
@@ -249,14 +242,14 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         medianHr = profile.map { it.medianHr },
                         medianAltM = profile.map { it.medianAltM },
                     ),
-                    prior = de.hecate.core.model.RoutePrior(members.size, priors),
+                    prior = RoutePrior(members.size, priors),
                     priority = route.priority,
                 ),
             )
         }
 
         val bundle = BundleBuilder.bundle(version, System.currentTimeMillis(), entries)
-        db.meta().put(de.hecate.phone.db.MetaEntity(META_BUNDLE_VERSION, version.toString()))
+        db.meta().put(MetaEntity(META_BUNDLE_VERSION, version.toString()))
         BundlePusher(applicationContext).push(bundle)
     }
 

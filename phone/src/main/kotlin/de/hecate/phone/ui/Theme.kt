@@ -92,31 +92,52 @@ object HecateIntensityColors {
     val Hard = Color(0xFFEF6C00)
     val Peak = Color(0xFFD32F2F)
 
-    /**
-     * The colour of an effort band, or of a stretch that has no reading.
-     *
-     * [unmeasured] decides the second, and it has to be given because the right
-     * answer depends on what is beside it. A drawing with no heart rate anywhere
-     * is just a drawing, and takes the scheme's line colour. A drawing that is
-     * *mostly* coloured has holes in it, and a hole drawn in the scheme's
-     * primary — which under dynamic colour can be the brightest thing on the
-     * screen — reads as a highlight: the eye is drawn to precisely the stretches
-     * where nothing was measured. Absence has to be the quietest thing on the
-     * picture, not the loudest.
-     */
-    @Composable
-    fun of(intensity: Intensity?, unmeasured: Color = routeLineColor): Color = when (intensity) {
+    /** The colour of an effort band. Fixed, so it can be looked up while
+     *  drawing, outside composition. */
+    fun of(intensity: Intensity): Color = when (intensity) {
         Intensity.EASY -> Easy
         Intensity.MODERATE -> Moderate
         Intensity.HARD -> Hard
         Intensity.PEAK -> Peak
-        null -> unmeasured
     }
+
+    /**
+     * The colour of a stretch that has no reading, on a drawing that is
+     * [measured] elsewhere or not.
+     *
+     * The right answer depends on what is beside it. A drawing with no heart
+     * rate anywhere is just a drawing, and takes the scheme's line colour. A
+     * drawing that is *mostly* coloured has holes in it, and a hole drawn in the
+     * scheme's primary — which under dynamic colour can be the brightest thing
+     * on the screen — reads as a highlight: the eye is drawn to precisely the
+     * stretches where nothing was measured. Absence has to be the quietest thing
+     * on the picture, not the loudest.
+     */
+    @Composable
+    fun unmeasured(measured: Boolean): Color = if (measured) Unmeasured else routeLineColor
 
     /** What a stretch with no reading looks like on a drawing that has readings
      *  elsewhere: the surface's own quiet grey, dimmed further. */
     val Unmeasured: Color
         @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+}
+
+/** A point of a drawing coloured by effort: a track ([TrackPoint]) or a chart
+ *  ([ChartPoint]). */
+interface HeartRated {
+    val hrBpm: Double?
+}
+
+/**
+ * The band the segment ending at [index] belongs to: the mean of its two ends,
+ * so a segment is coloured by what was happening along it. One definition for
+ * the track and the charts, so the same second is the same colour on both.
+ */
+fun bandOf(points: List<HeartRated>, index: Int, peakHrBpm: Int): Intensity? {
+    val a = points[index - 1].hrBpm
+    val b = points[index].hrBpm
+    val hr = if (a != null && b != null) (a + b) / 2.0 else a ?: b
+    return Intensity.of(hr, peakHrBpm)
 }
 
 /**

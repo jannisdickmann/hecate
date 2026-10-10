@@ -4,9 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import de.hecate.core.model.Sample
 import de.hecate.phone.AppGraph
 import de.hecate.phone.db.HcWriteState
+import de.hecate.phone.db.toSample
 import de.hecate.phone.health.HealthConnectWriter
 
 /**
@@ -38,9 +38,7 @@ class HealthConnectWorker(context: Context, params: WorkerParameters) :
 
         var retryNeeded = false
         for (session in pending) {
-            val samples = dao.samples(session.id).map {
-                Sample(it.tOffsetMs, it.activeMs, it.lat, it.lon, it.altM, it.hrBpm, it.accuracyM, paused = it.paused)
-            }
+            val samples = dao.samples(session.id).map { it.toSample() }
             val result = writer.write(
                 sessionId = session.id,
                 startedAtUtcMs = session.startedAtUtc,

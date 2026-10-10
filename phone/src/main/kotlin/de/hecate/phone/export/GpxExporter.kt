@@ -4,8 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import de.hecate.core.gpx.Gpx
-import de.hecate.core.model.Sample
 import de.hecate.phone.db.HecateDatabase
+import de.hecate.phone.db.toSample
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,18 +39,7 @@ class GpxExporter(
     /** Null if the recording is gone or has no position worth writing. */
     suspend fun session(id: String): Share? = withContext(Dispatchers.IO) {
         val session = db.sessions().byId(id) ?: return@withContext null
-        val samples = db.sessions().samples(id).map {
-            Sample(
-                tOffsetMs = it.tOffsetMs,
-                activeMs = it.activeMs,
-                lat = it.lat,
-                lon = it.lon,
-                altM = it.altM,
-                hrBpm = it.hrBpm,
-                accuracyM = it.accuracyM,
-                paused = it.paused,
-            )
-        }
+        val samples = db.sessions().samples(id).map { it.toSample() }
         val segments = Gpx.segments(session.startedAtUtc, samples)
         if (segments.isEmpty()) return@withContext null
 

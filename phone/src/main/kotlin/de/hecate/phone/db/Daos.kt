@@ -25,6 +25,33 @@ data class SessionSummary(
     val avgHr: Double?,
 )
 
+/** This session as a list row, under [routeName]. */
+fun SessionEntity.toSummary(routeName: String?) = SessionSummary(
+    id = id,
+    startedAtUtc = startedAtUtc,
+    tzOffsetMinutes = tzOffsetMinutes,
+    exerciseType = exerciseType,
+    activeDurationMs = activeDurationMs,
+    totalDistanceM = totalDistanceM,
+    source = source,
+    hcWriteState = hcWriteState,
+    matchedRouteId = matchedRouteId,
+    routeName = routeName,
+    avgHr = avgHr,
+)
+
+/**
+ * The columns of a [SessionSummary], read from a `session s` joined to a
+ * `route r`. Shared by every query that returns one, so that a field added to
+ * the class cannot be selected by one list and silently missing from another.
+ */
+private const val SESSION_SUMMARY_COLUMNS = """
+    s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
+    s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
+    s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
+    s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+"""
+
 /** A row of the routes list (US-8). */
 data class RouteSummary(
     val id: Long,
@@ -76,10 +103,7 @@ interface SessionDao {
 
     @Query(
         """
-        SELECT s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
-               s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
-               s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
-               s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+        SELECT $SESSION_SUMMARY_COLUMNS
         FROM session s LEFT JOIN route r ON r.id = s.matched_route_id
         ORDER BY s.started_at_utc DESC
         """,
@@ -245,23 +269,10 @@ interface RouteDao {
     )
     fun summaries(): Flow<List<RouteSummary>>
 
-    /** Durations of a route's members, for the median/best columns of US-8. */
-    @Query(
-        """
-        SELECT s.active_duration_ms FROM route_member m
-        JOIN session s ON s.id = m.session_id
-        WHERE m.route_id = :routeId ORDER BY s.active_duration_ms
-        """,
-    )
-    suspend fun memberDurations(routeId: Long): List<Long>
-
     @Transaction
     @Query(
         """
-        SELECT s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
-               s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
-               s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
-               s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+        SELECT $SESSION_SUMMARY_COLUMNS
         FROM route_member m
         JOIN session s ON s.id = m.session_id
         LEFT JOIN route r ON r.id = m.route_id

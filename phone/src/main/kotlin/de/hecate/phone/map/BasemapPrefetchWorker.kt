@@ -82,7 +82,7 @@ class BasemapPrefetchWorker(context: Context, params: WorkerParameters) :
         val out = ArrayList<LatLon>()
         for (session in dao.all()) {
             for (s in dao.samples(session.id)) {
-                if (s.accuracyM != null && s.accuracyM!! > Tuning.MAX_USABLE_ACCURACY_M) continue
+                if (s.accuracyM != null && s.accuracyM > Tuning.MAX_USABLE_ACCURACY_M) continue
                 out.add(LatLon(s.lat, s.lon))
             }
         }
@@ -107,7 +107,6 @@ class BasemapPrefetchWorker(context: Context, params: WorkerParameters) :
         setProgressAsync(
             Data.Builder()
                 .putInt(PROGRESS_STEP, phase)
-                .putInt(PROGRESS_STEPS, 2)
                 .putInt(PROGRESS_CHUNK, chunk)
                 .putInt(PROGRESS_CHUNKS, chunks)
                 .build(),
@@ -117,7 +116,6 @@ class BasemapPrefetchWorker(context: Context, params: WorkerParameters) :
     companion object {
         private const val TAG = "BasemapPrefetch"
         const val PROGRESS_STEP = "step"
-        const val PROGRESS_STEPS = "steps"
         const val PROGRESS_CHUNK = "chunk"
         const val PROGRESS_CHUNKS = "chunks"
     }

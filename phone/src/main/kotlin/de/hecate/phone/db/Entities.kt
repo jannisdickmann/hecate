@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import de.hecate.core.Tuning
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.SessionSource
 
@@ -86,7 +87,7 @@ data class RouteEntity(
      *  the evidence cannot break: see RouteEntry.priority in :core. Survives
      *  re-clustering, like the name. */
     @ColumnInfo(name = "priority", defaultValue = "0")
-    val priority: Int = de.hecate.core.Tuning.DEFAULT_ROUTE_PRIORITY,
+    val priority: Int = Tuning.DEFAULT_ROUTE_PRIORITY,
 )
 
 @Entity(

@@ -12,6 +12,7 @@ import de.hecate.core.map.TileGrid
 import de.hecate.core.map.TileId
 import de.hecate.core.map.TileStore
 import de.hecate.core.map.overpass.BasemapBuilder
+import de.hecate.core.map.overpass.FetchChunk
 import de.hecate.core.map.overpass.FetchPlanner
 import de.hecate.core.map.overpass.OsmJson
 import de.hecate.core.map.overpass.OverpassClient
@@ -62,7 +63,7 @@ class BasemapRepository(
      *  different projections between them and share these tiles. */
     private val cache = TileCache()
 
-    private val _stats = MutableStateFlow(TileStore.Stats(0, 0L, null, 0))
+    private val _stats = MutableStateFlow(NO_STATS)
     val stats: StateFlow<TileStore.Stats> = _stats.asStateFlow()
 
     /** Bumped whenever tiles land, so a view that drew on empty ground knows to
@@ -115,11 +116,7 @@ class BasemapRepository(
             val chunks = FetchPlanner.plan(missing).take(MAX_ON_DEMAND_CHUNKS)
             for (chunk in chunks) {
                 try {
-                    val body = client.fetch(OverpassQuery.build(chunk.bounds, level))
-                    val result = BasemapBuilder.build(OsmJson.parse(body), level, chunk.tiles)
-                    for (tile in result.tiles) store.write(tile)
-                    cache.clear()
-                    _generation.value += 1
+                    fetchChunk(level, chunk)
                 } catch (e: Exception) {
                     // Silent by design: a mapless view is exactly today's
                     // picture, and a snackbar about scenery on every train
@@ -187,12 +184,7 @@ class BasemapRepository(
                 // A map on screen may have fetched some of it in the meantime.
                 if (store.missing(level, chunk.tiles).isEmpty()) return@withLock
                 try {
-                    val body = client.fetch(OverpassQuery.build(chunk.bounds, level))
-                    val result = BasemapBuilder.build(OsmJson.parse(body), level, chunk.tiles)
-                    for (tile in result.tiles) store.write(tile)
-                    written += result.tiles.size
-                    cache.clear()
-                    _generation.value += 1
+                    written += fetchChunk(level, chunk)
                 } catch (e: Exception) {
                     // Every completed tile is already on disk, so a run that
                     // dies half way is resumed rather than restarted.
@@ -212,12 +204,30 @@ class BasemapRepository(
         return written
     }
 
+    /**
+     * Download one block, write its tiles and tell the views; the number of
+     * tiles written. Throws whatever went wrong — what a failure means is the
+     * caller's to decide. Called with [fetching] held.
+     */
+    private fun fetchChunk(level: Level, chunk: FetchChunk): Int {
+        val body = client.fetch(OverpassQuery.build(chunk.bounds, level))
+        val result = BasemapBuilder.build(OsmJson.parse(body), level, chunk.tiles)
+        for (tile in result.tiles) store.write(tile)
+        cache.clear()
+        _generation.value += 1
+        return result.tiles.size
+    }
+
     private fun refreshStats() {
-        _stats.value = runCatching { store.stats() }.getOrDefault(TileStore.Stats(0, 0L, null, 0))
+        _stats.value = runCatching { store.stats() }.getOrDefault(NO_STATS)
     }
 
     private companion object {
         const val TAG = "BasemapRepository"
+
+        /** What the settings card shows before the store has been read, and
+         *  when it cannot be: nothing stored. */
+        val NO_STATS = TileStore.Stats(0, 0L, null, 0)
 
         /** At most this many Overpass requests for one viewport. Two chunks is
          *  up to a thousand square kilometres, which covers any route drawing

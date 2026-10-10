@@ -14,9 +14,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
@@ -39,12 +39,12 @@ import kotlin.math.max
 data class ChartPoint(
     val x: Double,
     val y: Double,
-    val hrBpm: Double? = null,
+    override val hrBpm: Double? = null,
     /** Whether the line starts again here. See [de.hecate.core.profile.Timeline.Point]:
      *  a hole is known where the full series is, not here, where the points may
      *  legitimately be minutes apart. */
     val startsRun: Boolean = false,
-)
+) : HeartRated
 
 /**
  * The three things this app charts, and the two facts that differ between
@@ -142,10 +142,8 @@ fun Chart(
     val dot = MaterialTheme.colorScheme.onSurface
     // A chart with no reading anywhere is one plain line and takes the scheme's
     // colour; one with readings has *holes*, and a hole must recede rather than
-    // glow — see [HecateIntensityColors.of].
-    val measured = points.any { it.hrBpm != null }
-    val plain = if (measured) HecateIntensityColors.Unmeasured else routeLineColor
-    val bandColors = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
+    // glow — see [HecateIntensityColors.unmeasured].
+    val plain = HecateIntensityColors.unmeasured(measured = points.any { it.hrBpm != null })
 
     Box(modifier.fillMaxWidth().height(height)) {
         if (points.size < 2) return@Box
@@ -194,24 +192,24 @@ fun Chart(
             var runBand = bandOf(points, 1, peakHrBpm)
             for (i in 1 until points.size) {
                 if (points[i].startsRun) {
-                    drawSection(points, runStart, i - 1, ::toCanvas, floor, runBand, bandColors, plain)
+                    drawSection(points, runStart, i - 1, ::toCanvas, floor, runBand, plain)
                     runStart = i
                     runBand = if (i + 1 < points.size) bandOf(points, i + 1, peakHrBpm) else null
                     continue
                 }
                 val band = bandOf(points, i, peakHrBpm)
                 if (band != runBand) {
-                    drawSection(points, runStart, i - 1, ::toCanvas, floor, runBand, bandColors, plain)
+                    drawSection(points, runStart, i - 1, ::toCanvas, floor, runBand, plain)
                     runStart = i - 1
                     runBand = band
                 }
             }
-            drawSection(points, runStart, points.size - 1, ::toCanvas, floor, runBand, bandColors, plain)
+            drawSection(points, runStart, points.size - 1, ::toCanvas, floor, runBand, plain)
 
-            drawExtreme(toCanvas(points[maxIdx]), maxText, above = true, gap, dot, halo, dot)
+            drawExtreme(toCanvas(points[maxIdx]), maxText, above = true, gap, dot, halo)
             // A series that never moved has one value, and one label says it.
             if (minText.layoutInput.text != maxText.layoutInput.text) {
-                drawExtreme(toCanvas(points[minIdx]), minText, above = false, gap, dot, halo, dot)
+                drawExtreme(toCanvas(points[minIdx]), minText, above = false, gap, dot, halo)
             }
         }
     }
@@ -227,12 +225,11 @@ val CHART_HEIGHT: Dp = 124.dp
  */
 private fun DrawScope.drawExtreme(
     at: Offset,
-    text: androidx.compose.ui.text.TextLayoutResult,
+    text: TextLayoutResult,
     above: Boolean,
     gap: Float,
     dot: Color,
     halo: Color,
-    ink: Color,
 ) {
     drawCircle(halo, radius = 4.dp.toPx(), center = at)
     drawCircle(dot, radius = 2.5.dp.toPx(), center = at)
@@ -243,7 +240,7 @@ private fun DrawScope.drawExtreme(
     drawText(text, color = halo, topLeft = Offset(x, y), drawStyle = Stroke(width = 3.dp.toPx(), join = StrokeJoin.Round))
     // Fill said explicitly: the halo's stroke stays on the layout's paint, and
     // a second pass that does not override it strokes the label too.
-    drawText(text, color = ink, topLeft = Offset(x, y), drawStyle = androidx.compose.ui.graphics.drawscope.Fill)
+    drawText(text, color = dot, topLeft = Offset(x, y), drawStyle = Fill)
 }
 
 /**
@@ -257,11 +254,10 @@ private fun DrawScope.drawSection(
     toCanvas: (ChartPoint) -> Offset,
     floor: Float,
     band: Intensity?,
-    bandColors: Map<Intensity, Color>,
     plain: Color,
 ) {
     if (to <= from) return
-    val color = band?.let { bandColors[it] } ?: plain
+    val color = band?.let(HecateIntensityColors::of) ?: plain
     val left = toCanvas(points[from]).x
     val right = toCanvas(points[to]).x
 
@@ -296,15 +292,4 @@ private fun DrawScope.drawSection(
         color = color,
         style = Stroke(width = 2.5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
     )
-}
-
-/** The band of the segment ending at [index], as the track map ([rememberTrackMap]) computes it. */
-private fun bandOf(points: List<ChartPoint>, index: Int, peakHrBpm: Int): Intensity? {
-    val a = points[index - 1].hrBpm
-    val b = points[index].hrBpm
-    val hr = when {
-        a != null && b != null -> (a + b) / 2.0
-        else -> a ?: b
-    }
-    return Intensity.of(hr, peakHrBpm)
 }

@@ -8,9 +8,7 @@ import de.hecate.phone.db.SessionSummary
  * Only ever set for a recording that matched a route: "fast" means nothing in
  * the abstract, only against the same ground covered before.
  */
-data class Standout(val fast: Boolean = false, val highHr: Boolean = false) {
-    val any: Boolean get() = fast || highHr
-}
+data class Standout(val fast: Boolean = false, val highHr: Boolean = false)
 
 /**
  * Marks the top of the range of speed and of average heart rate, per route.
@@ -81,10 +79,7 @@ object Standouts {
 
     /** km/h over the active time, or null where there is not enough of either to
      *  divide — a zero-distance recording is not infinitely slow, it is unknown. */
-    fun speedOf(s: SessionSummary): Double? {
-        if (s.totalDistanceM <= 0 || s.activeDurationMs <= 0) return null
-        return (s.totalDistanceM / 1000.0) / (s.activeDurationMs / 3_600_000.0)
-    }
+    fun speedOf(s: SessionSummary): Double? = Format.speedFrom(s.totalDistanceM, s.activeDurationMs)
 
     /**
      * Linear-interpolation percentile — the same definition a spreadsheet's

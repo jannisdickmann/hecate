@@ -40,6 +40,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,6 +78,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -96,6 +98,7 @@ import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.export.GpxExporter
+import kotlin.math.abs
 
 /**
  * §5.4: Recordings list → recording detail; Routes list → route detail; plus a
@@ -201,24 +204,14 @@ fun HecateApp(
             bottomBar = {
                 if (!inDetail) {
                     NavigationBar {
-                        NavigationBarItem(
-                            selected = screen is Screen.Recordings,
-                            onClick = { vm.show(Screen.Recordings) },
-                            icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                            label = { Text("Aufzeichnungen") },
-                        )
-                        NavigationBarItem(
-                            selected = screen is Screen.Routes,
-                            onClick = { vm.show(Screen.Routes) },
-                            icon = { Icon(Icons.Filled.Place, contentDescription = null) },
-                            label = { Text("Routen") },
-                        )
-                        NavigationBarItem(
-                            selected = screen is Screen.Settings,
-                            onClick = { vm.show(Screen.Settings) },
-                            icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                            label = { Text("Einstellungen") },
-                        )
+                        for ((panel, icon) in panels) {
+                            NavigationBarItem(
+                                selected = screen == panel,
+                                onClick = { vm.show(panel) },
+                                icon = { Icon(icon, contentDescription = null) },
+                                label = { Text(titleOf(panel)) },
+                            )
+                        }
                     }
                 }
             },
@@ -282,6 +275,13 @@ private fun scrollKeyOf(screen: Screen): String = when (screen) {
     is Screen.SessionDetail -> "session:${screen.id}"
     is Screen.RouteDetail -> "route:${screen.id}"
 }
+
+/** The three panels the bottom bar switches between, labelled by [titleOf]. */
+private val panels: List<Pair<Screen, ImageVector>> = listOf(
+    Screen.Recordings to Icons.AutoMirrored.Filled.List,
+    Screen.Routes to Icons.Filled.Place,
+    Screen.Settings to Icons.Filled.Settings,
+)
 
 private fun titleOf(screen: Screen): String = when (screen) {
     is Screen.Recordings -> "Aufzeichnungen"
@@ -382,7 +382,7 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = lowCardColors(),
     ) {
         Column(Modifier.padding(16.dp, 12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -408,7 +408,7 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
                     Quiet(Format.duration(s.activeDurationMs))
                     Quiet(" · ")
                     Standing(
-                        Format.speed(Format.speedFrom(s.totalDistanceM, s.activeDurationMs)) + " km/h",
+                        averageSpeed(s),
                         standout.fast,
                         MaterialTheme.colorScheme.primary,
                     )
@@ -459,6 +459,18 @@ private fun Standing(text: String, standout: Boolean, accent: Color) {
     }
 }
 
+/** A duration, or a dash where there is none to show. */
+private fun durationOrDash(millis: Long?): String = millis?.let { Format.duration(it) } ?: "–"
+
+/** A recording's average speed over its active time, unit and all. */
+private fun averageSpeed(s: SessionSummary): String =
+    Format.speed(Format.speedFrom(s.totalDistanceM, s.activeDurationMs)) + " km/h"
+
+/** The colours of every card that sits directly on the background. */
+@Composable
+private fun lowCardColors(): CardColors =
+    CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+
 @Composable
 private fun Quiet(text: String) {
     Text(
@@ -498,37 +510,27 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
     var confirmDelete by remember { mutableStateOf(false) }
     var editingType by remember { mutableStateOf(false) }
 
+    val startedAt = Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes)
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ActivityIcon(d.summary.exerciseType, Modifier.size(22.dp), MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
-            Text(
-                Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Text(startedAt, style = MaterialTheme.typography.titleMedium)
         }
         Spacer(Modifier.height(12.dp))
-        TrackMapSection(d.geometry, peakHr, Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes))
+        TrackMapSection(d.geometry, peakHr, startedAt)
         ElevationSection(d.elevation, d.elevationStats, peakHr)
         ChartSection("Geschwindigkeit", d.speed, d.speedStats, ChartKind.SPEED, peakHr)
         ChartSection("Herzfrequenz", d.heartRate, d.heartRateStats, ChartKind.HEART_RATE, peakHr)
-        IntensityLegend(
-            d.geometry.any { it.hrBpm != null } ||
-                d.elevation.any { it.hrBpm != null } ||
-                d.speed.any { it.hrBpm != null },
-        )
+        IntensityLegend(d.geometry, d.elevation, d.speed)
         Spacer(Modifier.height(12.dp))
 
         ActivityTypeRow(d.summary.exerciseType) { editingType = true }
         KeyValue("Dauer (aktiv)", Format.duration(d.summary.activeDurationMs))
         KeyValue("Distanz", Format.distance(d.summary.totalDistanceM))
         KeyValue("Ø Herzfrequenz", "${Format.hr(d.summary.avgHr)} bpm")
-        KeyValue(
-            "Ø Geschwindigkeit",
-            Format.speed(
-                Format.speedFrom(d.summary.totalDistanceM, d.summary.activeDurationMs),
-            ) + " km/h",
-        )
+        KeyValue("Ø Geschwindigkeit", averageSpeed(d.summary))
         KeyValue("Quelle", Format.source(d.summary.source))
 
         KeyValue("Route", d.routeName ?: "keine")
@@ -554,7 +556,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
                     false -> "Spurverlauf"
                 },
             )
-            KeyValue("Deckung", d.coverage?.let { String.format(java.util.Locale.GERMANY, "%.2f", it) } ?: "–")
+            KeyValue("Deckung", Format.coverage(d.coverage))
             KeyValue("Match-Log", "${d.matchLogSize} Einträge")
 
             if (d.matchEvents.isNotEmpty()) {
@@ -610,7 +612,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         ConfirmDialog(
             title = "Aufzeichnung löschen?",
             // Names what actually goes. "Are you sure" is not information.
-            body = Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes) + " — " +
+            body = "$startedAt — " +
                 "${Format.distance(d.summary.totalDistanceM)}, ${Format.duration(d.summary.activeDurationMs)}.\n\n" +
                 "Messpunkte, Match-Log und Verlauf werden mitgelöscht. Zurückholen lässt sich das " +
                 "nur aus einer Sicherung. Der Eintrag in Health Connect bleibt bestehen.",
@@ -763,7 +765,7 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = lowCardColors(),
     ) {
         Column(Modifier.padding(16.dp, 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -776,9 +778,9 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
             Quiet(
                 buildString {
                     append("Median ")
-                    append(r.medianDurationMs?.let { Format.duration(it) } ?: "–")
+                    append(durationOrDash(r.medianDurationMs))
                     append(" · Beste ")
-                    append(r.bestDurationMs?.let { Format.duration(it) } ?: "–")
+                    append(durationOrDash(r.bestDurationMs))
                     // Only worth the pixels when the user has actually said
                     // something, which on a scale centred at zero is exactly
                     // "not zero".
@@ -791,7 +793,6 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RouteDetailScreen(vm: HecateViewModel) {
     val detail by vm.routeDetail.collectAsStateWithLifecycle()
@@ -832,11 +833,7 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         // of everything its members did here, not any one ride.
         ChartSection("Geschwindigkeit (Median)", d.speed, d.speedStats, ChartKind.SPEED, peakHr)
         ChartSection("Herzfrequenz (Median)", d.heartRate, d.heartRateStats, ChartKind.HEART_RATE, peakHr)
-        IntensityLegend(
-            d.geometry.any { it.hrBpm != null } ||
-                d.elevation.any { it.hrBpm != null } ||
-                d.speed.any { it.hrBpm != null },
-        )
+        IntensityLegend(d.geometry, d.elevation, d.speed)
         Spacer(Modifier.height(16.dp))
 
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
@@ -845,9 +842,9 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
         KeyValue("Art", d.exerciseType.label)
         KeyValue("Länge", Format.distance(d.lengthM))
         KeyValue("Aufzeichnungen", d.memberCount.toString())
-        KeyValue("Median-Zeit", d.medianDurationMs?.let { Format.duration(it) } ?: "–")
-        KeyValue("Beste Zeit", d.bestDurationMs?.let { Format.duration(it) } ?: "–")
-        KeyValue("Schlechteste", d.worstDurationMs?.let { Format.duration(it) } ?: "–")
+        KeyValue("Median-Zeit", durationOrDash(d.medianDurationMs))
+        KeyValue("Beste Zeit", durationOrDash(d.bestDurationMs))
+        KeyValue("Schlechteste", durationOrDash(d.worstDurationMs))
 
         Spacer(Modifier.height(16.dp))
         SectionHeader("Aufzeichnungen")
@@ -901,9 +898,7 @@ private fun SettingsScreen(
     LaunchedEffect(Unit) { vm.refreshHealthConnect() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionHeader("Routen")
-        Spacer(Modifier.height(8.dp))
-        SettingsCard {
+        SettingsSection("Routen") {
             Text("Routen neu berechnen", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
             Quiet(
@@ -932,14 +927,10 @@ private fun SettingsScreen(
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionHeader("Belastung")
-        Spacer(Modifier.height(8.dp))
-        SettingsCard { PeakHrField(peakHr) { vm.setPeakHr(it) } }
+        SettingsSection("Belastung") { PeakHrField(peakHr) { vm.setPeakHr(it) } }
 
         Spacer(Modifier.height(20.dp))
-        SectionHeader("Health Connect")
-        Spacer(Modifier.height(8.dp))
-        SettingsCard {
+        SettingsSection("Health Connect") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Nach Health Connect schreiben", style = MaterialTheme.typography.titleSmall)
@@ -972,14 +963,10 @@ private fun SettingsScreen(
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionHeader("Karte")
-        Spacer(Modifier.height(8.dp))
-        SettingsCard { MapCard(vm, onImportMap) }
+        SettingsSection("Karte") { MapDataSettings(vm, onImportMap) }
 
         Spacer(Modifier.height(20.dp))
-        SectionHeader("Daten")
-        Spacer(Modifier.height(8.dp))
-        SettingsCard {
+        SettingsSection("Daten") {
             SettingsAction(
                 "TCX importieren",
                 "Liest Trainings aus einem Google-Health-Export ein, damit Routen sofort gelernt " +
@@ -1018,7 +1005,7 @@ private fun SettingsScreen(
  * licence file. It appears twice — here, and under the full-screen heatmap.
  */
 @Composable
-private fun MapCard(vm: HecateViewModel, onImportMap: () -> Unit) {
+private fun MapDataSettings(vm: HecateViewModel, onImportMap: () -> Unit) {
     val stats by vm.mapStats.collectAsStateWithLifecycle()
     val prefetch by vm.mapPrefetch.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
@@ -1111,11 +1098,14 @@ private fun MapCard(vm: HecateViewModel, onImportMap: () -> Unit) {
  *  reader would notice. */
 private fun plural(n: Int, one: String, many: String): String = "$n ${if (n == 1) one else many}"
 
+/** One titled section of the settings panel: a header and a card under it. */
 @Composable
-private fun SettingsCard(content: @Composable () -> Unit) {
+private fun SettingsSection(title: String, content: @Composable () -> Unit) {
+    SectionHeader(title)
+    Spacer(Modifier.height(8.dp))
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = lowCardColors(),
     ) {
         Column(Modifier.padding(16.dp)) { content() }
     }
@@ -1237,11 +1227,7 @@ private fun ElevationSection(
 ) {
     if (points.size < 2 || stats == null) {
         Spacer(Modifier.height(4.dp))
-        Text(
-            "Kein Höhenprofil: die Uhr hat keine Höhe geliefert.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Quiet("Kein Höhenprofil: die Uhr hat keine Höhe geliefert.")
         return
     }
     Spacer(Modifier.height(4.dp))
@@ -1256,7 +1242,7 @@ private fun ElevationSection(
     KeyValue("Abstieg", Format.elevationSigned(-stats.descentM))
     // Only where it says something the two rows above do not: a loop nets zero
     // and the row would be noise, a one-way climb does not.
-    if (kotlin.math.abs(stats.netM) >= Tuning.ELEVATION_THRESHOLD_M) {
+    if (abs(stats.netM) >= Tuning.ELEVATION_THRESHOLD_M) {
         KeyValue("Netto", Format.elevationSigned(stats.netM))
     }
 }
@@ -1426,7 +1412,6 @@ private fun ConfirmDialog(
  * its line: it described what happens when the user does nothing, which is what
  * they are already looking at.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
@@ -1491,7 +1476,14 @@ private fun ChartSection(
  * colours that are not on the screen is an invitation to look for them.
  */
 @Composable
-private fun IntensityLegend(visible: Boolean) {
+private fun IntensityLegend(
+    geometry: List<TrackPoint>,
+    elevation: List<Elevation.Point>,
+    speed: List<Timeline.Point>,
+) {
+    val visible = geometry.any { it.hrBpm != null } ||
+        elevation.any { it.hrBpm != null } ||
+        speed.any { it.hrBpm != null }
     if (!visible) return
     Spacer(Modifier.height(6.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

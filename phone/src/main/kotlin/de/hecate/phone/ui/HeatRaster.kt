@@ -1,6 +1,7 @@
 package de.hecate.phone.ui
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.Color
@@ -44,7 +45,7 @@ import kotlin.math.roundToInt
 @Composable
 fun rememberHeatmapRaster(
     grid: HeatmapGrid,
-    dark: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
+    dark: Boolean = isSystemInDarkTheme(),
 ): ImageBitmap? {
     val state = produceState<ImageBitmap?>(initialValue = null, grid, dark) {
         value = withContext(Dispatchers.Default) { rasterOf(grid, dark) }

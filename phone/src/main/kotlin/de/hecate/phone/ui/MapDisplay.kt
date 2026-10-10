@@ -82,7 +82,6 @@ import de.hecate.core.geo.LatLon
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.map.KarteIndex
 import de.hecate.core.map.MapView
-import de.hecate.core.model.Intensity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -122,7 +121,7 @@ import kotlin.math.roundToInt
  * dropping paused samples, cutting at a dropout — has to happen to both or the
  * colours slide along the line.
  */
-data class TrackPoint(val at: LatLon, val hrBpm: Double? = null)
+data class TrackPoint(val at: LatLon, override val hrBpm: Double? = null) : HeartRated
 
 /**
  * One line on a map, in local metres from [MapContent.origin] (x east, y north,
@@ -193,10 +192,8 @@ private const val MIN_SPAN_M = 150.0
  */
 @Composable
 fun rememberTrackMap(points: List<TrackPoint>, peakHrBpm: Int): MapContent? {
-    val measured = points.any { it.hrBpm != null }
-    val plain = if (measured) HecateIntensityColors.Unmeasured else routeLineColor
-    val bands = Intensity.entries.associateWith { HecateIntensityColors.of(it) }
-    return remember(points, peakHrBpm, plain, bands) {
+    val plain = HecateIntensityColors.unmeasured(measured = points.any { it.hrBpm != null })
+    return remember(points, peakHrBpm, plain) {
         if (points.size < 2) return@remember null
         val origin = points.first().at
         val local = DoubleArray(points.size * 2)
@@ -214,12 +211,12 @@ fun rememberTrackMap(points: List<TrackPoint>, peakHrBpm: Int): MapContent? {
         for (i in 1 until points.size) {
             val b = bandOf(points, i, peakHrBpm)
             if (b != band) {
-                runs.add(MapRun(start, i - 1, band?.let { bands[it] } ?: plain))
+                runs.add(MapRun(start, i - 1, band?.let(HecateIntensityColors::of) ?: plain))
                 start = i - 1
                 band = b
             }
         }
-        runs.add(MapRun(start, points.size - 1, band?.let { bands[it] } ?: plain))
+        runs.add(MapRun(start, points.size - 1, band?.let(HecateIntensityColors::of) ?: plain))
         MapContent(
             origin = origin,
             minX = minX, minY = minY,
@@ -233,17 +230,6 @@ fun rememberTrackMap(points: List<TrackPoint>, peakHrBpm: Int): MapContent? {
             ),
         )
     }
-}
-
-/**
- * The band the segment ending at [index] belongs to: the mean of its two ends,
- * so a segment is coloured by what was happening along it.
- */
-private fun bandOf(points: List<TrackPoint>, index: Int, peakHrBpm: Int): Intensity? {
-    val a = points[index - 1].hrBpm
-    val b = points[index].hrBpm
-    val hr = if (a != null && b != null) (a + b) / 2.0 else a ?: b
-    return Intensity.of(hr, peakHrBpm)
 }
 
 /**
@@ -472,7 +458,7 @@ fun MapCard(
                 Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), MaterialTheme.shapes.small)
+                    .background(overMap(), MaterialTheme.shapes.small)
                     .padding(5.dp)
                     .size(14.dp),
             )
@@ -482,6 +468,12 @@ fun MapCard(
         }
     }
 }
+
+/** The backing of anything drawn over a map — a title, a button — so that it
+ *  stays legible over whatever ground is under it: the surface, [alpha] of
+ *  the way opaque. */
+@Composable
+private fun overMap(alpha: Float = 0.75f): Color = MaterialTheme.colorScheme.surface.copy(alpha = alpha)
 
 /** Every map card's shape: wide enough to read a commute, short enough that the
  *  charts under it are still on the first screen. */
@@ -591,13 +583,13 @@ fun MapFullScreen(
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 8.dp)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), MaterialTheme.shapes.small)
+                            .background(overMap(), MaterialTheme.shapes.small)
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     )
                     IconButton(
                         onClick = onDismiss,
                         modifier = Modifier.background(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                            overMap(),
                             MaterialTheme.shapes.small,
                         ),
                     ) { Icon(Icons.Filled.Close, contentDescription = "Schließen") }
@@ -634,7 +626,7 @@ fun MapFullScreen(
                         TextButton(
                             onClick = { camera = MapCamera() },
                             modifier = Modifier.background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                                overMap(alpha = 0.8f),
                                 MaterialTheme.shapes.small,
                             ),
                         ) { Text("Alles zeigen") }

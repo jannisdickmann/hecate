@@ -20,7 +20,7 @@ import de.hecate.phone.health.HealthConnectWriter
 import de.hecate.phone.work.Jobs
 
 /**
- * The only activity. Four screens, switched by state (§4: no Compose Navigation).
+ * The only activity. Five screens, switched by state (§4: no Compose Navigation).
  *
  * Two things need the activity rather than the view model: the file picker for
  * TCX import (US-9) and the Health Connect permission flow, which has to be
