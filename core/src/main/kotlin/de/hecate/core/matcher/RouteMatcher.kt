@@ -29,9 +29,14 @@ import kotlin.math.max
  * US-10 a meaningful test rather than an approximation. No wall clock, no
  * randomness, no iteration over unordered collections.
  *
- * The matcher holds a weight per plausible route plus a null hypothesis, and
- * never "chooses" internally. [MatchState.phase] tells the display what it may
- * honestly claim; everything else is advisory.
+ * Two halves. The first follows every route at once: where along it the user
+ * is, whether they are following it forwards, and a weight per route plus a
+ * null hypothesis ("none of them"). The second names at most one route, and
+ * reads everything route-relative off that one ([updateFocus]): the routes
+ * that fit equally well are told apart by how much of today they explain,
+ * then by the user's own ranking — never by the weights, which on shared
+ * ground measure GNSS noise. [MatchState.phase] tells the display what it may
+ * honestly claim.
  *
  * Not thread-safe. One instance per session, fed from one thread.
  */
@@ -64,12 +69,36 @@ class RouteMatcher(
         /** How far the position has run backwards along the route since it last
          *  stood at its furthest. See [Tuning.BRANCH_SWITCH_RETREAT_M]. */
         var retreatM: Double = 0.0,
-        /** Usual time [s] this route takes to reach where the user joined it,
-         *  less the time they had already spent getting there. See [anchor]. */
+        /** Where along the route the user joined it; < 0 until they have been
+         *  found on it, following it. See [join]. */
+        var joinPosM: Double = -1.0,
+        /** The session's travelled distance when it was joined: how much of
+         *  today's ride it explains, and the first thing a choice between
+         *  routes asks ([choose]). */
+        var joinTravelM: Double = 0.0,
+        /** Set off on at the start of the session and followed ever since. */
+        var fromStart: Boolean = false,
+        /** Ahead/behind on this route is `elapsed − (usual time here − anchorS)`.
+         *  Set when the route is joined, and again when the display hands over
+         *  to it from another route ([handOver]). */
         var anchorS: Double = 0.0,
+        /** Active time [s] at which the comparison [anchorS] describes began;
+         *  today's pace for the arrival time is read from here. */
+        var originS: Double = 0.0,
+        /** Travel [m] since this route, while named, last lay within
+         *  [Tuning.COMMIT_SEPARATION_M] of the nearest route. */
+        var outOfBandM: Double = 0.0,
         var dropped: Boolean = false,
     ) {
         val routeId: Long get() = entry.geometry.routeId
+
+        /** Distance [m] followed along the route since joining it. */
+        val followedM: Double get() = if (joinPosM < 0.0) -1.0 else positionM - joinPosM
+
+        /** Found under the user and being followed forwards, right now. */
+        val following: Boolean
+            get() = !dropped && positionM >= 0.0 &&
+                offsetM <= Tuning.MATCH_RADIUS_M && trackRatio >= Tuning.MIN_TRACKING_RATIO
     }
 
     private class TrailPoint(val travelledM: Double, val positionM: Double, val at: LatLon)
@@ -95,14 +124,18 @@ class RouteMatcher(
      *  lateness. */
     private var lastUsableTOffsetMs = -1L
     private var lastDelta: Double? = null
-    /** The route the delta was last read off on its own. See [medianTimeAtPosition]. */
-    private var deltaRouteId: Long? = null
 
-    private var commitHold = 0
-    private var commitHoldRouteId: Long? = null
+    /**
+     * The one route everything route-relative is read off — the name on the
+     * wrist, ahead/behind, the distance left and the arrival time — or null.
+     * Committed once it has been followed [Tuning.COMMIT_MIN_M]; until then a
+     * guess, and said to be one. See [updateFocus].
+     */
+    private var focusId: Long? = null
     private var committedRouteId: Long? = null
-    /** True when the commitment rests on the user's priority rather than on
-     *  evidence. Reported so the display and the match log can say which. */
+    /** True while the commitment is one of several routes over the same ground,
+     *  chosen by [choose] rather than by the evidence. Reported so the display
+     *  and the match log can say which. */
     private var committedByPriority = false
     private var phase = MatchPhase.SEARCHING
 
@@ -174,11 +207,15 @@ class RouteMatcher(
      * carry no evidence: the belief is returned unchanged rather than decayed, so
      * that standing at a red light never erodes a correct match.
      */
-    fun update(sample: Sample): MatchState {
-        if (disabled) return MatchState(sample.tOffsetMs, phase, committedRouteId, disabled = true)
+    fun update(delivered: Sample): MatchState {
+        if (disabled) return MatchState(delivered.tOffsetMs, phase, committedRouteId, disabled = true)
+        // A position flagged paused only because of the delivery it came in, as
+        // the profiles' clock reads it too. See [ActiveClock.unpause].
+        val sample = ActiveClock.unpause(lastAnySample, delivered)
         // Late, and therefore no longer evidence about where the user is.
-        // Health Services sometimes delivers positions after newer ones have
-        // already been handed over — on a walk of 5 Oct, 34 times, by 3 to 21 s.
+        // Positions reached the matcher after newer ones had already been
+        // handed over — on a walk of 5 Oct, 34 times, by 3 to 21 s, most likely
+        // the recorder working on two deliveries at once (see its `lane`).
         // Consumed in arrival order, each one moved the user backwards along the
         // route: the position retreated, the route was demoted and re-committed
         // a dozen times, the travelled distance came out 60 % long, and
@@ -282,12 +319,11 @@ class RouteMatcher(
                 c.trail.clear()
                 c.trail.addLast(TrailPoint(travelledM, hit.positionM, here))
             }
-            if (previousPos < 0.0) anchor(c, hit)
             c.positionM = hit.positionM
             c.offsetM = hit.distanceM
-            val onRoute = hit.distanceM <= Tuning.MATCH_RADIUS_M &&
-                c.trackRatio >= Tuning.MIN_TRACKING_RATIO
+            val onRoute = c.following
             c.unseenM = if (onRoute) 0.0 else c.unseenM + step
+            if (onRoute && c.joinPosM < 0.0) join(c)
 
             // Emission: how well the sample sits on this route's geometry.
             var ll = -(hit.distanceM * hit.distanceM) / twoSigmaSq
@@ -310,7 +346,7 @@ class RouteMatcher(
         dropStale()
         normalise()
 
-        val fired = updateCommitment()
+        val fired = updateFocus(step)
         val devFired = updateDeviation(here)
 
         val st = buildState(sample.tOffsetMs, devFired)
@@ -367,37 +403,62 @@ class RouteMatcher(
      * matcher made itself, by refusing positions that arrived late: the
      * samples that would have filled it exist, they just came after newer ones.
      * Counting nothing for it put a walk 72 s further ahead than it was. So
-     * across a long hole the watch's own active time decides, bounded by the
-     * wall time: an auto-pause adds none, a stretch of late arrivals adds what
-     * it lasted.
+     * across a long hole the watch's own active time decides: an auto-pause
+     * adds none, a stretch of late arrivals adds what it lasted.
+     *
+     * Only when that clock is believable, though — no more active time than
+     * wall time, and never backwards. Recordings made before the watch asked
+     * for the active time per position carry one checkpoint stamped across a
+     * whole delivery; on a ride of 15 Sep it read 381 s on one side of a
+     * minute's auto-pause and 675 s on the other, and clamping that to the
+     * wall time counted the pause as riding and put the rider 50 s behind.
      */
     private fun activeBetween(previous: Sample, next: Sample): Long {
         val rule = ActiveClock.elapsed(previous, next)
         val dt = next.tOffsetMs - previous.tOffsetMs
         if (rule > 0L || previous.paused || next.paused || dt <= Tuning.MAX_INTERPOLATION_GAP_MS) return rule
-        return (next.activeMs - previous.activeMs).coerceIn(0L, dt)
+        val watch = next.activeMs - previous.activeMs
+        return if (watch in 0L..dt) watch else 0L
     }
 
     /**
-     * Measure ahead/behind from where the user joined this route, the first
-     * time it is found under them.
+     * The user has been found on this route, following it, for the first time.
      *
-     * A recording started a hundred metres in has no time for those hundred
-     * metres, while the route's usual time for them is a minute; compared
-     * from the start of the route, the user was a minute ahead before they had
-     * taken a step. So the usual time to the joining point, less whatever the
-     * user spent getting there, is set aside for the rest of the workout.
+     * Ahead/behind is measured from here. Set off on at the session start — in
+     * its first half, within [Tuning.JOIN_AT_START_M] of travel — the route is
+     * compared from the start of the workout: the usual time to the joining
+     * point, less whatever the user spent getting there, is set aside, so a
+     * recording started a hundred metres in is not a minute ahead before the
+     * first step, and a slow start still counts as today's time.
      *
-     * Only ever forwards (a slow start is today's time, not an offset), only
-     * where the route is actually under the user, and only in its first half —
-     * a route found at its far end at the start of a session is the way back,
-     * not one being joined half-way.
+     * Joined anywhere else, the route is compared from the joining point on,
+     * which is the only comparison the user's day can bear. Before, it was
+     * compared from the route's start: a two-kilometre ride of 18 May, begun on
+     * the last stretch of "Arbeit zurück Baiersdorf", read 42 minutes ahead
+     * from its first minute, the route's usual time to that point counted as
+     * time saved — and rides that met the route somewhere further on read the
+     * time spent elsewhere as time lost.
+     *
+     * A detour shorter than [Tuning.CANDIDATE_DROP_M] does not unjoin the
+     * route, so the comparison goes on and the detour is what the number then
+     * says. A route left for longer is dropped, and joined afresh when the user
+     * is found following it again ([admitNearby]).
      */
-    private fun anchor(c: Cand, hit: Polyline.Hit) {
-        if (hit.distanceM > Tuning.MATCH_RADIUS_M) return
-        if (hit.positionM > Tuning.JOIN_ANCHOR_MAX_FRACTION * c.poly.lengthM) return
-        val usual = c.entry.profile.medianTimeAt(hit.positionM)
-        c.anchorS = (usual - lastActiveMs / 1000.0).coerceAtLeast(0.0)
+    private fun join(c: Cand) {
+        val elapsedS = lastActiveMs / 1000.0
+        val usual = c.entry.profile.medianTimeAt(c.positionM)
+        c.joinPosM = c.positionM
+        c.joinTravelM = travelledM
+        if (travelledM <= Tuning.JOIN_AT_START_M &&
+            c.positionM <= Tuning.JOIN_ANCHOR_MAX_FRACTION * c.poly.lengthM
+        ) {
+            c.fromStart = true
+            c.anchorS = (usual - elapsedS).coerceAtLeast(0.0)
+            c.originS = 0.0
+        } else {
+            c.anchorS = usual - elapsedS
+            c.originS = elapsedS
+        }
     }
 
     /**
@@ -474,6 +535,13 @@ class RouteMatcher(
             c.retreatM = 0.0
             c.trail.clear()
             c.trail.addLast(TrailPoint(travelledM, hit.positionM, here))
+            c.outOfBandM = 0.0
+            // Joined afresh once it is followed again, and compared from there:
+            // a route left for longer than [Tuning.CANDIDATE_DROP_M] was a
+            // different ride in between. A ride of 25 Jul left from the front
+            // door, went thirteen kilometres elsewhere and came home over the
+            // first metres of the commute, which then read an hour behind.
+            c.joinPosM = -1.0
             c.logW = ln(Tuning.REENTRY_WEIGHT)
             admitted = true
             logRaw(MatchEvent.ADMIT, id)
@@ -487,14 +555,11 @@ class RouteMatcher(
             if (c.dropped) continue
             if (c.unseenM > Tuning.CANDIDATE_DROP_M) {
                 c.dropped = true
+                // Left, demonstrably: whatever it is when it comes back, it is
+                // no longer the route the user has been on since the start.
+                c.fromStart = false
                 c.logW = Double.NEGATIVE_INFINITY
-                if (committedRouteId == id) {
-                    committedRouteId = null
-                    committedByPriority = false
-                    commitHold = 0
-                    commitHoldRouteId = null
-                    phase = MatchPhase.SEARCHING
-                }
+                // The focus goes in [updateFocus], which logs the demotion.
                 // Note: the deviation detector is deliberately not disarmed here.
                 // A committed route being dropped means the user has gone a long
                 // way from it, which is the alert's whole subject.
@@ -531,117 +596,145 @@ class RouteMatcher(
 
     private val nullWeight: Double get() = exp(nullLogW)
 
-    private fun topCandidate(): Cand? {
-        var best: Cand? = null
-        for (id in orderedIds) {
-            val c = cands[id] ?: continue
-            if (c.dropped) continue
-            if (best == null || c.logW > best.logW) best = c
+    /**
+     * Decide which route, if any, the display is about. Returns the event to
+     * log when the commitment changed.
+     *
+     * In order:
+     *
+     *  1. Nothing is followed, or the null hypothesis dominates: the user is
+     *     not on a known route, and nothing is named.
+     *  2. The named route stays named while it is followed and stays among the
+     *     contenders, allowing [Tuning.FOCUS_RELEASE_M] outside them.
+     *  3. Otherwise — and also when a contender outranks it — the best of the
+     *     contenders by [rank] is named. Committed if it has been followed
+     *     [Tuning.COMMIT_MIN_M] since it was joined; if none has, a route set
+     *     off on at the start is named as a guess once it has been followed
+     *     [Tuning.PROVISIONAL_MIN_M].
+     *
+     * Where routes run over the same ground this always names one of them, the
+     * way the user has ranked them: their ahead/behind is the same to within
+     * what anybody could read off a watch, and the name is the user's own
+     * answer to which of them it should be. Where they part, the one the user
+     * is not on stops being a contender and the other one is named.
+     */
+    private fun updateFocus(step: Double): MatchEvent? {
+        val current = focusId?.let { cands[it] }
+        val band = contenders()
+        val before = committedRouteId
+
+        if (current != null) {
+            current.outOfBandM = if (band.any { it === current }) 0.0 else current.outOfBandM + step
         }
-        return best
+        // Held through a few seconds of not fitting — a GNSS excursion, a
+        // medoid a street's width off — rather than flickering to "new route"
+        // and back: the same allowance away from the route as off the band.
+        val keep = current != null && !current.dropped &&
+            current.unseenM <= Tuning.FOCUS_RELEASE_M && current.outOfBandM <= Tuning.FOCUS_RELEASE_M
+
+        if (nullWeight >= Tuning.NULL_DOMINANT_WEIGHT || (!keep && cands.values.none { it.following })) {
+            val was = phase
+            setFocus(null, committed = false, byPriority = false)
+            phase = MatchPhase.UNKNOWN
+            return when {
+                before != null -> MatchEvent.DEMOTE
+                was != MatchPhase.UNKNOWN -> MatchEvent.NULL_DOMINANT
+                else -> null
+            }
+        }
+
+        // Committed routes first; a guess only when nothing has earned more —
+        // chosen among every route set off on, and only then asked whether it
+        // has been followed far enough to name, so that the route the user
+        // ranked first is the first name shown rather than whichever route's
+        // geometry happened to reach the distance a second earlier.
+        val eligible = band.filter { it.followedM >= Tuning.COMMIT_MIN_M }
+        val held = if (keep) current else null
+        val next = if (eligible.isNotEmpty()) {
+            choose(eligible, held)
+        } else {
+            choose(band.filter { it.fromStart }, held)?.takeIf { it.followedM >= Tuning.PROVISIONAL_MIN_M }
+        }
+        val committed = next != null && next.followedM >= Tuning.COMMIT_MIN_M
+        val byPriority = committed && eligible.any { it !== next }
+        setFocus(next, committed, byPriority)
+
+        phase = if (committed) MatchPhase.COMMITTED else MatchPhase.SEARCHING
+        return when {
+            committed && committedRouteId != before -> {
+                if (armedRouteId != next!!.routeId) armDeviation(next.routeId)
+                if (byPriority) MatchEvent.COMMIT_BY_PRIORITY else MatchEvent.COMMIT
+            }
+            // The deviation detector stays armed on purpose: a demotion is very
+            // often the first symptom of the departure it watches for.
+            !committed && before != null -> MatchEvent.DEMOTE
+            else -> null
+        }
     }
 
-    /** Returns the event to log if commitment state changed. */
-    private fun updateCommitment(): MatchEvent? {
-        val top = topCandidate()
-        val topW = top?.let { weight(it) } ?: 0.0
+    private fun setFocus(next: Cand?, committed: Boolean, byPriority: Boolean) {
+        val previous = focusId?.let { cands[it] }
+        if (next !== previous) {
+            next?.let { handOver(previous, it) }
+            next?.outOfBandM = 0.0
+        }
+        focusId = next?.routeId
+        committedRouteId = if (committed) next?.routeId else null
+        committedByPriority = committed && byPriority
+    }
 
-        if (nullWeight >= Tuning.NULL_DOMINANT_WEIGHT) {
-            val was = phase
-            if (committedRouteId != null) {
-                committedRouteId = null
-                committedByPriority = false
-                commitHold = 0
-                commitHoldRouteId = null
-                phase = MatchPhase.UNKNOWN
-                return MatchEvent.DEMOTE
-            }
-            phase = MatchPhase.UNKNOWN
-            return if (was != MatchPhase.UNKNOWN) MatchEvent.NULL_DOMINANT else null
-        }
+    /**
+     * Carry ahead/behind across from the route that was named to the one that
+     * now is, so that the number goes on from where it was.
+     *
+     * Two routes over the same street have different usual times for it — they
+     * got there by different ways, or are medians of different days — and
+     * reading the delta off the new one from scratch made it jump by the
+     * difference at every junction. The user's time has not changed there, so
+     * neither may the number: it continues from its last value, and from here
+     * on moves with the new route's profile.
+     */
+    private fun handOver(from: Cand?, to: Cand) {
+        if (from == null || from.dropped || from.positionM < 0.0) return
+        val delta = lastDelta ?: return
+        val elapsedS = lastActiveMs / 1000.0
+        to.anchorS = delta - elapsedS + to.entry.profile.medianTimeAt(to.positionM)
+        to.originS = from.originS
+    }
 
-        val contenders = contenders()
-        val winner = priorityWinner(contenders)
-
-        // What commitment should be aiming at right now, and on what grounds.
-        //  - one contender: the paths have separated, so the ordinary evidence
-        //    test applies and the weight has to earn it;
-        //  - several contenders: the evidence cannot choose, so only the user's
-        //    priority can, and a tie means nobody does.
-        val preferred: Cand?
-        val byPriority: Boolean
-        if (contenders.size <= 1) {
-            preferred = contenders.firstOrNull()
-                ?.takeIf { it === top && topW >= Tuning.COMMIT_WEIGHT }
-            byPriority = false
-        } else {
-            preferred = winner
-            byPriority = winner != null
+    /**
+     * Which of [pool] to name, given the route named now if it is still to be
+     * kept.
+     *
+     * Seniority first: the routes joined earliest — within
+     * [Tuning.COMMIT_MIN_M] of the earliest — are the ones that explain the
+     * most of today's ride, and only they are considered. The commute home
+     * that left "Arbeit zurück Baiersdorf" for six kilometres along the canal
+     * and met it again after them is "Arbeit zurück Kanal" all the way, however
+     * highly the user ranked the other: naming it there would claim a ride
+     * that did not happen.
+     *
+     * Among those, the user's priority, then the route already named, then the
+     * weight, then the lowest id. The named route is only ever replaced by one
+     * the user ranked higher, never by a better weight, which on shared ground
+     * is GNSS noise — or because it is no longer among the senior ones.
+     */
+    private fun choose(pool: List<Cand>, current: Cand?): Cand? {
+        // Held through a misfit, it competes as if it still fitted.
+        val all = if (current != null && current !in pool) pool + current else pool
+        if (all.isEmpty()) return null
+        val earliest = all.minOf { it.joinTravelM }
+        val senior = all.filter { it.joinTravelM <= earliest + Tuning.COMMIT_MIN_M }
+        val best = senior.maxWith(
+            compareBy<Cand>({ it.entry.priority }, { it === current }, { it.logW })
+                .thenByDescending { it.routeId },
+        )
+        return when {
+            current == null || best === current -> best
+            current !in senior -> best
+            best.entry.priority > current.entry.priority -> best
+            else -> current
         }
-
-        if (committedRouteId != null) {
-            val current = cands[committedRouteId]
-            val stillCommitted = when {
-                current == null || current.dropped -> false
-                current.trackRatio < Tuning.MIN_TRACKING_RATIO -> false
-                // A priority commitment is only ever as good as the tie it broke,
-                // so it is re-decided for as long as the tie exists.
-                committedByPriority && contenders.size > 1 ->
-                    winner?.routeId == committedRouteId
-                // A commitment the evidence earned holds for as long as its
-                // route is still one of the routes the user could be on. On
-                // ground two routes share they explain every sample alike, the
-                // old evidence decays, the weights drift back to a half each,
-                // and the weight rule below demoted a correct commitment half
-                // way through every commute that shares its middle with
-                // another — about half of each ride. Only the geometry
-                // separating them again can say anything new, and then the
-                // route the user is not on stops being a contender.
-                contenders.size > 1 -> contenders.any { it.routeId == committedRouteId }
-                // Everything else holds on the ordinary weight rule with its
-                // hysteresis — including when routes converge again at a shared
-                // finish. Three kilometres of accumulated evidence is exactly
-                // what a shared last hundred metres must not be allowed to erase.
-                else -> top?.routeId == committedRouteId && topW >= Tuning.DEMOTE_WEIGHT
-            }
-            if (!stillCommitted) {
-                committedRouteId = null
-                committedByPriority = false
-                commitHold = 0
-                commitHoldRouteId = null
-                phase = MatchPhase.SEARCHING
-                // The deviation detector stays armed on purpose: a demotion is
-                // very often the first symptom of the departure it watches for.
-                return MatchEvent.DEMOTE
-            }
-            // A priority commitment whose tie has resolved in its favour is now
-            // backed by the evidence, and should stop claiming otherwise.
-            if (committedByPriority && contenders.size <= 1) committedByPriority = false
-            phase = MatchPhase.COMMITTED
-            return null
-        }
-
-        phase = MatchPhase.SEARCHING
-        if (preferred == null) {
-            commitHold = 0
-            commitHoldRouteId = null
-            return null
-        }
-        // The hold has to be about one route. A run of samples that kept changing
-        // its mind is not twenty samples of agreement.
-        if (commitHoldRouteId != preferred.routeId) {
-            commitHold = 0
-            commitHoldRouteId = preferred.routeId
-        }
-        commitHold++
-        if (commitHold >= Tuning.COMMIT_HOLD_SAMPLES && travelledM >= Tuning.COMMIT_MIN_M) {
-            committedRouteId = preferred.routeId
-            committedByPriority = byPriority
-            phase = MatchPhase.COMMITTED
-            if (armedRouteId != preferred.routeId) armDeviation(preferred.routeId)
-            return if (byPriority) MatchEvent.COMMIT_BY_PRIORITY else MatchEvent.COMMIT
-        }
-        return null
     }
 
     /**
@@ -650,12 +743,13 @@ class RouteMatcher(
      * Weights cannot identify these. Two routes sharing a street fit every sample
      * alike, and whichever is a few metres nearer today is nearer because of
      * correlated GNSS bias, not because the user is on it. Geometry can: anchored
-     * on whichever live route the user is closest to, everything within
-     * [Tuning.COMMIT_SEPARATION_M] of that is indistinguishable from it.
+     * on whichever followed route the user is closest to, every followed route
+     * within [Tuning.COMMIT_SEPARATION_M] of that is indistinguishable from it.
      *
-     * A candidate that is not tracking is excluded — a route whose geometry
-     * happens to pass under the user, but which they are demonstrably not
-     * following, is not a rival explanation of the journey.
+     * Only routes being followed: a route whose geometry happens to pass under
+     * the user, but which they are demonstrably not following — the way home at
+     * its finish beside the front door, a route walked the wrong way round — is
+     * not a rival explanation of the journey.
      *
      * Returned in ascending route id order, so every decision taken from this set
      * is deterministic.
@@ -664,43 +758,16 @@ class RouteMatcher(
         var best = Double.MAX_VALUE
         for (id in orderedIds) {
             val c = cands[id] ?: continue
-            if (c.dropped || c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
-            if (c.offsetM < best) best = c.offsetM
+            if (c.following && c.offsetM < best) best = c.offsetM
         }
         if (best == Double.MAX_VALUE) return emptyList()
         val limit = best + Tuning.COMMIT_SEPARATION_M
         val out = ArrayList<Cand>(4)
         for (id in orderedIds) {
             val c = cands[id] ?: continue
-            if (c.dropped || c.trackRatio < Tuning.MIN_TRACKING_RATIO) continue
-            if (c.offsetM <= limit) out.add(c)
+            if (c.following && c.offsetM <= limit) out.add(c)
         }
         return out
-    }
-
-    /**
-     * The contender the user has ranked above all the others, or null if the top
-     * priority is shared.
-     *
-     * This is the whole of the manual override: where the evidence is genuinely
-     * unable to choose, the user's own ranking chooses instead. A tie is not a
-     * decision, so a tie leaves the display searching — which is also why every
-     * route sharing the same default priority means nothing changes until the
-     * user says something.
-     */
-    private fun priorityWinner(contenders: List<Cand>): Cand? {
-        if (contenders.size < 2) return null
-        var best: Cand? = null
-        var bestPriority = Int.MIN_VALUE
-        var tied = false
-        for (c in contenders) {
-            val p = c.entry.priority
-            when {
-                p > bestPriority -> { bestPriority = p; best = c; tied = false }
-                p == bestPriority -> tied = true
-            }
-        }
-        return if (tied) null else best
     }
 
     /** Point the detector at a route and clear whatever it was doing before. */
@@ -772,55 +839,31 @@ class RouteMatcher(
         else (tOffsetMs - lastUsableTOffsetMs).coerceAtLeast(0L)
         val stale = staleMs > Tuning.STALE_POSITION_MS
 
-        // The route every route-relative number below is about: the commitment,
-        // or — when there is none — the leader, if it holds enough of the belief
-        // to be worth naming. A.4b's complaint was that a route family sharing a
-        // long prefix leaves the watch with no remaining distance and no ETA for
-        // most of a workout although the matcher has a clear favourite
-        // throughout; this is that favourite, flagged as one.
-        val leader = live.firstOrNull()
-        val committed = committedRouteId?.let { cands[it] }
-        val contenderCount = contenders().size
-        val provisionalCand = if (committed == null && leader != null &&
-            leader.weight >= Tuning.LEADER_MIN_WEIGHT &&
-            // Never off a tie. Routes running over the same ground explain every
-            // sample equally well, so whichever is momentarily ahead on weight is
-            // ahead by GNSS noise — the same reason commitment refuses here.
-            contenderCount <= 1
-        ) {
-            cands[leader.routeId]?.takeIf { !it.dropped }
-        } else {
-            null
-        }
-        val focus = committed ?: provisionalCand
-
+        val focus = focusId?.let { cands[it] }?.takeIf { !it.dropped && it.positionM >= 0.0 }
         val elapsedS = lastActiveMs / 1000.0
-        val delta = if (stale) {
+        val delta = when {
             // Frozen, not recomputed: with the position standing still, elapsed
             // time alone would make the user look steadily slower for as long as
             // the GNSS outage lasts. The last value computed against a real
             // position is the honest one, and [positionStaleMs] says so.
-            lastDelta
-        } else {
-            val pooledMedian = medianTimeAtPosition(focus, elapsedS)
-            val d = if (phase == MatchPhase.UNKNOWN || pooledMedian == null) null
-            else elapsedS - pooledMedian
-            lastDelta = d
-            d
+            stale -> lastDelta
+            focus == null -> null
+            else -> elapsedS - (focus.entry.profile.medianTimeAt(focus.positionM) - focus.anchorS)
         }
-
+        lastDelta = delta
 
         var remaining: Double? = null
         var eta: Double? = null
         var progress: Double? = null
-        if (focus != null && focus.positionM >= 0.0) {
+        if (focus != null) {
             val lengthM = focus.entry.geometry.lengthM
             remaining = (lengthM - focus.positionM).coerceAtLeast(0.0)
             if (lengthM > 0.0) progress = (focus.positionM / lengthM).coerceIn(0.0, 1.0)
             // No arrival time off a standing position: an ETA is a claim about
             // the next few minutes, and there is nothing current to make it from.
-            if (!stale) eta = estimateEta(focus, elapsedS)
+            if (!stale && delta != null) eta = estimateEta(focus, elapsedS, delta)
         }
+        val leader = focus?.let { f -> live.firstOrNull { it.routeId == f.routeId } } ?: live.firstOrNull()
 
         return MatchState(
             tOffsetMs = tOffsetMs,
@@ -833,10 +876,10 @@ class RouteMatcher(
             deltaVsMedianS = delta,
             remainingM = remaining,
             etaSecondsFromNow = eta,
-            leaderRouteId = leader?.routeId,
+            leaderRouteId = focus?.routeId ?: leader?.routeId,
             leaderWeight = leader?.weight ?: 0.0,
-            contenderCount = contenderCount,
-            provisional = committed == null && focus != null,
+            contenderCount = contenders().size,
+            provisional = committedRouteId == null && focus != null,
             progressFraction = progress,
             deltaScaleS = Tuning.deltaFullScaleS(exerciseType),
             noRoutesKnown = cands.isEmpty(),
@@ -848,85 +891,20 @@ class RouteMatcher(
     }
 
     /**
-     * US-5: the usual time to have got this far.
+     * US-6: the route's usual time for what is left, scaled by today's pace,
+     * smoothed so the arrival time does not jitter from sample to sample.
      *
-     * From one route whenever there is one to name — the commitment, or the
-     * leader the display is already naming — and, once a route has been the
-     * one, from that route for as long as it remains among the tied: routes
-     * that merge again late in a ride make the commitment lapse, but the rider
-     * is still on the road they were on, and switching to a different route's
-     * usual time made the delta jump by half a minute at the junction.
-     *
-     * With no such route, from all the tied ones equally: their weights there
-     * are GNSS noise flipping around a half, and two routes that reached this
-     * street by different ways have different usual times for it, so weighting
-     * by noise made the delta swing while the rider held a steady pace. A tied
-     * route has to hold a real share of the belief to count, though: equal
-     * weights would hand a route admitted a second ago — a way home, placed at
-     * its far end — the same say as the route being ridden. Only when nothing is
-     * even tracking does it fall back to the weighted pool.
+     * Today's pace is the user's time over the route's usual time for the same
+     * stretch, from where the comparison began ([Cand.originS]) — the start of
+     * the workout, or where the route was joined.
      */
-    private fun medianTimeAtPosition(focus: Cand?, elapsedS: Double): Double? {
-        if (focus != null) {
-            deltaRouteId = focus.routeId
-            return medianTimeOn(focus)
-        }
-        val contenders = contenders()
-        // Kept on the low bar every live candidate clears, not the tie bar: on
-        // shared ground its weight wanders around a half and dips below a fifth
-        // often enough to make the delta flick to the other route and back.
-        contenders.firstOrNull { it.routeId == deltaRouteId && weight(it) >= Tuning.LIVE_CANDIDATE_MIN_WEIGHT }
-            ?.let { return medianTimeOn(it) }
-        deltaRouteId = null
-        val tied = contenders.filter { weight(it) >= Tuning.DELTA_TIE_MIN_WEIGHT }
-        if (tied.isNotEmpty()) {
-            // A route on which today's pace would be impossible is not one the
-            // user is on: at the front door, yesterday's ride home is at its
-            // finish, seventeen kilometres "done" in six seconds.
-            val times = tied.mapNotNull { medianTimeOn(it) }
-                .filter { elapsedS / it in Tuning.ETA_K_MIN..Tuning.ETA_K_MAX }
-            return if (times.isEmpty()) null else times.average()
-        }
-        if (contenders.isNotEmpty()) return null
-        return pooledMedianTimeAtPosition()
-    }
-
-    /** The usual time to have got here on this route, from where the user
-     *  joined it ([anchor]). */
-    private fun medianTimeOn(c: Cand): Double? {
-        if (c.dropped || c.positionM < 0.0) return null
-        return (c.entry.profile.medianTimeAt(c.positionM) - c.anchorS).takeIf { it > 0.0 }
-    }
-
-    /** Every still-plausible candidate, by weight. Candidates that share the
-     *  traversed prefix share its history, so this is meaningful long before the
-     *  route is identified. */
-    private fun pooledMedianTimeAtPosition(): Double? {
-        var wSum = 0.0
-        var acc = 0.0
-        for (id in orderedIds) {
-            val c = cands[id] ?: continue
-            if (c.dropped || c.positionM < 0.0) continue
-            val w = weight(c)
-            if (w < Tuning.LIVE_CANDIDATE_MIN_WEIGHT) continue
-            val m = c.entry.profile.medianTimeAt(c.positionM)
-            if (m <= 0.0) continue
-            acc += w * m
-            wSum += w
-        }
-        return if (wSum <= 0.0) null else acc / wSum
-    }
-
-    /**
-     * US-6: remaining median time scaled by today's performance, smoothed so the
-     * arrival time does not jitter from sample to sample.
-     */
-    private fun estimateEta(c: Cand, elapsedS: Double): Double? {
+    private fun estimateEta(c: Cand, elapsedS: Double, deltaS: Double): Double? {
         val atPos = c.entry.profile.medianTimeAt(c.positionM)
         val total = c.entry.profile.totalMedianTimeS
-        val sinceJoin = atPos - c.anchorS
-        if (sinceJoin <= 0.0 || total <= atPos) return null
-        val kRaw = (elapsedS / sinceJoin).coerceIn(Tuning.ETA_K_MIN, Tuning.ETA_K_MAX)
+        val today = elapsedS - c.originS
+        val usual = today - deltaS
+        if (usual <= 0.0 || total <= atPos) return null
+        val kRaw = (today / usual).coerceIn(Tuning.ETA_K_MIN, Tuning.ETA_K_MAX)
         kWindow.addLast(kRaw)
         kSum += kRaw
         while (kWindow.size > Tuning.ETA_SMOOTH_SAMPLES) kSum -= kWindow.removeFirst()

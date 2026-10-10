@@ -44,7 +44,11 @@ class ReplayCliTest {
     )
 
     /** A backup holding [sessions], as the phone would have written it. */
-    private fun archive(dir: File, sessions: List<RecordedSession>): File {
+    private fun archive(
+        dir: File,
+        sessions: List<RecordedSession>,
+        routes: de.hecate.core.model.RouteBundle? = null,
+    ): File {
         val file = File(dir, "backup.zip")
         file.outputStream().use { stream ->
             ArchiveCodec.Writer(stream).use { w ->
@@ -70,6 +74,26 @@ class ReplayCliTest {
                                 source = SessionSource.WATCH,
                                 hcWriteState = 0,
                             )
+                        },
+                        routes = routes?.routes.orEmpty().map { e ->
+                            Archive.Route(
+                                id = e.geometry.routeId, name = e.geometry.name, nameIsCustom = true,
+                                exerciseType = e.geometry.exerciseType, lengthM = e.geometry.lengthM,
+                                memberCount = e.prior.totalCount, medoidSessionId = "commute-0",
+                                createdAt = 0L, active = true, priority = e.priority,
+                            )
+                        },
+                        routeMembers = routes?.routes.orEmpty().flatMap { e ->
+                            sessions.filter { it.id.startsWith("commute") }
+                                .map { Archive.RouteMember(e.geometry.routeId, it.id) }
+                        },
+                        routePoints = routes?.routes.orEmpty().flatMap { e ->
+                            e.geometry.points.mapIndexed { i, pt ->
+                                Archive.RoutePoint(e.geometry.routeId, i, pt.lat, pt.lon, pt.cumDistM)
+                            }
+                        },
+                        routeProfile = routes?.routes.orEmpty().flatMap { e ->
+                            e.profile.medianCumTimeS.mapIndexed { i, t -> Archive.ProfileBin(e.geometry.routeId, i, t) }
                         },
                     ),
                 )
@@ -100,6 +124,31 @@ class ReplayCliTest {
             0,
             ReplayMain.dispatch(arrayOf("sessions", "--sessions", fixtures.path, "--bundle", bundle.path)),
         )
+    }
+
+    @Test
+    fun `a backup is its own bundle, and timeline reads every recording against it`() {
+        val dir = tempDir()
+        val sessions = history()
+        val learned = bundleOf(sessions).let { b ->
+            b.copy(routes = b.routes.map { it.copy(priority = 2) })
+        }
+        val zip = archive(dir, sessions, learned)
+
+        // What the phone would push, rebuilt from the backup's own tables —
+        // priority included, which nothing but the database records.
+        val rebuilt = ArchiveCodec.Reader(zip).use { de.hecate.core.archive.ArchiveBundle.of(it.database) }
+        assertEquals(learned.routes.map { it.geometry.points }, rebuilt.routes.map { it.geometry.points })
+        assertEquals(listOf(2), rebuilt.routes.map { it.priority })
+
+        val printed = capture { assertEquals(0, ReplayMain.dispatch(arrayOf("timeline", "--archive", zip.path))) }
+        val lines = printed.lines().filter { it.isNotBlank() }
+        assertEquals(sessions.size, lines.size, printed)
+        val name = learned.routes.single().geometry.name
+        assertTrue(lines.filter { it.startsWith("commute") }.all { "| $name " in it }, printed)
+        assertTrue(lines.single { it.startsWith("elsewher") }.contains("[no route]  Δ –"), printed)
+        // And a backup is accepted wherever a bundle is.
+        assertEquals(0, ReplayMain.dispatch(arrayOf("sessions", "--archive", zip.path, "--bundle", zip.path)))
     }
 
     @Test

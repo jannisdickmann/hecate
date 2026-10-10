@@ -23,6 +23,7 @@ import de.hecate.core.display.RouteBeliefKind
 import de.hecate.core.display.routeBelief
 import de.hecate.core.display.HeadingUp
 import de.hecate.core.geo.LatLon
+import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchState
@@ -68,6 +69,27 @@ import java.util.UUID
 class RecorderService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * The one lane everything that touches the recording runs on: the matcher,
+     * the session file, the auto-stop and the counters behind them, none of
+     * which is thread-safe, and all of which were written as if fed from one
+     * thread.
+     *
+     * They were not. Health Services hands its deliveries over one at a time,
+     * but each was launched onto [Dispatchers.Default], a pool, so two that
+     * arrived close together — an ambient burst and the next one — ran at the
+     * same time. On a walk of 9 Oct the match log shows the result: a position
+     * logged after a newer one with the newer one's distance, which no single
+     * thread can produce, and half a minute later the matcher threw on every
+     * sample until the host switched it off for the rest of the walk. The
+     * "late positions" of 5 Oct were very likely the same race seen from the
+     * other side.
+     *
+     * One at a time, and in the order they were handed over: a dispatcher
+     * limited to one runs its queue first in, first out.
+     */
+    private val lane = Dispatchers.Default.limitedParallelism(1)
     private lateinit var source: ExerciseSource
 
     private var writer: SessionWriter? = null
@@ -106,6 +128,10 @@ class RecorderService : Service() {
     private var routeShapes: Map<Long, List<LatLon>> = emptyMap()
     private var lastNotificationUpdateMs = 0L
     private var sawFirstLocation = false
+
+    /** The last position written, which the pause flag of the next one is
+     *  decided against ([ActiveClock.unpause]). */
+    private var lastSample: Sample? = null
     private var samplesWritten = 0
 
     /**
@@ -196,11 +222,11 @@ class RecorderService : Service() {
                     Log.w(TAG, "Sportart im Intent unlesbar ($raw), starte als ${it.label}")
                 }
                 startForegroundNow(type)
-                scope.launch { beginSession(type) }
+                scope.launch(lane) { beginSession(type) }
             }
-            ACTION_PAUSE -> scope.launch { setPaused(true) }
-            ACTION_RESUME -> scope.launch { setPaused(false) }
-            ACTION_STOP -> scope.launch { endSession(SessionEndReason.USER_STOPPED) }
+            ACTION_PAUSE -> scope.launch(lane) { setPaused(true) }
+            ACTION_RESUME -> scope.launch(lane) { setPaused(false) }
+            ACTION_STOP -> scope.launch(lane) { endSession(SessionEndReason.USER_STOPPED) }
             ACTION_UPLOAD -> scope.launch { AppGraph.uploader.uploadPending() }
             else -> {
                 // Restarted by the system (START_STICKY). Re-register and see what
@@ -251,6 +277,7 @@ class RecorderService : Service() {
         pausedTotalMs = 0L
         pausedSinceMs = null
         lastHrBpm = null
+        lastSample = null
         lastHrAtMs = 0L
         lastAltitudeAtMs = -1L
         altitudesWritten = 0
@@ -367,7 +394,7 @@ class RecorderService : Service() {
      * do with either — there the samples do all the asking.
      */
     private fun armAutoStopWatchdog(id: String) {
-        scope.launch {
+        scope.launch(lane) {
             while (sessionId == id) {
                 delay(Tuning.AUTO_STOP_TICK_MS)
                 if (sessionId != id) return@launch
@@ -410,7 +437,7 @@ class RecorderService : Service() {
      * available, exactly as it does after a dropout mid-run.
      */
     private fun armPrepareTimeout(id: String) {
-        scope.launch {
+        scope.launch(lane) {
             delay(PREPARE_TIMEOUT_MS)
             if (sessionId != id || bus.state.value.phase != RecorderPhase.PREPARING) return@launch
             Log.w(TAG, "Kein Fix nach ${PREPARE_TIMEOUT_MS / 1000}s — Start ohne GPS")
@@ -457,7 +484,7 @@ class RecorderService : Service() {
 
     /** Runs a replay to its end, which is an auto-end: the recording ran out. */
     private fun driveReplay(replay: SampleFeed) {
-        replayJob = scope.launch {
+        replayJob = scope.launch(lane) {
             try {
                 replay.drive(::onReplaySample)
             } catch (cancelled: CancellationException) {
@@ -650,37 +677,42 @@ class RecorderService : Service() {
         }
 
         override fun onUpdate(update: ExerciseUpdate) {
-            scope.launch { handleUpdate(update) }
+            scope.launch(lane) { handleUpdate(update) }
         }
 
         override fun onAvailability(dataType: DataType<*, *>, availability: Availability) {
-            if (availability is LocationAvailability) {
-                val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
-                    availability == LocationAvailability.ACQUIRED_UNTETHERED
-                val lost = availability == LocationAvailability.ACQUIRING ||
-                    availability == LocationAvailability.NO_GNSS
-                val was = bus.state.value.gpsReady
-                bus.update {
-                    it.copy(
-                        gpsReady = ready,
-                        gpsSignalLost = when {
-                            ready -> false
-                            lost -> true
-                            else -> it.gpsSignalLost
-                        },
-                    )
-                }
-                if (!was && ready) {
-                    recordEvent(SessionEventType.GPS_ACQUIRED)
-                    if (bus.state.value.phase == RecorderPhase.PREPARING) {
-                        scope.launch { startExercise() }
-                    }
-                } else if (was && !ready) {
-                    recordEvent(SessionEventType.GPS_LOST)
-                }
-            } else if (dataType == DataType.HEART_RATE_BPM) {
-                bus.update { it.copy(heartRateAvailable = availability.toString().startsWith("AVAILABLE")) }
+            // On the lane too: it writes events into the same file the samples go to.
+            scope.launch(lane) { availabilityChanged(dataType, availability) }
+        }
+    }
+
+    private fun availabilityChanged(dataType: DataType<*, *>, availability: Availability) {
+        if (availability is LocationAvailability) {
+            val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
+                availability == LocationAvailability.ACQUIRED_UNTETHERED
+            val lost = availability == LocationAvailability.ACQUIRING ||
+                availability == LocationAvailability.NO_GNSS
+            val was = bus.state.value.gpsReady
+            bus.update {
+                it.copy(
+                    gpsReady = ready,
+                    gpsSignalLost = when {
+                        ready -> false
+                        lost -> true
+                        else -> it.gpsSignalLost
+                    },
+                )
             }
+            if (!was && ready) {
+                recordEvent(SessionEventType.GPS_ACQUIRED)
+                if (bus.state.value.phase == RecorderPhase.PREPARING) {
+                    scope.launch(lane) { startExercise() }
+                }
+            } else if (was && !ready) {
+                recordEvent(SessionEventType.GPS_LOST)
+            }
+        } else if (dataType == DataType.HEART_RATE_BPM) {
+            bus.update { it.copy(heartRateAvailable = availability.toString().startsWith("AVAILABLE")) }
         }
     }
 
@@ -844,17 +876,20 @@ class RecorderService : Service() {
         // for it. Cheaper than waiting for the watchdog's next half minute, and
         // the one thing that still arrives while ambient batching stretches
         // everything else out.
-        autoStop?.tick(nowOffsetMs())?.let { verdict -> scope.launch { autoStopped(verdict) } }
+        autoStop?.tick(nowOffsetMs())?.let { verdict -> scope.launch(lane) { autoStopped(verdict) } }
 
         if (locations.isEmpty()) {
             maybeUpdateNotification()
             return
         }
 
-        // Pause state is read once for the delivery, and that is sound rather
-        // than convenient: Health Services sends an update on every state
-        // transition, so a batch does not straddle a pause. It is the one thing
-        // here without a per-point source, and it is worth knowing which.
+        // Pause state is read once for the delivery — and a delivery *does*
+        // straddle a pause: the batch that ends at an auto-pause, or the first
+        // one after a resume, arrives with the paused state and half a minute
+        // of positions that were taken while moving (four times on a walk of
+        // 8 Oct). So the delivery's state is only where a position starts;
+        // Health Services' own active time at each point decides it, see
+        // [ActiveClock.unpause].
         val paused = bus.state.value.phase == RecorderPhase.PAUSED
         val sorted = locations.sortedBy { it.timeDurationFromBoot.toMillis() }
         for ((i, point) in sorted.withIndex()) {
@@ -866,7 +901,9 @@ class RecorderService : Service() {
             // session are unaffected: a null already falls back (see the replay
             // path in [onReplaySample]).
             val cumulative = if (i == sorted.size - 1) distance else null
-            val sample = toSample(update, point, cumulative, paused) ?: continue
+            val sample = toSample(update, point, cumulative, paused)
+                ?.let { ActiveClock.unpause(lastSample, it) }
+                ?: continue
             onSample(sample)
         }
         maybeUpdateNotification()
@@ -1037,6 +1074,7 @@ class RecorderService : Service() {
     private fun onSample(sample: Sample) {
         writer?.writeSample(sample)
         samplesWritten++
+        lastSample = sample
         // The map page's own track. Usable fixes only: a 200 m error ellipse
         // drawn as a zig-zag across the face is exactly the deviation the page
         // exists to show, and it would not be one.
@@ -1064,7 +1102,7 @@ class RecorderService : Service() {
         // the recording, not about the route, and it must not depend on a
         // matcher that may be disabled. Launched rather than awaited because
         // ending a session suspends and this path may not.
-        autoStop?.sample(sample)?.let { verdict -> scope.launch { autoStopped(verdict) } }
+        autoStop?.sample(sample)?.let { verdict -> scope.launch(lane) { autoStopped(verdict) } }
 
         val state = matcher?.update(sample)
         if (matcher?.disabled == true && !bus.state.value.matcherDisabled) {

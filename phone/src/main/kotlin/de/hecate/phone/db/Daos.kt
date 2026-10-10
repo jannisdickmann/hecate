@@ -114,6 +114,25 @@ interface SessionDao {
     suspend fun clearMatchesFor(routeId: Long)
 
     /**
+     * Forget the route of every session that no route counts as a member.
+     *
+     * Ingest files a recording under the route the watch last committed to,
+     * which is a decision about part of a workout made while it was happening:
+     * a ride of 10 Oct, eleven kilometres nowhere near the commute, met the
+     * commute's last hundred metres at the front door and came back filed as
+     * "Arbeit zurück Baiersdorf". Which route a whole recording is, is the
+     * clusterer's question, and it answers it on every ingest; a session it
+     * leaves out of every active route is a new route, whatever the watch said.
+     * Active only: a route that has been retired keeps its old member rows.
+     */
+    @Query(
+        "UPDATE session SET matched_route_id = NULL, match_coverage = NULL " +
+            "WHERE matched_route_id IS NOT NULL AND id NOT IN (" +
+            "SELECT m.session_id FROM route_member m JOIN route r ON r.id = m.route_id WHERE r.active)",
+    )
+    suspend fun clearMatchesOfNonMembers()
+
+    /**
      * Correct the sport a recording was filed under.
      *
      * The only writer of `exercise_type` other than ingest, and it exists because

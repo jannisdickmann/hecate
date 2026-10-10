@@ -1,6 +1,7 @@
 package de.hecate.core.replay
 
 import de.hecate.core.archive.Archive
+import de.hecate.core.archive.ArchiveBundle
 import de.hecate.core.archive.ArchiveCodec
 import de.hecate.core.geo.Track
 import de.hecate.core.cluster.BundleBuilder
@@ -11,6 +12,7 @@ import de.hecate.core.matcher.RouteMatcher
 import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
+import de.hecate.core.model.MatchState
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.RouteBundle
 import de.hecate.core.model.ExerciseType
@@ -42,6 +44,7 @@ import kotlin.system.exitProcess
  * ./gradlew :core:run --args="verify --bundle b.json --session s.jsonl --golden g.jsonl"
  * ./gradlew :core:run --args="selfcheck --bundle b.json --session s.jsonl"
  * ./gradlew :core:run --args="onwrist --session s.jsonl --bundle b.json"
+ * ./gradlew :core:run --args="timeline --archive backup/hecate-sicherung-*.zip"
  * ./gradlew :core:run --args="takeout --input takeout/takeout-*.zip"
  * ./gradlew :core:run --args="karte --archive takeout/hecate-sicherung-*.zip --out map/"
  * ./gradlew :core:run --args="karteinfo --store map/ --svg map/preview"
@@ -71,6 +74,7 @@ object ReplayMain {
             "selfcheck" -> cmdSelfCheck(opts)
             "onwrist" -> cmdOnWrist(opts)
             "sessions" -> cmdSessions(opts)
+            "timeline" -> cmdTimeline(opts)
             "autostop" -> cmdAutoStop(opts)
             "extract" -> cmdExtract(opts)
             "takeout" -> cmdTakeout(opts)
@@ -91,6 +95,8 @@ object ReplayMain {
 
               replay    --bundle <f> --session <f> [--out <f>] [--verbose]
                         Replay a session; print the decision timeline.
+                        Every --bundle may also be a backup ZIP, whose routes
+                        are then rebuilt into the bundle its phone would push.
               bundle    --sessions <dir> [--out <f>] [--min-members N]
                         Cluster a directory of session files into a route bundle.
               verify    --bundle <f> --session <f> --golden <f>
@@ -105,6 +111,13 @@ object ReplayMain {
                         List the stored activities and what each one matches, so
                         that a replay can be picked by what it does rather than by
                         the date on it. --bundle answers for that bundle.
+              timeline  --archive <zip> [--bundle <f>] [--type T] [--session <id>]
+                        Replay every recording of a backup and print what the
+                        watch would name along each one — "~" a guess, "*" an
+                        assumption among routes over the same ground — with the
+                        ahead/behind range, its largest one-sample jump, and the
+                        route the phone counts it a member of. The whole
+                        history's worth of matcher behaviour on one screen.
               autostop  (--archive <zip> | --sessions <dir> | --session <f>)
                         Run the auto-stop rules over stored activities and print
                         what each one would have ended and thrown away. The
@@ -311,6 +324,85 @@ object ReplayMain {
             println("extract one with: extract --archive $archive --session <id>")
         }
         return 0
+    }
+
+    /**
+     * What the matcher does over a whole history (A.31): one line per
+     * recording, the names it showed along it and where, and whether the
+     * numbers behind them were believable.
+     *
+     * Against the backup's own routes unless `--bundle` says otherwise, so the
+     * question it answers by default is "what would the watch say now about
+     * every workout I have", and the membership column is what to hold it
+     * against: the route the clusterer counts the recording towards.
+     */
+    private fun cmdTimeline(o: Map<String, String>): Int {
+        val file = o["archive"]?.let { File(it) } ?: run { usage(); return 2 }
+        if (!file.isFile) { System.err.println("no such file: $file"); return 2 }
+        val typeFilter = o["type"]?.let { ExerciseType.parse(it.uppercase()) }
+        val wanted = o["session"]
+        val reader = try {
+            ArchiveCodec.Reader(file)
+        } catch (e: Exception) {
+            System.err.println("not a Hecate backup: $file (${e.message})")
+            return 2
+        }
+        reader.use { r ->
+            val bundle = o["bundle"]?.let { loadBundle(it) ?: return 2 } ?: ArchiveBundle.of(r.database)
+            val names = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+            val active = r.database.routes.filter { it.active }.map { it.id }.toSet()
+            val members = r.database.routeMembers.filter { it.routeId in active }
+                .groupBy({ it.sessionId }, { it.routeId })
+            for (row in r.database.sessions.sortedBy { it.startedAtUtc }) {
+                if (typeFilter != null && row.exerciseType != typeFilter) continue
+                if (wanted != null && !row.id.startsWith(wanted)) continue
+                val session = r.session(row.id) ?: continue
+                val states = run(session, bundle, ArrayList())
+                println(timelineLine(row, states, names, members[row.id].orEmpty()))
+            }
+        }
+        return 0
+    }
+
+    private fun timelineLine(
+        row: Archive.Session,
+        states: List<MatchState>,
+        names: Map<Long, String>,
+        memberOf: List<Long>,
+    ): String {
+        val segments = ArrayList<String>()
+        var label: String? = null
+        var from = 0.0
+        val deltas = ArrayList<Double>()
+        var jump = 0.0
+        var previous: Double? = null
+        for (st in states) {
+            val now = when {
+                st.committedRouteId != null ->
+                    (names[st.committedRouteId] ?: "route ${st.committedRouteId}") + if (st.committedByPriority) "*" else ""
+                st.provisional && st.leaderRouteId != null -> "~" + (names[st.leaderRouteId] ?: "route ${st.leaderRouteId}")
+                else -> "-"
+            }
+            if (now != label) {
+                label?.let { segments.add("%s %.1f-%.1f".format(it, from / 1000, st.travelledM / 1000)) }
+                label = now
+                from = st.travelledM
+            }
+            val d = st.deltaVsMedianS
+            if (d != null) {
+                deltas.add(d)
+                previous?.let { jump = maxOf(jump, kotlin.math.abs(d - it)) }
+            }
+            previous = d
+        }
+        label?.let { segments.add("%s %.1f-%.1f".format(it, from / 1000, (states.lastOrNull()?.travelledM ?: 0.0) / 1000)) }
+        val stamp = LOCAL_STAMP.withZone(java.time.ZoneOffset.ofTotalSeconds(row.tzOffsetMinutes * 60))
+            .format(Instant.ofEpochMilli(row.startedAtUtc))
+        val delta = if (deltas.isEmpty()) "Δ –" else "Δ %+.0f..%+.0f s, jump %.0f s".format(deltas.min(), deltas.max(), jump)
+        val member = memberOf.joinToString("/") { names[it] ?: "route $it" }.ifEmpty { "no route" }
+        return "%s  %s  %-7s  [%s]  %s  |  %s".format(
+            row.id.take(8), stamp, row.exerciseType, member, delta, segments.joinToString(" | "),
+        )
     }
 
     /**
@@ -844,8 +936,14 @@ object ReplayMain {
         if (path == null) { usage(); return null }
         val f = File(path)
         if (!f.exists()) { System.err.println("no such file: $path"); return null }
-        return if (f.name.endsWith(".gz")) f.inputStream().use { BundleCodec.readGzip(it) }
-        else BundleCodec.decode(f.readText())
+        return when {
+            f.name.endsWith(".gz") -> f.inputStream().use { BundleCodec.readGzip(it) }
+            // A backup carries the routes, their priorities and the history the
+            // priors are counted from: everything the phone builds a bundle out
+            // of, so the bundle the watch was holding can be rebuilt from it.
+            f.name.endsWith(".zip") -> ArchiveCodec.Reader(f).use { ArchiveBundle.of(it.database) }
+            else -> BundleCodec.decode(f.readText())
+        }
     }
 
     private fun loadSession(path: String?): RecordedSession? {

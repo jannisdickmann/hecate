@@ -58,11 +58,47 @@ object ActiveClock {
         var active = 0L
         out.add(samples[0].copy(activeMs = 0L))
         for (i in 1 until samples.size) {
-            active += elapsed(samples[i - 1], samples[i])
-            out.add(samples[i].copy(activeMs = active))
+            val next = unpause(samples[i - 1], samples[i])
+            active += elapsed(out[i - 1], next)
+            out.add(next.copy(activeMs = active))
         }
         return out
     }
+
+    /**
+     * [next] with its pause flag cleared when the watch's own clock shows it was
+     * taken while the workout was running.
+     *
+     * The watch reads the pause state once per delivery and stamps it on every
+     * position in it, and a delivery is not, as was assumed, all one or the
+     * other. Health Services sends no positions at all while paused; what it
+     * does send is the batch that ends at an auto-pause, or the one just after
+     * a resume, carrying the pause state — so on a walk of 8 Oct four runs of up
+     * to forty seconds, 140 m of walking, were flagged as paused. Everything
+     * downstream threw them away: the matcher saw the walker stand still and
+     * then jump 50 m along the route, and the clock lost 102 s of a 35-minute
+     * walk, which went into the route's profile as speed nobody had.
+     *
+     * Health Services answers the question per position, though: [Sample.activeMs]
+     * is its active duration at that point, and while paused it stands still.
+     * Where it advanced with the monotonic clock — by at least half of it, and
+     * never by more — the position was taken while active, whatever the
+     * delivery said. Older recordings stamped one checkpoint across a whole
+     * batch, so their clock stands still between samples, and their flags are
+     * left as they were.
+     */
+    fun unpause(previous: Sample?, next: Sample): Sample {
+        if (!next.paused || previous == null) return next
+        val dt = next.tOffsetMs - previous.tOffsetMs
+        val da = next.activeMs - previous.activeMs
+        if (dt <= 0 || dt > Tuning.MAX_INTERPOLATION_GAP_MS) return next
+        return if (da * 2 >= dt && da <= dt + RUNNING_SLACK_MS) next.copy(paused = false) else next
+    }
+
+    /** How far the watch's clock may run ahead of the monotonic one between two
+     *  positions and still be read as having run with it: its readings are
+     *  rounded to the delivery they were computed in. */
+    private const val RUNNING_SLACK_MS = 1_000L
 
     /** How much active time lies between two consecutive samples, in ms. Public
      *  so the live matcher can run the very clock its route profiles were

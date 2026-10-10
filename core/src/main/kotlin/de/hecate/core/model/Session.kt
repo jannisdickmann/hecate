@@ -100,6 +100,10 @@ data class Sample(
     @SerialName("hr") val hrBpm: Int? = null,
     @SerialName("acc") val accuracyM: Double? = null,
     @SerialName("d") val cumDistanceM: Double? = null,
+    /** Taken while the workout was paused. Recordings made before the watch
+     *  decided this per position carry their delivery's state on every position
+     *  in it, right or wrong; read them through [ActiveClock.unpause], as
+     *  [ActiveClock.repair] and the matcher do. */
     @SerialName("p") val paused: Boolean = false,
 ) {
     /** True when this sample is good enough to feed the matcher and the clusterer. */

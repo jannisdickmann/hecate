@@ -198,6 +198,9 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     sessionDao.setMatch(sessionId, routeId, coverage)
                 }
             }
+            // Last, once every member has been written: what is left over
+            // belongs to no route, whatever the watch committed to on the way.
+            sessionDao.clearMatchesOfNonMembers()
         }
 
         publishBundle()

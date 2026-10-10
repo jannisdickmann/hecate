@@ -7,6 +7,7 @@ import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionHeader
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
 import java.io.File
 
 /**
@@ -16,8 +17,8 @@ import java.io.File
  * release build's half of it is.
  *
  * **Speed changes nothing but the wait.** [de.hecate.core.matcher.RouteMatcher]
- * never reads a clock and its hold windows are counted in samples, not seconds
- * (`COMMIT_HOLD_SAMPLES`), so a replay at ×10 commits on the same sample as a
+ * never reads a clock and its thresholds are distances along the route, not
+ * seconds (`COMMIT_MIN_M`), so a replay at ×10 commits on the same sample as a
  * replay at ×1 and as the watch did on the day. What the speed buys is not
  * having to stand in front of an emulator for forty-five minutes to watch a
  * route be found after four.
@@ -58,7 +59,10 @@ class ReplayFeed private constructor(
         var previousMs = session.samples.firstOrNull()?.tOffsetMs ?: 0L
         for (sample in session.samples) {
             val waitMs = ((sample.tOffsetMs - previousMs) / speed).toLong()
-            if (waitMs > 0) delay(waitMs)
+            // Yielding when there is nothing to wait for: the recorder runs this
+            // on its one lane, and a fast replay that never suspended would keep
+            // the stop button queued behind it until the last sample.
+            if (waitMs > 0) delay(waitMs) else yield()
             // Held here rather than by not advancing the clock, so that resuming
             // carries on from this sample instead of racing through the ones the
             // pause was spent on.

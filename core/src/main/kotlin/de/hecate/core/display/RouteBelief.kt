@@ -1,6 +1,5 @@
 package de.hecate.core.display
 
-import de.hecate.core.Tuning
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
 
@@ -33,13 +32,14 @@ enum class RouteBeliefKind {
     /** One route, worked out from today's track. The strongest claim there is. */
     COMMITTED,
 
-    /** One route, taken from the user's own ranking because the evidence could
-     *  not choose between routes running over the same ground. A setting, not a
-     *  finding, and coloured differently for that reason. */
+    /** One route, committed to while others still run over the same ground:
+     *  the one followed since the start, or the user's own ranking, chose it
+     *  rather than the evidence. A setting, not a finding, and coloured
+     *  differently for that reason. */
     ASSUMED,
 
-    /** No commitment, but one route holds most of the belief. Named, and marked
-     *  as the guess it is. */
+    /** No commitment yet, but the user set off on a route and is following
+     *  it. Named, and marked as the guess it is. */
     LEADING,
 
     /** Two or more routes are still indistinguishable. Both names are shown:
@@ -112,10 +112,16 @@ fun routeBelief(
 
     if (state.phase == MatchPhase.UNKNOWN) return RouteBelief(RouteBeliefKind.NEW_ROUTE)
 
-    // Two or more routes over the same ground explain every sample equally well,
-    // so naming one of them would be a coin toss dressed up as a finding — the
-    // same reason the matcher itself refuses to commit here. Say that it is one
-    // of them instead, which is both true and useful.
+    // The matcher's guess, which it makes on its own terms (followed from the
+    // start, ranked as the user ranked the routes); the display only marks it
+    // as one.
+    if (state.provisional) {
+        state.leaderRouteId?.let(nameOf)?.let { return RouteBelief(RouteBeliefKind.LEADING, name = it) }
+    }
+
+    // Routes over the same ground that nobody has been named for yet — joined
+    // on the way and not followed far enough. Say that it is one of them,
+    // which is both true and useful.
     val contenders = state.contenderCount
     if (contenders >= 2) {
         val names = state.candidates.asSequence().mapNotNull { nameOf(it.routeId) }.take(2).toList()
@@ -128,11 +134,6 @@ fun routeBelief(
             )
         }
         return RouteBelief(RouteBeliefKind.COMPARING, contenderCount = contenders)
-    }
-
-    val leaderName = state.leaderRouteId?.let(nameOf)
-    if (leaderName != null && state.leaderWeight >= Tuning.LEADER_MIN_WEIGHT) {
-        return RouteBelief(RouteBeliefKind.LEADING, name = leaderName)
     }
     return RouteBelief(RouteBeliefKind.COMPARING, contenderCount = contenders)
 }

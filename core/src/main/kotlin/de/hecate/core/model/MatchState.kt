@@ -13,15 +13,19 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class MatchPhase {
-    /** Not enough evidence yet, or several routes still plausible. May name the
-     *  leading route, marked as provisional, but never commits to it. */
+    /** On or near known routes, none followed far enough to commit to yet.
+     *  May name the route set off on, marked as provisional. */
     SEARCHING,
 
-    /** One route dominates and has held. Shows its name. */
+    /** One route has been followed [de.hecate.core.Tuning.COMMIT_MIN_M] and
+     *  is named — alone, or chosen among routes over the same ground
+     *  ([MatchState.committedByPriority]). */
     COMMITTED,
 
-    /** The null hypothesis dominates: today's track is not one of the learned
-     *  routes. Shown as "Neue Strecke" — a finding, not a failure. */
+    /** Today's track is not one of the learned routes: the null hypothesis
+     *  dominates, or no route is being followed forwards — a route walked the
+     *  wrong way round is a new route too. Shown as "Neue Strecke" — a
+     *  finding, not a failure. */
     UNKNOWN,
 }
 
@@ -48,9 +52,10 @@ data class MatchState(
     val tOffsetMs: Long,
     val phase: MatchPhase,
     val committedRouteId: Long? = null,
-    /** True when the commitment rests on the user's manual route priority rather
-     *  than on evidence: the routes coincided, and the user had already said
-     *  which one to assume. */
+    /** True while other routes still coincide with the committed one, so it
+     *  was chosen — by how much of the ride each explains, then the user's
+     *  manual priority — rather than found by the evidence. The ahead/behind is
+     *  the same on any of them there; the name is an assumption. */
     val committedByPriority: Boolean = false,
     val nullWeight: Double = 1.0,
     val candidates: List<Candidate> = emptyList(),
@@ -118,8 +123,9 @@ enum class MatchEvent {
     ADMIT,
     DROP,
     COMMIT,
-    /** Committed because the user ranked this route above the others it was
-     *  indistinguishable from, not because the evidence chose it. */
+    /** Committed to one of several routes it was indistinguishable from —
+     *  chosen by how much of the ride each explains and the user's ranking,
+     *  not by the evidence. */
     COMMIT_BY_PRIORITY,
     DEMOTE,
     NULL_DOMINANT,

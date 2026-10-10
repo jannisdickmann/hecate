@@ -83,15 +83,20 @@ class MatcherTest {
     }
 
     @Test
-    fun `commitment does not happen inside the shared start segment`() {
+    fun `inside the shared start segment one route is named and flagged as assumed`() {
         val b = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(51), seed = 992)
         val states = replay(today, b)
-        // The long route and the shortcut coincide for the first 2 km. Nothing may
-        // be committed to while both are still plausible (US-4).
+        // The long route and the shortcut coincide for the first 2 km. One of them
+        // is named all the same — their ahead/behind is the same there — but as
+        // an assumption, not as a finding (US-4), and not before it has been
+        // followed for COMMIT_MIN_M.
         val committedEarly = states.filter { it.travelledM < 1900.0 && it.phase == MatchPhase.COMMITTED }
-        assertTrue(committedEarly.isEmpty(), "committed after only ${committedEarly.firstOrNull()?.travelledM} m")
-        assertTrue(states.any { it.phase == MatchPhase.COMMITTED }, "never committed at all")
+        assertTrue(committedEarly.isNotEmpty(), "nothing named on the shared segment")
+        assertTrue(committedEarly.all { it.committedByPriority }, "a tie claimed as evidence")
+        assertTrue(committedEarly.first().travelledM >= Tuning.COMMIT_MIN_M, "committed before COMMIT_MIN_M")
+        // Named once, and kept: on shared ground the weights are noise.
+        assertEquals(1, committedEarly.map { it.committedRouteId }.distinct().size, "the name changed on a tie")
     }
 
     @Test
@@ -165,10 +170,6 @@ class MatcherTest {
             states.filter { it.phase != MatchPhase.COMMITTED }
                 .all { (it.remainingM == null && it.etaSecondsFromNow == null) || it.provisional },
             "remaining distance offered with no route behind it",
-        )
-        assertTrue(
-            states.none { it.provisional && it.contenderCount > 1 },
-            "provisional while two routes were still indistinguishable",
         )
         val committed = states.filter { it.phase == MatchPhase.COMMITTED }
         assertTrue(committed.isNotEmpty())
@@ -339,6 +340,43 @@ class MatcherTest {
             late.drop(committedAt).all { it.phase == MatchPhase.COMMITTED },
             "late positions demoted the route",
         )
+    }
+
+    @Test
+    fun `a delivery flagged paused while the user kept moving is still followed`() {
+        // The walk of 8 Oct: the batch that ends at an auto-pause carries the
+        // pause state on half a minute of positions taken while walking. The
+        // watch's own active time at each of them kept running.
+        val b = learnedBundle()
+        val today = Synthetic.record("today", Synthetic.workRoute, day(76), seed = 1013)
+        val inOrder = replay(today, b)
+        val flagged = today.copy(samples = today.samples.mapIndexed { i, s -> s.copy(paused = i in 300..330) })
+        val states = replay(flagged, b)
+
+        val ratio = states.last().travelledM / inOrder.last().travelledM
+        assertTrue(ratio in 0.99..1.01, "travelled ${"%.2f".format(ratio)} x the unflagged distance")
+        val deltas = states.mapNotNull { it.deltaVsMedianS }
+        val jump = deltas.zipWithNext { x, y -> abs(y - x) }.maxOrNull() ?: 0.0
+        assertTrue(jump < 10.0, "ahead/behind jumped by $jump s across the flagged stretch")
+    }
+
+    @Test
+    fun `a clock that ran faster than time across a hole counts none of it`() {
+        // A recording from before the watch asked for the active time per
+        // position: across a minute's auto-pause its clock read 381 s on one
+        // side and 675 s on the other. That is not a measurement of anything.
+        val b = learnedBundle()
+        val today = Synthetic.record("today", Synthetic.workRoute, day(77), seed = 1014)
+        val holeMs = 57_000L
+        val warped = today.copy(
+            samples = today.samples.mapIndexed { i, s ->
+                if (i < 400) s else s.copy(tOffsetMs = s.tOffsetMs + holeMs, activeMs = s.activeMs + 300_000L)
+            },
+        )
+        val states = replay(warped, b)
+        val before = states[399].deltaVsMedianS!!
+        val after = states[400].deltaVsMedianS!!
+        assertTrue(abs(after - before) < 10.0, "a pause read as ${"%.0f".format(after - before)} s of riding")
     }
 
     @Test

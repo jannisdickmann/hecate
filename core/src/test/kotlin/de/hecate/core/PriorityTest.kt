@@ -76,16 +76,18 @@ class PriorityTest {
     // ------------------------------------------------------------------- tests
 
     @Test
-    fun `by default nothing changes — equal priorities decide nothing`() {
+    fun `with equal priorities one route is still named on the shared segment, and kept`() {
         val bundle = learned()
         assertTrue(bundle.routes.all { it.priority == Tuning.DEFAULT_ROUTE_PRIORITY })
         val today = Synthetic.record("today", Synthetic.workRoute, day(50), seed = 501)
         val states = replay(today, bundle)
-        // The shared 2 km stay in Suche…, exactly as before the feature existed.
-        assertTrue(
-            states.none { it.travelledM < 1900 && it.phase == MatchPhase.COMMITTED },
-            "committed inside the shared segment with no priority set",
-        )
+        // The shared 2 km give the same ahead/behind on either route, so one of
+        // them is named rather than none — as an assumption, and the same one
+        // throughout: a better weight on shared ground is GNSS noise.
+        val shared = states.filter { it.travelledM in Tuning.COMMIT_MIN_M + 100..1900.0 }
+        assertTrue(shared.all { it.phase == MatchPhase.COMMITTED && it.committedByPriority }, "nothing assumed")
+        assertEquals(1, shared.map { it.committedRouteId }.distinct().size, "the name flipped on a tie")
+        assertEquals(idOf(bundle, Synthetic.workRoute), states.last().committedRouteId)
     }
 
     @Test
@@ -128,17 +130,18 @@ class PriorityTest {
     }
 
     @Test
-    fun `a tie at the top of the priorities decides nothing`() {
+    fun `a route the user left is not named again over the one they stayed on`() {
         val base = learned()
-        // Both raised, and equally: the user has expressed a preference over the
-        // rest of the world but not between these two.
-        val bundle = withPriorities(base, base.routes.associate { it.geometry.routeId to 1 })
+        val longId = idOf(base, Synthetic.workRoute)
+        val shortId = idOf(base, Synthetic.shortcut)
+        // The shortcut is preferred. Today the long route is ridden: the
+        // shortcut leaves it after 2 km and only meets it again at the finish.
+        val bundle = withPriorities(base, mapOf(shortId to 2))
         val today = Synthetic.record("today", Synthetic.workRoute, day(53), seed = 504)
         val states = replay(today, bundle)
-        assertTrue(
-            states.none { it.travelledM < 1900 && it.phase == MatchPhase.COMMITTED },
-            "committed on a tie",
-        )
+        val after = states.filter { it.travelledM > 2600 && it.phase == MatchPhase.COMMITTED }
+        assertTrue(after.isNotEmpty())
+        assertTrue(after.all { it.committedRouteId == longId }, "the preferred route was named over the one ridden")
     }
 
     @Test
@@ -163,7 +166,12 @@ class PriorityTest {
         assertEquals(shortId, states.last().committedRouteId, "did not switch to the route actually run")
         assertTrue(!states.last().committedByPriority, "final commitment should rest on evidence")
         assertTrue(log.any { it.event == MatchEvent.COMMIT_BY_PRIORITY })
-        assertTrue(log.any { it.event == MatchEvent.DEMOTE })
+        // Handed straight over, not dropped to "searching" in between.
+        assertTrue(log.any { it.event == MatchEvent.COMMIT && it.committedRouteId == shortId })
+        // ...and the ahead/behind with it, without a jump at the junction.
+        val deltas = states.mapNotNull { it.deltaVsMedianS }
+        val jump = deltas.zipWithNext { a, b -> abs(b - a) }.maxOrNull() ?: 0.0
+        assertTrue(jump < 10.0, "ahead/behind jumped by $jump s")
     }
 
     @Test

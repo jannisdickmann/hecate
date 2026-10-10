@@ -80,16 +80,33 @@ class LiveBeliefTest {
     }
 
     @Test
-    fun `nothing route-relative is offered while two routes share the ground`() {
+    fun `while two routes share the ground the numbers come from one of them and do not jump`() {
         val bundle = learnedBundle()
         val today = Synthetic.record("today", Synthetic.workRoute, day(52), seed = 993)
         // The long route and the shortcut coincide for the first two kilometres.
+        // Both give the same ahead/behind there, so the display has one, from one
+        // route, and it moves smoothly.
         val early = replay(today, bundle).filter { it.travelledM in 300.0..1800.0 }
         assertTrue(early.isNotEmpty())
-        assertTrue(
-            early.none { it.provisional },
-            "a provisional route inside the shared segment is a coin toss with an ETA attached",
+        assertTrue(early.all { it.deltaVsMedianS != null && it.remainingM != null }, "numbers missing on shared ground")
+        val deltas = early.mapNotNull { it.deltaVsMedianS }
+        val jump = deltas.zipWithNext { a, b -> abs(b - a) }.maxOrNull() ?: 0.0
+        assertTrue(jump < 10.0, "ahead/behind jumped by $jump s in one sample")
+    }
+
+    @Test
+    fun `a route met half way through a ride is not named, and never with the ride's whole time`() {
+        val bundle = learnedBundle()
+        // Three kilometres somewhere new, then onto the last 300 m of the long
+        // route: the ride of 10 Oct, which ended on the commute's last stretch
+        // and came back filed under it.
+        val shape = Synthetic.path(
+            listOf(Synthetic.at(2700.0, 4500.0), Synthetic.at(2700.0, 1500.0), Synthetic.at(3000.0, 1500.0)),
         )
+        val today = Synthetic.record("today", shape, day(55), seed = 996)
+        val states = replay(today, bundle)
+        assertTrue(states.none { it.phase == MatchPhase.COMMITTED }, "committed to a route's last stretch")
+        assertTrue(states.none { it.provisional }, "guessed at a route joined on the way")
     }
 
     @Test

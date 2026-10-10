@@ -73,7 +73,9 @@ class DisplayTest {
     @Test
     fun `a clear leader is named before it is committed to`() {
         val belief = routeBelief(
-            state(candidates = listOf(cand(2L, 0.72), cand(1L, 0.2)), contenders = 1), false, ::nameOf,
+            state(candidates = listOf(cand(2L, 0.72), cand(1L, 0.2)), contenders = 1)
+                .copy(leaderRouteId = 2L, provisional = true),
+            false, ::nameOf,
         )
         assertEquals(RouteBeliefKind.LEADING, belief.kind)
         assertEquals("Waldrunde", belief.name)

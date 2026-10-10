@@ -96,6 +96,36 @@ class ActiveClockTest {
     }
 
     @Test
+    fun `positions stamped paused by their delivery but moving on the watch's own clock are active`() {
+        // The walk of 8 Oct: the delivery ending at an auto-pause carried half a
+        // minute of walking, all of it flagged paused, while Health Services'
+        // own active time at each position ran with the clock.
+        val samples = List(60) { i -> sample(i * 1000L, i * 1000L, paused = i in 20..49) }
+        val repaired = ActiveClock.repair(samples)
+        assertTrue(repaired.none { it.paused }, "walking thrown away as pause")
+        assertEquals(59_000L, repaired.last().activeMs)
+    }
+
+    @Test
+    fun `a pause the watch's own clock stood still through stays a pause`() {
+        val samples = List(30) { i ->
+            val a = if (i < 10) i * 1000L else 9_000L
+            sample(i * 1000L, a, paused = i >= 10)
+        }
+        val repaired = ActiveClock.repair(samples)
+        assertTrue(repaired.drop(10).all { it.paused })
+        assertEquals(9_000L, repaired.last().activeMs)
+    }
+
+    @Test
+    fun `an old recording's checkpoint clock does not unpause anything`() {
+        // One checkpoint stamped across a whole delivery: the clock does not
+        // advance between positions, so it cannot vouch for any of them.
+        val samples = List(30) { i -> sample(i * 1000L, 5_000L, paused = i >= 10) }
+        assertTrue(ActiveClock.repair(samples).drop(10).all { it.paused })
+    }
+
+    @Test
     fun `an empty or single-sample recording is not a special case anywhere else`() {
         assertTrue(ActiveClock.repair(emptyList()).isEmpty())
         assertEquals(0L, ActiveClock.repair(listOf(sample(500, 99_000))).single().activeMs)

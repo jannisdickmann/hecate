@@ -173,24 +173,52 @@ object Tuning {
 
     // -------------------------------------------------------------- commitment
 
-    /** Top route must hold at least this normalised weight to be committed to. */
-    const val COMMIT_WEIGHT: Double = 0.80
-
-    /** ...for this many consecutive samples. Suppresses commitment on a lucky burst. */
-    const val COMMIT_HOLD_SAMPLES: Int = 20
-
-    /** ...and not before this much distance [m] has been travelled. Guards against
-     *  committing inside a shared start segment that every route leaves from. */
+    /** How far [m] the user has to have followed a route — along the route
+     *  itself, from where they joined it — before the matcher commits to it.
+     *
+     *  Along the route, not along the session. It used to be the session's
+     *  travelled distance, plus twenty samples of weight: a ride of 10 Oct went
+     *  eleven kilometres nowhere near a learned route, met the end of the
+     *  commute home a hundred metres from the front door, and committed to it
+     *  there — as three weekend rides that came home the same way had before.
+     *  Four hundred metres is about a minute on a bike and five on foot, and
+     *  a route's last hundred metres are no longer taken for the route. */
     const val COMMIT_MIN_M: Double = 400.0
+
+    /** Before a commitment, a route the user set off on at the session start
+     *  is named as the guess it is once they have followed it this far [m].
+     *  Far enough that the direction has been read off more than one
+     *  [TRACK_RATIO_WINDOW_M], and that every variant of a commute has been
+     *  found under the user: the two ways home start 25 m apart, and at fifty
+     *  metres the lower-ranked one was named for a second before the other.
+     *  A route found under the user later in the session is not guessed at,
+     *  only committed to. */
+    const val PROVISIONAL_MIN_M: Double = 100.0
+
+    /** A route found under the user within this much travel [m] of the start
+     *  of the session was set off on there, and is compared from the start of
+     *  the workout. Found later, it was joined on the way, and ahead/behind on
+     *  it is measured from where it was joined. */
+    const val JOIN_AT_START_M: Double = 200.0
+
+    /** How far [m] the user may travel while the named route does not fit —
+     *  not followed, or outside [COMMIT_SEPARATION_M] of the nearest route —
+     *  before it is given up. A route medoid is one past recording: a ride of
+     *  27 Apr ran a hundred metres beside "Arbeit zurück Baiersdorf" for three
+     *  hundred metres and cut back across to it, and at fifty the name went
+     *  out for several seconds. Leaving a route for real is reported by the
+     *  deviation alert on its own terms; this only decides how long the name
+     *  stays up. */
+    const val FOCUS_RELEASE_M: Double = 100.0
 
     /** Manual route priority: the range the user may assign, and the value every
      *  route starts at.
      *
-     *  Priority breaks the ties that evidence cannot (see [COMMIT_SEPARATION_M]).
-     *  The default is the middle of the range and is the same for every route, so
-     *  until the user actually differentiates two routes nothing changes: equal
-     *  priorities tie, and a tie decides nothing. The feature is opt-in by
-     *  construction rather than by a flag.
+     *  Priority breaks the ties that evidence cannot (see [COMMIT_SEPARATION_M]):
+     *  of several routes over the same ground, joined at the same point, the
+     *  highest-ranked is named. With equal priorities one of them is named all
+     *  the same — the one already named, else the heaviest — because their
+     *  ahead/behind there is the same; the priority only says which name.
      *
      *  Only the *order* matters — nothing multiplies by a priority — so the range
      *  is as small as it can be while still saying the four things a person means:
@@ -202,22 +230,16 @@ object Tuning {
     const val MAX_ROUTE_PRIORITY: Int = 2
     const val DEFAULT_ROUTE_PRIORITY: Int = 0
 
-    /** Commitment additionally requires every other live candidate to be at least
-     *  this much further [m] from the current position than the leader is.
+    /** Routes that are followed and lie within this distance [m] of the nearest
+     *  followed route are "contenders": equally good explanations of where the
+     *  user is.
      *
-     *  This, not the weights, is what implements "commitment must not occur while
-     *  two or more routes remain plausible" (US-4). Where two routes coincide they
-     *  explain the samples equally well, and the difference in their weights is
-     *  then a measurement of the GNSS bias of the last minute, not of which route
-     *  the user is on. Deciding on it would be committing to noise.
-     *
-     *  Routes that coincide within this distance are "contenders", and the only
-     *  thing that can pick between contenders is the user's own priority. */
+     *  Where two routes coincide they explain the samples equally well, and the
+     *  difference in their weights is a measurement of the GNSS bias of the last
+     *  minute, not of which route the user is on. So the weights never choose
+     *  between contenders: the route followed since the start does, then the
+     *  user's own priority, then whichever is already named. */
     const val COMMIT_SEPARATION_M: Double = 50.0
-
-    /** Below this weight a committed route is demoted back to "searching". Well
-     *  under COMMIT_WEIGHT: commitment should be sticky, not twitchy. */
-    const val DEMOTE_WEIGHT: Double = 0.55
 
     /** Once the null hypothesis holds this much weight the display says "Unbekannt"
      *  and every route-relative metric is suppressed. */
@@ -225,21 +247,11 @@ object Tuning {
 
     // ------------------------------------------------------------ live metrics
 
-    /** Candidates below this weight contribute nothing to the pooled ahead/behind
-     *  estimate (US-5). Keeps a long tail of near-dead routes out of the average. */
-    const val LIVE_CANDIDATE_MIN_WEIGHT: Double = 0.05
-
-    /** While routes are tied, the ahead/behind estimate averages them equally,
-     *  and a route needs this much of the belief to be one of them. Two routes
-     *  over the same ground sit near a half each; a route that is only there
-     *  because its geometry passes underneath — a freshly admitted way home,
-     *  placed at its far end — never comes near it. */
-    const val DELTA_TIE_MIN_WEIGHT: Double = 0.20
-
-    /** A route found under the user at the start of a session is taken to have
-     *  been joined there — ahead/behind measured from that point — only within
-     *  this fraction of its length from its start. Further along it is far
-     *  more likely the way back, found at its finish beside the front door. */
+    /** A route found under the user at the start of a session counts as set
+     *  off on ([JOIN_AT_START_M]) only within this fraction of its length from
+     *  its start. Further along it is far more likely the way back, found near
+     *  its finish beside the front door, and it is treated as joined on the
+     *  way instead. */
     const val JOIN_ANCHOR_MAX_FRACTION: Double = 0.5
 
     /** A route member that starts or stops recording within this distance [m]
@@ -694,22 +706,6 @@ object Tuning {
     const val HR_ZONE_PEAK_FRACTION: Double = 0.90
 
     // ---------------------------------------------------------- live display
-
-    /**
-     * The weight one route needs before the watch says its name without being
-     * committed to it.
-     *
-     * The matcher commits on evidence that has *held* ([COMMIT_WEIGHT] for
-     * [COMMIT_HOLD_SAMPLES] samples over [COMMIT_MIN_M]); the display has a
-     * weaker job, which is to stop claiming ignorance it does not have. A route
-     * holding half the belief is the app's best current answer and saying so —
-     * marked as provisional — beats "Suche…", which reads as a malfunction and
-     * throws away a name the matcher is already carrying.
-     *
-     * Below [COMMIT_WEIGHT] on purpose, and deliberately not near it: this
-     * number decides what a *label* says, never what the session file records.
-     */
-    const val LEADER_MIN_WEIGHT: Double = 0.50
 
     /**
      * How long the matcher's idea of where the user is may go unrefreshed before

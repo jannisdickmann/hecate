@@ -386,11 +386,13 @@ time-of-day bucket), floored so nothing starts at zero, with
 **Commitment:** commit when top weight ≥ `COMMIT_WEIGHT` for
 `COMMIT_HOLD_SAMPLES` consecutive samples **and** ≥ `COMMIT_MIN_M` travelled.
 Demote when top weight < `DEMOTE_WEIGHT`. Report `Unbekannt` when the null
-hypothesis exceeds `NULL_DOMINANT_WEIGHT`.
+hypothesis exceeds `NULL_DOMINANT_WEIGHT`. *(Superseded: weights no longer
+decide what is named — see A.31.)*
 
 **Ahead/behind:** weight-averaged median cumulative time at current position
 across all candidates above `LIVE_CANDIDATE_MIN_WEIGHT`; delta vs. elapsed
-active duration.
+active duration. *(Superseded: read off the one named route, from where it
+was joined, and carried across when the name changes — see A.31.)*
 
 **ETA:** `now + (median_time_at_end − median_time_at_pos) × k`, where `k` is
 the observed-vs-median ratio clamped to `[ETA_K_MIN, ETA_K_MAX]` and smoothed
@@ -2743,3 +2745,131 @@ look at what would have been discarded, or a threshold that is wrong. That
 command is the evidence this feature is asking to be judged on, and it is in
 OPEN-POINTS §3.16 until it has been run against the real history and against a
 deliberately forgotten workout on a wrist.
+
+### A.31 Naming one route, and what the backup of 10 Oct showed
+
+A backup taken on 10 Oct (87 sessions, seven routes, 46 rides and walks that
+belong to one) was replayed through the matcher, ride by ride, against the
+bundle rebuilt from the same backup — `replay`, `sessions` and the other
+harness commands now accept a backup ZIP wherever they take `--bundle`
+(`ArchiveBundle`). Four faults showed up, two of them not in the matcher at all.
+
+#### The recorder ran the matcher on two threads
+
+Every Health Services delivery was handed to `scope.launch` on
+`Dispatchers.Default`, a pool, so two deliveries close together — an ambient
+burst and the next one — ran the matcher, the session writer and the auto-stop
+at the same time, none of which is thread-safe. The walk of 9 Oct shows it in its
+own match log: a position logged *after* a newer one, carrying the newer one's
+travelled distance, which no single thread can produce; half a minute later the
+matcher threw on every sample and `MatcherHost` switched it off for the rest of
+the walk (`MATCHER_DISABLED`). Replayed in order, the same walk never throws.
+The "late positions" of 5 Oct (A.27's follow-up) were very likely the same race
+seen from the other side. Everything that touches the recording now runs on one
+lane, `Dispatchers.Default.limitedParallelism(1)`, first in, first out. The
+late-position guard stays, as the guard it is.
+
+#### Moving positions flagged as paused
+
+The watch read the pause state once per delivery and stamped it on every
+position in it, on the assumption that a delivery never straddles a pause. It
+does: Health Services sends no positions at all while paused, but the batch that
+ends at an auto-pause, or the first after a resume, arrives with the paused
+state and up to forty seconds of positions taken while moving. On the walk of
+8 Oct four such runs flagged 140 m of walking; the matcher saw the walker stand still
+and then jump 50 m along the route (ahead/behind stepped −28, −62, −114 s), and
+`ActiveClock` dropped 102 s of a 35-minute walk from the profile. Across the
+backup, 18 recordings carry such runs, 980 positions between them. The watch's own active time per position
+(`getActiveDurationAtDataPoint`, A.24) answers it: where it advanced with the
+monotonic clock, the position was taken while active. `ActiveClock.unpause`
+applies that rule — on the watch as positions are written, and on read for every
+recording already made (`ActiveClock.repair`, the matcher), so existing
+histories and profiles are corrected without touching what was stored.
+
+#### What the matcher named, and against what
+
+Replaying every ride showed what the user had seen on the wrist:
+
+- **A route's last stretch committed to.** Commitment needed 400 m of *session*
+  travel and twenty samples of weight. The ride of 10 Oct went eleven
+  kilometres nowhere near a learned route, met "Arbeit zurück Baiersdorf" a
+  hundred metres from the front door, and committed to it there; so did three
+  weekend rides. The phone then filed the ride under that route, because
+  ingest takes the watch's last commitment and re-clustering never took it back.
+- **Ahead/behind against the wrong origin.** A route found mid-session was
+  compared from its own start: a two-kilometre ride begun on the last stretch of
+  the commute read 42 minutes ahead; rides that met a route late read the time
+  spent elsewhere as time lost (up to an hour). Twelve recordings showed
+  |Δ| over ten minutes, and eighteen a single-sample jump over 30 s, the largest
+  2,330 s.
+- **Ties refused, then broken by weight.** The two ways to work share 0–0.85 and
+  1.5–11 km; the two ways home share 0–2.35 km and the last 9 km. A priority
+  commitment held only while the tie did, so every commute committed to the
+  ranked route at 0.4 km, let go at the first place the medoids differed, and
+  then committed to whichever route had the better weight — GNSS noise. Five
+  Baiersdorf rides to work were named "Kanal" for ten kilometres, and 15 of the
+  22 Baiersdorf rides showed no route at all somewhere in the middle.
+
+#### The rule now
+
+The geometric half is unchanged: windowed projection, localisation that prefers
+the start and the pass that continues, the other-leg rescue for lollipops and
+loops, forward-only re-admission, the advance ratio that rejects a route run
+backwards, and the weights with their null hypothesis. What changed is how one
+route is named and what the numbers are read off (`RouteMatcher.updateFocus`):
+
+1. **Joined.** A route is joined the first time it is found under the user and
+   being followed forwards. Within `JOIN_AT_START_M` of the session start, in its
+   first half, it was *set off on*, and is compared from the start of the
+   workout (a late start is set aside, a slow one is not — as in A.27). Anywhere
+   else it is compared from where it was joined. A route left for longer than
+   `CANDIDATE_DROP_M` is joined afresh when it is followed again; a shorter
+   detour keeps the comparison, and the detour is what the number then says.
+2. **Contenders.** Followed routes within `COMMIT_SEPARATION_M` of the nearest
+   followed route: the routes that explain where the user is equally well.
+3. **Named.** Committed once a contender has been followed `COMMIT_MIN_M`
+   *along itself*. Before that, a route set off on is named as a guess once
+   followed `PROVISIONAL_MIN_M`. A route joined on the way is never guessed at.
+4. **Which one.** Seniority first — the contenders joined earliest, within
+   `COMMIT_MIN_M` of each other, are the ones that explain the most of today's
+   ride — then the user's priority, then the route already named, then weight.
+   The named route is replaced only by a senior route the user ranked higher.
+   So on shared ground the ranked variant is named (flagged as an assumption,
+   `committedByPriority`), and with equal priorities one of them is named all
+   the same: their ahead/behind is the same there. A route the ride left is
+   never named again over one it followed throughout.
+5. **Held.** The named route stays through `FOCUS_RELEASE_M` of not fitting —
+   not followed, or out of the contender band — so a medoid a street's width off
+   does not make the name flicker. `Unbekannt` when the null dominates or no
+   route is followed at all (a route walked backwards is a new route).
+6. **Numbers.** Ahead/behind, distance left, progress and arrival come from the
+   named route only, or are absent. When the name changes the delta is carried
+   across (`handOver`) and moves with the new route's profile from there, so a
+   junction never makes it jump. The arrival time's pace ratio is today's time
+   over the usual time since the comparison began. Across a long hole the
+   watch's own active time is used only if it is believable (no more than wall
+   time); a pre-A.24 checkpoint clock once counted a minute's auto-pause as
+   riding.
+
+The phone files a recording under a route only if the clusterer made it a member
+of an active route (`clearMatchesOfNonMembers` after every re-clustering); what
+the watch committed to stays in the match log and in `committedAtM`.
+
+#### Measured
+
+Over the 82 non-skiing recordings of that backup, before → after: largest
+single-sample ahead/behind jump 2,330 s → 17 s; jumps over 30 s 18 → 0;
+recordings with |Δ| over ten minutes 12 → 0; recordings that belong to no route
+but had one committed 10 → 5 (the remaining five follow a commute for at least
+1.8 km); Baiersdorf rides with a gap in the middle 15 → 1. Baiersdorf rides are
+"Baiersdorf" throughout except 0.3–0.4 km where that route's medoid takes a
+side street the rides do not; Kanal rides are "Kanal" from where the ways part.
+Every Abendrunde walk is named from 100 m and committed from 400 m with no step
+above 12 s, and no leisure ride that only passes the front door is named at
+all. Two Kanal rides to work end on "Baiersdorf" for their last two kilometres,
+and two rides home for their last metres: each left both variants and rejoined
+both together, which is genuinely ambiguous; the delta is unaffected.
+
+Not measured: none of this has run on a wrist yet. The thread race is inferred
+from the match log of 9 Oct, not reproduced; the next walk with the screen off
+is the test. OPEN-POINTS §2.3 has what route priority now means in use.
