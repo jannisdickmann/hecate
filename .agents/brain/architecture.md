@@ -16,7 +16,7 @@ Chosen for smallest moving-part count, not for elegance.
 |---|---|---|
 | Language | Kotlin, single Gradle project | — |
 | Modules | `:core` (pure JVM), `:wear`, `:phone` | Forces the matcher to stay Android-free and JVM-testable |
-| Watch UI | Compose for Wear OS **Material 3**, `HorizontalPagerScaffold`, **2 pages** (Live, Control) — originally 3 pages on Material 2.5 ([A.11](decisions/2026-09-12-material-3-and-one-live-watch-page.md)) | No navigation library needed |
+| Watch UI | Compose for Wear OS **Material 3**, `HorizontalPagerScaffold`, **3 pages** (Map, Live, Control) — originally 3 pages on Material 2.5, then 2 (Live, Control), then a heading-up map page added on the left ([A.11](decisions/2026-09-12-material-3-and-one-live-watch-page.md)) | No navigation library needed |
 | Phone UI | Compose Material 3 with dynamic colour (`HecateTheme`); screens switched on a state enum with a bounded back stack and a settings panel ([A.11](decisions/2026-09-12-material-3-and-one-live-watch-page.md), [A.13](decisions/2026-09-12-settings-panel-back-stack-and-standout-marks.md)) | — |
 | Exercise data | `androidx.health:health-services-client` (pinned version) | The only way to get fused GPS/HR/distance on Wear OS |
 | Health Connect | `androidx.health.connect:connect-client` | Phone-side write-back |
@@ -126,6 +126,12 @@ dependency list.
   `Classify`, `TileCodec`, `BasemapQuery`, `MapView`, with `geo/Simplify`)
   ([A.14](decisions/2026-09-12-heatmap-drawn-around-the-routes-extent.md),
   [A.29](decisions/2026-09-20-osm-basemap-under-every-track.md))
+- Shared helpers both apps call rather than copy: `display/Units` (distance and
+  duration strings), `geo/Geo.kmh` (average speed), `display/HeadingUp.signedDelta`,
+  `model/Altitudes.isPlausible`; inside `:core`, `io/GzipText`,
+  `SessionCodec.writeSession` (the one place a session file's line order is
+  written, used by the backup too) and `replay/CliInputs` for the two CLIs
+  (see [development.md, *Where shared code lives*](development.md#where-shared-code-lives))
 - `Tuning` — every constant, with a comment giving its unit and rationale (NFR-5)
 - `replay/ReplayMain` — CLI entry point for US-10, and for `bundle`, `sessions`,
   `extract`, `takeout`, `autostop`, `karte`, `karteinfo` (README, *The replay
@@ -162,8 +168,9 @@ the database and in every backup and the rule can change without a migration.
 - `SampleFeed` — where `ExerciseSource` stands; a debug-only implementation
   replays a stored session into the recorder
   ([A.28](decisions/2026-09-13-replaying-an-activity-into-the-recorder.md)).
-- UI: two pager pages — **Live** (metrics, route belief, the two edge bars and
-  one health line) and **Control** (pause/stop). Layout adapts to the two watch
+- UI: three pager pages, opening on the middle one — **Map** (heading-up, the
+  followed route under the trail), **Live** (metrics, route belief, the two edge
+  bars and one health line) and **Control** (pause/stop). Layout adapts to the two watch
   sizes at the platform's large-round breakpoint (`screenWidthDp >= 225`).
   Ongoing Activity notification mirrors the key metric and takes its route
   wording from the same place the screen does.

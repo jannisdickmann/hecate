@@ -53,5 +53,14 @@ laptop; anything that crosses the platform line is verified only by wearing it.
 - [OP-3.15 Overpass is a volunteer service, and a full prefetch leans on it](overpass-is-a-volunteer-service.md)
 - [OP-3.16 The auto-stop has never met a forgotten activity](auto-stop-has-never-met-a-forgotten-activity.md)
 
+## Defects found by reading the code
+
+Found during the 2026-10-10 cleanup and left as found, because that cleanup
+promised no change in behaviour. Each is a small fix.
+
+- [OP-3.17 The last speed carries over into the next session](speed-carries-over-into-the-next-session.md)
+- [OP-3.18 The Health Services update callback is never actually cleared](exercise-callback-is-never-cleared.md)
+- [OP-3.19 `tools/emu log` shows only crashes](emu-log-shows-only-crashes.md)
+
 Things deliberately not done (former OP-4) are scope decisions, not issues; they
 live in `../scope.md`.

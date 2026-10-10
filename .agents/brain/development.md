@@ -106,6 +106,80 @@ Lessons the layers have taught, each with its record:
   been discarding recordings
   ([A.26](decisions/2026-09-16-heart-rate-is-its-own-series.md)).
 
+## Where shared code lives
+
+A cleanup on 2026-10-10 removed about 500 lines of copies across the three
+modules without changing behaviour. The copies were what makes the next change
+go wrong: a column added to three of the four sample mappings, a backup that
+writes a session file's lines in a different order from the watch. Rules it left
+behind:
+
+- **One expression, one place, in the lowest module that can hold it.** If the
+  phone and the watch both need it and it has no Android in it, it is `:core`:
+  `display/Units` (distance, duration), `Geo.kmh`, `HeadingUp.signedDelta`,
+  `Altitudes.isPlausible`. Each app's `Format` keeps only what genuinely differs
+  between the two screens (a unit on its own line, a dash below 1 km/h).
+- **The phone's row mapping is `db/SessionRows.kt`.** `SampleEntity.toSample()`,
+  `Sample.toEntity()`, the merged samples, the blob writes, the blob decode and
+  the start-time duplicate test are used by ingest, restore, clustering, Health
+  Connect, GPX and the detail screen. `HecateViewModel.loadSession` keeps its own
+  sample mapping on purpose: it carries the smoothed heart rate and drops
+  accuracy.
+- **What must stay duplicated, and why:**
+  - `Wire` in `:wear` and `:phone` — `:core` must not know about transports.
+    Nothing checks the two copies against each other except a session arriving.
+  - `ArchiveRepository`'s archive↔entity mappers — hand-written so that renaming
+    a column cannot silently change the backup format.
+  - Room migrations — frozen as written; a "cleanup" there is a schema change.
+  - `TakeoutImport.HC_WRITE_STATE_SKIPPED` mirrors the phone's enum, which
+    `:core` cannot see.
+  - Near-copies that differ in a way that matters: `Standouts.percentile` and
+    `ProfileBuilder.quantile` interpolate differently; the local-hour arithmetic
+    in `ClusterWorker` uses `%` where `RouteMatcher.contextKeyOf` uses `floorMod`;
+    the two XML escapers and the three nearest-heart-rate lookups break ties
+    differently. Unifying any of them changes results.
+- **When factoring a `try` into a helper, compare what each `try` covers** (only
+  the open, or the open plus every read plus the close) and the order of the
+  messages the user sees. Three CLI call sites stayed as they were for that
+  reason (`replay/CliInputs`).
+- **A shared gzip/codec helper takes a lambda, not a finished String**, so that
+  encoding happens inside the stream's `use` and an encode failure still closes
+  the caller's stream (`io/GzipText`).
+- **`shl 32 or` equals `shl 32 xor` only while the low half is masked** — keep the
+  mask inside `geo/cellKey`.
+- **Kotlin overloads erase:** `Polyline.of(List<LatLon>)` cannot gain a
+  `List<RoutePoint>` overload, hence `Polyline.fromRoutePoints`.
+- **Room accepts a `private const val` template inside `@Query`**, which is how
+  the `SessionSummary` column list is written once.
+- **A Compose helper that returns a `Modifier` should not be `@Composable`**
+  (Compose lint flags it); return a value such as a colour instead.
+  `HecateIntensityColors.of` must stay non-composable because band colours are
+  looked up inside `remember {}` and Canvas draw blocks.
+- **Per-session fields in `RecorderService` must be reset in `beginSession`**: the
+  service instance outlives a session
+  ([issues/speed-carries-over-into-the-next-session.md](issues/speed-carries-over-into-the-next-session.md)).
+- **`RecorderService.BuildInfo.VERSION` is hard-coded** — `:wear` builds no
+  `BuildConfig` — and must be bumped by hand with `versionName`.
+- **Dead dependencies ship.** Release builds are not minified, so an unused
+  library is APK weight: `lifecycle-service`, Compose `ui-tooling(-preview)`,
+  `wear-tooling-preview` and `:wear`'s own serialization plugin and dependency
+  were removed (`:wear` compiles against `:core`'s `@Serializable` models
+  without them). There is no `@Preview` anywhere in the project.
+
+### Building in a cloud sandbox
+
+Without a local Android Studio, the whole project builds and tests in a fresh
+Linux container: a JDK 25 (Adoptium), the command-line tools with
+`platforms;android-37.0` (`android-37` alone is not a package name),
+`sdk.dir` in `local.properties`, and Gradle with
+`-Dorg.gradle.java.installations.paths=<jdk25>`. Maven Central rate-limits
+(HTTP 429) a cold build from a shared egress; an init script that puts
+`https://maven-central.storage-download.googleapis.com/maven2/` first in both
+`pluginManagement` and `dependencyResolutionManagement` fixes it, and Robolectric
+needs the same mirror as `-Drobolectric.dependency.repo.url` on the test task,
+because it downloads `android-all` at test time. Run once without `-q` to see
+compiler warnings.
+
 ## Build order (§6.6)
 
 | Milestone | Deliverable | Exit criterion |
