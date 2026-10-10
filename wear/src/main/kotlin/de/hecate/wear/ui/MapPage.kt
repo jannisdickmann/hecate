@@ -72,7 +72,7 @@ internal fun MapPage(state: RecorderUiState) {
         val raw = HeadingUp.heading(trail, lookback) ?: return@LaunchedEffect
         val prev = smoothed
         val next = HeadingUp.blend(prev, raw, if (prev == null) 1.0 else Tuning.HEADING_SMOOTHING)
-        unwrapped += if (prev == null) next - unwrapped else ((next - prev + 540.0) % 360.0) - 180.0
+        unwrapped += if (prev == null) next - unwrapped else HeadingUp.signedDelta(prev, next)
         smoothed = next
     }
     val rotation by animateFloatAsState(unwrapped.toFloat(), tween(900), label = "heading")

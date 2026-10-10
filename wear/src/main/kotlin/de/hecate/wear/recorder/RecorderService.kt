@@ -23,6 +23,7 @@ import de.hecate.core.display.routeBelief
 import de.hecate.core.display.HeadingUp
 import de.hecate.core.geo.LatLon
 import de.hecate.core.model.ActiveClock
+import de.hecate.core.model.Altitudes
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.HeartRate
 import de.hecate.core.model.MatchState
@@ -958,7 +959,7 @@ class RecorderService : Service() {
         val w = writer ?: return
         for (point in points.inTimeOrder()) {
             val metres = point.value
-                .takeIf { it.isFinite() && it in Tuning.MIN_ALTITUDE_M..Tuning.MAX_ALTITUDE_M }
+                .takeIf { Altitudes.isPlausible(it) }
                 ?: continue
             val tOffsetMs = offsetOf(point)
             if (tOffsetMs < 0 || tOffsetMs <= lastAltitudeAtMs) continue

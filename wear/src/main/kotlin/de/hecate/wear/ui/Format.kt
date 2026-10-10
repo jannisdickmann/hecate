@@ -1,5 +1,7 @@
 package de.hecate.wear.ui
 
+import de.hecate.core.display.Units
+import de.hecate.core.geo.Geo
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
@@ -14,20 +16,11 @@ object Format {
 
     private val DE = Locale.GERMANY
 
-    /** "4,20 km" above a kilometre, "840 m" below it. */
-    fun distance(meters: Double): String =
-        if (meters >= 1000) String.format(DE, "%.2f km", meters / 1000.0)
-        else String.format(DE, "%d m", meters.roundToInt())
+    /** "4,20 km" above a kilometre, "840 m" below it — as the phone writes it. */
+    fun distance(meters: Double): String = Units.distance(meters)
 
-    /** "23:11" or "1:04:22". */
-    fun duration(millis: Long): String {
-        val total = (millis / 1000).coerceAtLeast(0)
-        val h = total / 3600
-        val m = (total % 3600) / 60
-        val s = total % 60
-        return if (h > 0) String.format(DE, "%d:%02d:%02d", h, m, s)
-        else String.format(DE, "%d:%02d", m, s)
-    }
+    /** "23:11" or "1:04:22" — as the phone writes it. */
+    fun duration(millis: Long): String = Units.duration(millis)
 
     /**
      * What [duration] just counted in, which is not always minutes.
@@ -62,7 +55,7 @@ object Format {
     /** Average speed so far, in km/h. Null below 50 m, where it is all noise. */
     fun speedFrom(distanceM: Double, activeMs: Long): Double? {
         if (distanceM < 50 || activeMs <= 0) return null
-        return (distanceM / 1000.0) / (activeMs / 3_600_000.0)
+        return Geo.kmh(distanceM, activeMs)
     }
 
     /**
