@@ -108,8 +108,10 @@ Lessons the layers have taught, each with its record:
 
 ## Where shared code lives
 
-A cleanup on 2026-10-10 removed about 500 lines of copies across the three
-modules without changing behaviour. The copies were what makes the next change
+A cleanup on 2026-10-10 replaced the copies across the three modules with one
+shared version each, and removed dead code and unused dependencies, without
+changing behaviour (the line count came out about even: each shared helper now
+carries the reasoning its copies did not). The copies were what makes the next change
 go wrong: a column added to three of the four sample mappings, a backup that
 writes a session file's lines in a different order from the watch. Rules it left
 behind:
