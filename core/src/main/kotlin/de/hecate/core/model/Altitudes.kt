@@ -35,6 +35,17 @@ import de.hecate.core.profile.Series
 object Altitudes {
 
     /**
+     * Whether [m] could be a height on this planet: finite, and between
+     * [Tuning.MIN_ALTITUDE_M] and [Tuning.MAX_ALTITUDE_M].
+     *
+     * The one test every altitude passes before anything reads it — a
+     * barometer reading here, a sample's column in the profile and the track —
+     * so that a height cannot be plausible to one chart and noise to another.
+     */
+    fun isPlausible(m: Double): Boolean =
+        m.isFinite() && m >= Tuning.MIN_ALTITUDE_M && m <= Tuning.MAX_ALTITUDE_M
+
+    /**
      * [samples] with their altitudes taken from [readings].
      *
      * Samples come through unchanged when there is no series — every import
@@ -52,7 +63,7 @@ object Altitudes {
         if (readings.isEmpty() || samples.isEmpty()) return samples
 
         val plausible = readings
-            .filter { it.value.isFinite() && it.value >= Tuning.MIN_ALTITUDE_M && it.value <= Tuning.MAX_ALTITUDE_M }
+            .filter { isPlausible(it.value) }
             .sortedBy { it.tOffsetMs }
         if (plausible.isEmpty()) return samples
 

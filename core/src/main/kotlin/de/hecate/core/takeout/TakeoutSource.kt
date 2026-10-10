@@ -58,9 +58,6 @@ class TakeoutSource(paths: List<File>) : Closeable {
         duplicateNames = dupes
     }
 
-    /** Every file name, in the order the parts were read. */
-    fun names(): Set<String> = index.keys
-
     /** File names matching `<prefix><something>.csv`, sorted. */
     fun dated(prefix: String): List<String> =
         index.keys.filter { it.startsWith(prefix) && it.endsWith(".csv") }.sorted()

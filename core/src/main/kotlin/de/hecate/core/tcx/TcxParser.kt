@@ -1,5 +1,6 @@
 package de.hecate.core.tcx
 
+import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ActivityNames
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
@@ -131,15 +132,14 @@ object TcxParser {
         val id = child(activity, "Id")?.textContent?.let { parseIso8601(it) }
         val startUtc = id?.utcMs ?: raws.first().tMs
 
-        // A TCX export records no pauses, so wall-clock offset is also active time.
-        // A gap longer than the dropout threshold is treated as a pause for the
-        // purposes of active duration, which is the best an import can do.
+        // A TCX export records no pauses, so wall-clock offset is also active
+        // time, except across a hole (see ActiveClock.importedElapsed). Every
+        // trackpoint advances the clock, including one without a position.
         var active = 0L
         var prevT = raws.first().tMs
         val samples = ArrayList<Sample>(raws.size)
         for (r in raws) {
-            val dt = r.tMs - prevT
-            if (dt in 0..de.hecate.core.Tuning.MAX_INTERPOLATION_GAP_MS) active += dt
+            active += ActiveClock.importedElapsed(prevT, r.tMs)
             prevT = r.tMs
             if (r.lat == null || r.lon == null) continue
             samples.add(

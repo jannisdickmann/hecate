@@ -9,7 +9,6 @@ import de.hecate.core.io.BundleCodec
 import de.hecate.core.io.SessionCodec
 import de.hecate.core.map.KarteCli
 import de.hecate.core.matcher.RouteMatcher
-import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
@@ -147,11 +146,11 @@ object ReplayMain {
 
         println("session ${session.id}  ${session.samples.size} samples  ${session.header.exerciseType}")
         println("bundle  v${bundle.version}  ${bundle.routes.size} routes")
-        val names = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+        val names = routeNames(bundle)
+        val verbose = o.containsKey("verbose")
         var lastPhase: MatchPhase? = null
         var lastRoute: Long? = null
         for (s in states) {
-            val verbose = o.containsKey("verbose")
             if (verbose || s.phase != lastPhase || s.committedRouteId != lastRoute || s.deviationAlert) {
                 println(
                     "t=%7.1fs d=%7.0fm %-9s %-24s null=%.3f %s%s".format(
@@ -184,10 +183,8 @@ object ReplayMain {
     private fun cmdBundle(o: Map<String, String>): Int {
         val dir = o["sessions"]?.let { File(it) } ?: run { usage(); return 2 }
         if (!dir.isDirectory) { System.err.println("not a directory: $dir"); return 2 }
-        val sessions = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
-            ?.sortedBy { it.name }
-            ?.mapNotNull { f -> SessionCodec.decodeSession(f.readLines().asSequence()) }
-            ?: emptyList()
+        val sessions = CliInputs.sessionFiles(dir)
+            .mapNotNull { f -> SessionCodec.decodeSession(f.readLines().asSequence()) }
         if (sessions.isEmpty()) { System.err.println("no sessions found in $dir"); return 2 }
 
         val tracks = sessions.mapNotNull { Track.of(it) }
@@ -302,10 +299,7 @@ object ReplayMain {
             println(
                 "%-${width}s  %s %-7s %7.2f km %9s  %s".format(
                     r.id.take(width),
-                    // In the time zone the session was recorded in, which for a
-                    // holiday's worth of workouts is not this laptop's.
-                    LOCAL_STAMP.withZone(java.time.ZoneOffset.ofTotalSeconds(r.tzOffsetMinutes * 60))
-                        .format(Instant.ofEpochMilli(r.startedAtUtcMs)),
+                    CliInputs.localStamp(r.startedAtUtcMs, r.tzOffsetMinutes),
                     r.type,
                     r.distanceM / 1000.0,
                     hms(r.activeMs),
@@ -338,18 +332,12 @@ object ReplayMain {
      */
     private fun cmdTimeline(o: Map<String, String>): Int {
         val file = o["archive"]?.let { File(it) } ?: run { usage(); return 2 }
-        if (!file.isFile) { System.err.println("no such file: $file"); return 2 }
+        val reader = CliInputs.openArchive(file) ?: return 2
         val typeFilter = o["type"]?.let { ExerciseType.parse(it.uppercase()) }
         val wanted = o["session"]
-        val reader = try {
-            ArchiveCodec.Reader(file)
-        } catch (e: Exception) {
-            System.err.println("not a Hecate backup: $file (${e.message})")
-            return 2
-        }
         reader.use { r ->
             val bundle = o["bundle"]?.let { loadBundle(it) ?: return 2 } ?: ArchiveBundle.of(r.database)
-            val names = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+            val names = routeNames(bundle)
             val active = r.database.routes.filter { it.active }.map { it.id }.toSet()
             val members = r.database.routeMembers.filter { it.routeId in active }
                 .groupBy({ it.sessionId }, { it.routeId })
@@ -396,8 +384,7 @@ object ReplayMain {
             previous = d
         }
         label?.let { segments.add("%s %.1f-%.1f".format(it, from / 1000, (states.lastOrNull()?.travelledM ?: 0.0) / 1000)) }
-        val stamp = LOCAL_STAMP.withZone(java.time.ZoneOffset.ofTotalSeconds(row.tzOffsetMinutes * 60))
-            .format(Instant.ofEpochMilli(row.startedAtUtc))
+        val stamp = CliInputs.localStamp(row.startedAtUtc, row.tzOffsetMinutes)
         val delta = if (deltas.isEmpty()) "Δ –" else "Δ %+.0f..%+.0f s, jump %.0f s".format(deltas.min(), deltas.max(), jump)
         val member = memberOf.joinToString("/") { names[it] ?: "route $it" }.ifEmpty { "no route" }
         return "%s  %s  %-7s  [%s]  %s  |  %s".format(
@@ -461,9 +448,7 @@ object ReplayMain {
             println(
                 "%-8s  %s %-7s %8s  %s".format(
                     session.id.take(8),
-                    LOCAL_STAMP
-                        .withZone(java.time.ZoneOffset.ofTotalSeconds(session.header.tzOffsetMinutes * 60))
-                        .format(Instant.ofEpochMilli(session.header.startedAtUtcMs)),
+                    CliInputs.localStamp(session.header.startedAtUtcMs, session.header.tzOffsetMinutes),
                     session.header.exerciseType,
                     hms(session.activeDurationMs),
                     text,
@@ -516,23 +501,14 @@ object ReplayMain {
 
     /** Every session in a backup, samples and all. */
     private fun archiveSessions(file: File): List<RecordedSession>? {
-        if (!file.isFile) { System.err.println("no such file: $file"); return null }
-        val reader = try {
-            ArchiveCodec.Reader(file)
-        } catch (e: Exception) {
-            System.err.println("not a Hecate backup: $file (${e.message})")
-            return null
-        }
+        val reader = CliInputs.openArchive(file) ?: return null
         return reader.use { r -> r.database.sessions.mapNotNull { row -> r.session(row.id) } }
     }
 
     /** Every session file in a directory, as `fixtures/` holds them. */
     private fun directorySessions(dir: File): List<RecordedSession>? {
         if (!dir.isDirectory) { System.err.println("not a directory: $dir"); return null }
-        val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
-            ?.sortedBy { it.name }
-            ?: emptyList()
-        return files.mapNotNull { f ->
+        return CliInputs.sessionFiles(dir).mapNotNull { f ->
             SessionCodec.decodeSession(f.readLines().asSequence())
                 ?: null.also { System.err.println("not a session file, skipped: $f") }
         }
@@ -547,15 +523,12 @@ object ReplayMain {
      */
     private fun cmdExtract(o: Map<String, String>): Int {
         val archive = o["archive"]?.let { File(it) } ?: run { usage(); return 2 }
+        // Checked here as well as in openArchive, so that a wrong path is
+        // reported before a missing --session is.
         if (!archive.isFile) { System.err.println("no such file: $archive"); return 2 }
         val wanted = o["session"] ?: run { usage(); return 2 }
 
-        val reader = try {
-            ArchiveCodec.Reader(archive)
-        } catch (e: Exception) {
-            System.err.println("not a Hecate backup: $archive (${e.message})")
-            return 2
-        }
+        val reader = CliInputs.openArchive(archive) ?: return 2
         reader.use {
             val ids = it.database.sessions.map { s -> s.id }
             // Exact first, then unique prefix: a full UUID is not something anyone
@@ -606,13 +579,7 @@ object ReplayMain {
      * because a replay needs the samples.
      */
     private fun archiveRows(file: File, bundle: RouteBundle?): List<SessionRow>? {
-        if (!file.isFile) { System.err.println("no such file: $file"); return null }
-        val reader = try {
-            ArchiveCodec.Reader(file)
-        } catch (e: Exception) {
-            System.err.println("not a Hecate backup: $file (${e.message})")
-            return null
-        }
+        val reader = CliInputs.openArchive(file) ?: return null
         return reader.use {
             val names = it.database.routes.associate { r -> r.id to r.name }
             it.database.sessions.map { row ->
@@ -634,11 +601,8 @@ object ReplayMain {
     /** Rows from a directory of session files, as `fixtures/` holds them. */
     private fun directoryRows(dir: File, bundle: RouteBundle?): List<SessionRow>? {
         if (!dir.isDirectory) { System.err.println("not a directory: $dir"); return null }
-        val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
-            ?.sortedBy { it.name }
-            ?: emptyList()
         val rows = ArrayList<SessionRow>()
-        for (f in files) {
+        for (f in CliInputs.sessionFiles(dir)) {
             val session = SessionCodec.decodeSession(f.readLines().asSequence())
             if (session == null) {
                 System.err.println("not a session file, skipped: $f")
@@ -667,7 +631,7 @@ object ReplayMain {
     private fun verdictOf(session: RecordedSession, bundle: RouteBundle): Verdict {
         val log = ArrayList<MatchLogEntry>()
         val states = run(session, bundle, log)
-        val names = bundle.routes.associate { it.geometry.routeId to it.geometry.name }
+        val names = routeNames(bundle)
         val commit = log.firstOrNull { it.event.isCommit }
         val final = states.lastOrNull()
         if (commit == null) {
@@ -846,8 +810,7 @@ object ReplayMain {
             val track = Track.of(session)
             println(
                 "%s  %-7s %6.2f km  %5.0f min  %5d pts  %s".format(
-                    stamp.withZone(java.time.ZoneOffset.ofTotalSeconds(session.header.tzOffsetMinutes * 60))
-                        .format(Instant.ofEpochMilli(session.header.startedAtUtcMs)),
+                    CliInputs.localStamp(session.header.startedAtUtcMs, session.header.tzOffsetMinutes),
                     session.header.exerciseType,
                     (track?.totalDistanceM ?: 0.0) / 1000.0,
                     session.activeDurationMs / 60_000.0,
@@ -930,7 +893,9 @@ object ReplayMain {
         return longest
     }
 
-    private val LOCAL_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    /** Route id to the name a person gave it, for every route in [bundle]. */
+    private fun routeNames(bundle: RouteBundle): Map<Long, String> =
+        bundle.routes.associate { it.geometry.routeId to it.geometry.name }
 
     private fun loadBundle(path: String?): RouteBundle? {
         if (path == null) { usage(); return null }

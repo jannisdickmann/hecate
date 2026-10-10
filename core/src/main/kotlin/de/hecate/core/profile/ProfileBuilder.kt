@@ -51,37 +51,21 @@ object ProfileBuilder {
 
         val scratch = DoubleArray(curves.size)
         for (b in 0 until bins) {
-            var k = 0
-            for (c in curves) {
-                val v = c.timesS[b]
-                if (!v.isNaN()) scratch[k++] = v
-            }
-            if (k == 0) {
+            val times = sortedAt(curves, b, scratch) { it.timesS }
+            if (times == null) {
                 median[b] = Double.NaN; p25[b] = Double.NaN; p75[b] = Double.NaN
             } else {
-                val slice = scratch.copyOf(k)
-                slice.sort()
-                median[b] = quantile(slice, 0.50)
-                p25[b] = quantile(slice, 0.25)
-                p75[b] = quantile(slice, 0.75)
+                median[b] = quantile(times, 0.50)
+                p25[b] = quantile(times, 0.25)
+                p75[b] = quantile(times, 0.75)
             }
-            var hk = 0
-            for (c in curves) {
-                val v = c.hr[b]
-                if (!v.isNaN()) scratch[hk++] = v
-            }
-            hr[b] = if (hk == 0) null else scratch.copyOf(hk).also { it.sort() }.let { quantile(it, 0.5) }
+            hr[b] = sortedAt(curves, b, scratch) { it.hr }?.let { quantile(it, 0.5) }
 
             // The same median over members, for the ground rather than the effort.
             // Deliberately not smoothed or made monotone afterwards as the times
             // are: a route climbs and descends, and forcing it either way would
             // draw a hill that is not there.
-            var ak = 0
-            for (c in curves) {
-                val v = c.alt[b]
-                if (!v.isNaN()) scratch[ak++] = v
-            }
-            alt[b] = if (ak == 0) null else scratch.copyOf(ak).also { it.sort() }.let { quantile(it, 0.5) }
+            alt[b] = sortedAt(curves, b, scratch) { it.alt }?.let { quantile(it, 0.5) }
         }
 
         // Bins nobody reached (start-of-route offsets, dropouts) are filled by
@@ -103,6 +87,26 @@ object ProfileBuilder {
             medianHr = hr.toList(),
             medianAltM = alt.toList(),
         )
+    }
+
+    /**
+     * Every member's value of one [series] at bin [b], NaN left out, sorted —
+     * or null when no member has one. [scratch] is only somewhere to collect
+     * them, sized for every member, so a bin costs one copy rather than a list.
+     */
+    private inline fun sortedAt(
+        curves: List<MemberCurve>,
+        b: Int,
+        scratch: DoubleArray,
+        series: (MemberCurve) -> DoubleArray,
+    ): DoubleArray? {
+        var k = 0
+        for (c in curves) {
+            val v = series(c)[b]
+            if (!v.isNaN()) scratch[k++] = v
+        }
+        if (k == 0) return null
+        return scratch.copyOf(k).also { it.sort() }
     }
 
     /**
@@ -260,23 +264,15 @@ object ProfileBuilder {
         return pick.hrBpm?.toDouble() ?: Double.NaN
     }
 
-    /** Linear interpolation over NaN runs; edges are extended flat. */
+    /** Linear interpolation over NaN runs, as [fillInterior]; edges are
+     *  extended flat. */
     internal fun fillGaps(v: DoubleArray) {
-        val n = v.size
-        var first = -1
-        for (i in 0 until n) if (!v[i].isNaN()) { first = i; break }
+        val first = v.indexOfFirst { !it.isNaN() }
         if (first < 0) return
+        val last = v.indexOfLast { !it.isNaN() }
+        fillInterior(v)
         for (i in 0 until first) v[i] = v[first]
-        var last = first
-        for (i in first + 1 until n) {
-            if (v[i].isNaN()) continue
-            if (i > last + 1) {
-                val span = i - last
-                for (k in 1 until span) v[last + k] = v[last] + (v[i] - v[last]) * k / span
-            }
-            last = i
-        }
-        for (i in last + 1 until n) v[i] = v[last]
+        for (i in last + 1 until v.size) v[i] = v[last]
     }
 
     internal fun makeMonotone(v: DoubleArray) {

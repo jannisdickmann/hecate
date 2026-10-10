@@ -61,7 +61,6 @@ object Archive {
         // A reader of an older version must survive fields it has never heard of.
         ignoreUnknownKeys = true
         encodeDefaults = true
-        prettyPrint = false
     }
 
     fun sessionEntry(sessionId: String): String = "$SESSIONS_DIR$sessionId.jsonl"

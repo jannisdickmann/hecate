@@ -2,7 +2,6 @@ package de.hecate.core.profile
 
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
-import de.hecate.core.geo.LatLon
 import de.hecate.core.model.Sample
 
 /**
@@ -90,7 +89,7 @@ object Timeline {
      * the same samples and the colours cannot slide along the line.
      */
     fun speedOfSamples(samples: List<Sample>, window: Int = Tuning.SPEED_MEDIAN_WINDOW): List<Point> {
-        val usable = samples.filter { !it.paused && it.lat.isFinite() && it.lon.isFinite() }
+        val usable = samples.charted()
         if (usable.size < 2) return emptyList()
 
         val raw = DoubleArray(usable.size) { Double.NaN }
@@ -99,9 +98,9 @@ object Timeline {
             val b = usable[i]
             val dtMs = b.activeMs - a.activeMs
             if (dtMs <= 0) continue
-            val distance = Geo.haversine(LatLon(a.lat, a.lon), LatLon(b.lat, b.lon))
+            val distance = Geo.haversine(a.lat, a.lon, b.lat, b.lon)
             if (dtMs > Tuning.MAX_INTERPOLATION_GAP_MS || distance > Tuning.MAX_INTERPOLATION_GAP_M) continue
-            raw[i] = (distance / 1000.0) / (dtMs / 3_600_000.0)
+            raw[i] = Geo.kmh(distance, dtMs)
         }
         // The first sample has no interval behind it and therefore no speed;
         // giving it the second one's would draw a ride that began at pace.
@@ -112,7 +111,7 @@ object Timeline {
         for (i in usable.indices) {
             val v = smoothed[i]
             if (v.isNaN()) continue
-            out.add(Point(usable[i].activeMs, v, usable[i].hrBpm?.takeIf { it > 0 }?.toDouble()))
+            out.add(Point(usable[i].activeMs, v, usable[i].chartHr))
         }
         return out
     }
@@ -131,9 +130,7 @@ object Timeline {
     fun heartRateOfSamples(samples: List<Sample>): List<Point> =
         samples.asSequence()
             .filter { !it.paused }
-            .mapNotNull { s ->
-                s.hrBpm?.takeIf { it > 0 }?.let { Point(s.activeMs, it.toDouble(), it.toDouble()) }
-            }
+            .mapNotNull { s -> s.chartHr?.let { Point(s.activeMs, it, it) } }
             .toList()
 
     /**

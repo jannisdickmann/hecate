@@ -38,7 +38,7 @@ object RouteNamer {
         val counts = HashMap<TimeBucket, Int>()
         for (h in localHours) {
             val b = TimeBucket.of(h)
-            counts[b] = (counts[b] ?: 0) + 1
+            counts.merge(b, 1, Int::plus)
         }
         // Ties broken by enum order so the name is deterministic.
         return TimeBucket.entries

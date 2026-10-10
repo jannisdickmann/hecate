@@ -133,7 +133,6 @@ fun routeBelief(
                 contenderCount = contenders,
             )
         }
-        return RouteBelief(RouteBeliefKind.COMPARING, contenderCount = contenders)
     }
     return RouteBelief(RouteBeliefKind.COMPARING, contenderCount = contenders)
 }

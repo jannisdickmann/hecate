@@ -11,6 +11,7 @@ import de.hecate.core.map.overpass.OsmJson
 import de.hecate.core.map.overpass.OverpassClient
 import de.hecate.core.map.overpass.OverpassQuery
 import de.hecate.core.map.overpass.UrlOverpassClient
+import de.hecate.core.replay.CliInputs
 import java.io.File
 
 /**
@@ -274,8 +275,8 @@ object KarteCli {
                 } ?: continue
                 places += tile.places.size
                 for (f in tile.features + tile.urban) {
-                    features[f.cls] = (features[f.cls] ?: 0) + 1
-                    vertices[f.cls] = (vertices[f.cls] ?: 0L) + f.size
+                    features.merge(f.cls, 1, Int::plus)
+                    vertices.merge(f.cls, f.size.toLong(), Long::plus)
                 }
             }
             println("${level.dir}: $places Orte")
@@ -322,10 +323,8 @@ object KarteCli {
         o["sessions"]?.let { path ->
             val dir = File(path)
             if (!dir.isDirectory) { System.err.println("not a directory: $path"); return null }
-            return dir.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".json")) }
-                ?.sortedBy { it.name }
-                ?.mapNotNull { f -> SessionCodec.decodeSession(f.readLines().asSequence())?.let { Track.of(it)?.points } }
-                ?: emptyList()
+            return CliInputs.sessionFiles(dir)
+                .mapNotNull { f -> SessionCodec.decodeSession(f.readLines().asSequence())?.let { Track.of(it)?.points } }
         }
         return emptyList()
     }

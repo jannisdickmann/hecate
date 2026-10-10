@@ -109,4 +109,18 @@ object ActiveClock {
         if (dt <= 0 || dt > Tuning.MAX_INTERPOLATION_GAP_MS) return 0L
         return dt
     }
+
+    /**
+     * As [elapsed], for an import, which has two timestamps and nothing else.
+     *
+     * A TCX file or a takeout records no pauses, so the only rule left is the
+     * hole: a gap longer than [Tuning.MAX_INTERPOLATION_GAP_MS] is read as a
+     * pause, which is the best an import can do about a workout that was
+     * stopped at a traffic light. Shared by both importers, so that the rule
+     * for what an import counts as active is written in one place.
+     */
+    internal fun importedElapsed(previousMs: Long, nextMs: Long): Long {
+        val dt = nextMs - previousMs
+        return if (dt in 0..Tuning.MAX_INTERPOLATION_GAP_MS) dt else 0L
+    }
 }

@@ -4,7 +4,6 @@ import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
 import de.hecate.core.model.Altitudes
-import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
 
 /**
@@ -102,12 +101,6 @@ object Elevation {
      * Paused samples are skipped and so is anything without a plausible altitude;
      * distance still advances across a dropout, for the same reason it does in
      * `Track`: the ground was covered even though the shape of it is unknown.
-     */
-    fun ofSession(session: RecordedSession): List<Point> =
-        of(Altitudes.merge(session.samples, session.altitudes))
-
-    /**
-     * As [ofSession], for a caller holding the samples rather than the session.
      *
      * Reads [Sample.altM] and nothing else. A watch recording's barometer series
      * is put onto that column by [Altitudes.merge] on the way in, exactly as
@@ -118,16 +111,12 @@ object Elevation {
     fun of(samples: List<Sample>): List<Point> {
         // Distance first, altitude second, so that the median runs over a series
         // with the same indices as the samples it came from.
-        val usable = samples.filter { !it.paused && it.lat.isFinite() && it.lon.isFinite() }
+        val usable = samples.charted()
         if (usable.isEmpty()) return emptyList()
 
         val raw = DoubleArray(usable.size) { i ->
             val alt = usable[i].altM
-            if (alt != null && alt.isFinite() && alt >= Tuning.MIN_ALTITUDE_M && alt <= Tuning.MAX_ALTITUDE_M) {
-                alt
-            } else {
-                Double.NaN
-            }
+            if (alt != null && Altitudes.isPlausible(alt)) alt else Double.NaN
         }
         val cleaned = despike(raw)
 
@@ -140,7 +129,7 @@ object Elevation {
             previous = here
             val alt = cleaned[i]
             if (alt.isNaN()) continue
-            out.add(Point(travelled, alt, usable[i].hrBpm?.takeIf { it > 0 }?.toDouble()))
+            out.add(Point(travelled, alt, usable[i].chartHr))
         }
         return out
     }

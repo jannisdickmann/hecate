@@ -89,10 +89,4 @@ object Readings {
         }
         return out
     }
-
-    /** The reading nearest [tMs], or null when the nearest is further away than
-     *  [toleranceMs]. For series where holding is not wanted. */
-    fun nearestWithin(readings: List<Reading>, tMs: Long, toleranceMs: Long): Reading? =
-        readings.minByOrNull { kotlin.math.abs(it.tOffsetMs - tMs) }
-            ?.takeIf { kotlin.math.abs(it.tOffsetMs - tMs) <= toleranceMs }
 }

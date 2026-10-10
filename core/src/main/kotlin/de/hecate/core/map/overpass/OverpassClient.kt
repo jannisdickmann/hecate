@@ -5,7 +5,7 @@ import de.hecate.core.map.LatLonBounds
 import de.hecate.core.map.Level
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.util.zip.GZIPInputStream
 
 /**
@@ -59,7 +59,7 @@ class UrlOverpassClient(
     private val pauseMs: Long = Tuning.MAP_FETCH_PAUSE_MS,
     private val backoffMs: LongArray = Tuning.MAP_FETCH_BACKOFF_MS,
     private val sleep: (Long) -> Unit = { if (it > 0) Thread.sleep(it) },
-    private val open: (String) -> HttpURLConnection = { (URL(it).openConnection() as HttpURLConnection) },
+    private val open: (String) -> HttpURLConnection = { (URI(it).toURL().openConnection() as HttpURLConnection) },
 ) : OverpassClient {
 
     private val lock = Any()

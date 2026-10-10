@@ -1,7 +1,6 @@
 package de.hecate.core.cluster
 
 import de.hecate.core.Tuning
-import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Polyline
 import de.hecate.core.geo.Track
 import de.hecate.core.matcher.RouteMatcher
@@ -92,7 +91,7 @@ object BundleBuilder {
         val counts = HashMap<String, Int>()
         for (m in members) {
             val key = RouteMatcher.contextKeyOf(m.exerciseType, m.startedAtUtcMs, m.tzOffsetMinutes)
-            counts[key] = (counts[key] ?: 0) + 1
+            counts.merge(key, 1, Int::plus)
         }
         return RoutePrior(totalCount = members.size, byContext = counts)
     }
@@ -100,13 +99,8 @@ object BundleBuilder {
     fun toRoutePoints(p: Polyline): List<RoutePoint> =
         (0 until p.size).map { RoutePoint(p.lat[it], p.lon[it], p.cum[it]) }
 
-    fun toPolyline(points: List<RoutePoint>): Polyline = Polyline(
-        DoubleArray(points.size) { points[it].lat },
-        DoubleArray(points.size) { points[it].lon },
-        DoubleArray(points.size) { points[it].cumDistM },
-    )
-
-    fun toLatLon(points: List<RoutePoint>): List<LatLon> = points.map { LatLon(it.lat, it.lon) }
+    /** Kept under this name because the phone calls it; see [Polyline.fromRoutePoints]. */
+    fun toPolyline(points: List<RoutePoint>): Polyline = Polyline.fromRoutePoints(points)
 
     /** Assemble the bundle pushed to the watch. */
     fun bundle(version: Long, builtAtUtcMs: Long, entries: List<RouteEntry>): RouteBundle =

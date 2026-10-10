@@ -1,6 +1,7 @@
 package de.hecate.core.geo
 
 import de.hecate.core.Tuning
+import de.hecate.core.model.Altitudes
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
@@ -73,13 +74,7 @@ class Track(
                 // builder reads NaN as "this member does not vote on this bin".
                 val a = DoubleArray(run.size) {
                     val alt = run[it].altM
-                    if (alt != null && alt.isFinite() &&
-                        alt >= Tuning.MIN_ALTITUDE_M && alt <= Tuning.MAX_ALTITUDE_M
-                    ) {
-                        alt
-                    } else {
-                        Double.NaN
-                    }
+                    if (alt != null && Altitudes.isPlausible(alt)) alt else Double.NaN
                 }
                 val (rp, rv, ra) = Resampler.resampleWithValues(p, v, a, spacingM)
                 if (rp.size < 2) continue
@@ -90,12 +85,9 @@ class Track(
             }
             if (points.size < 2) return null
 
-            var dist = 0.0
-            var s = 0
-            for (i in 1 until points.size) {
-                if (s + 1 < starts.size && i == starts[s + 1]) s++
-                dist += Geo.haversine(points[i - 1], points[i])
-            }
+            // Across the gaps too, as the class comment says: the ground between
+            // two runs was covered even though its shape is unknown.
+            val dist = Geo.pathLength(points)
             return Track(
                 sessionId = session.id,
                 exerciseType = session.header.exerciseType,

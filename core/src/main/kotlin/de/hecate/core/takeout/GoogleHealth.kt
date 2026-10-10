@@ -57,7 +57,6 @@ object GoogleHealth {
         /** Google's own total, which knows about the ground the GPS missed. */
         val distanceM: Double?,
     ) {
-        val durationMs: Long get() = endUtcMs - startUtcMs
         fun overlaps(other: Exercise): Boolean = startUtcMs < other.endUtcMs && other.startUtcMs < endUtcMs
     }
 

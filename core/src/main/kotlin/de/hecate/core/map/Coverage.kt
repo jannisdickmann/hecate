@@ -3,6 +3,7 @@ package de.hecate.core.map
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
+import de.hecate.core.geo.cellKey
 import kotlin.math.abs
 import kotlin.math.floor
 
@@ -147,7 +148,7 @@ object Coverage {
     }
 
     private fun cellOf(deg: Double): Int = floor(deg / CELL_DEG).toInt()
-    private fun key(row: Int, col: Int): Long = (row.toLong() shl 32) or (col.toLong() and 0xFFFFFFFFL)
+    private fun key(row: Int, col: Int): Long = cellKey(row.toLong(), col.toLong())
     private fun row(key: Long): Int = (key shr 32).toInt()
     private fun col(key: Long): Int = key.toInt()
 }

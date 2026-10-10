@@ -3,12 +3,11 @@ package de.hecate.core.heat
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
+import de.hecate.core.io.GzipText
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -183,17 +182,16 @@ object Heatmap {
     ): HeatmapGrid? {
         val centre = medianStart(routes) ?: return null
 
-        val keptRoutes = routes.filter { r ->
-            r.points.isNotEmpty() && r.points.all { Geo.haversine(centre, it) <= maxRadiusM }
-        }
+        // A track is in or out as a whole. A track with one wild fix in it is a
+        // track whose every point is suspect, and half a recording drawn is
+        // worse than none.
+        fun inside(points: List<LatLon>): Boolean =
+            points.isNotEmpty() && points.all { Geo.haversine(centre, it) <= maxRadiusM }
+
+        val keptRoutes = routes.filter { inside(it.points) }
         if (keptRoutes.isEmpty()) return null
 
-        // A recording is in or out as a whole. A track with one wild fix in it is
-        // a track whose every point is suspect, and half a recording drawn is
-        // worse than none.
-        val keptSessions = sessions.filter { s ->
-            s.points.isNotEmpty() && s.points.all { Geo.haversine(centre, it) <= maxRadiusM }
-        }
+        val keptSessions = sessions.filter { inside(it.points) }
 
         val box = extentOf(keptRoutes, keptSessions, centre, cellM, maxCells, extent)
 
@@ -627,10 +625,7 @@ object HeatmapCodec {
         return out
     }
 
-    fun writeGzip(grid: HeatmapGrid, out: OutputStream) {
-        GZIPOutputStream(out).use { it.write(encode(grid).toByteArray(Charsets.UTF_8)) }
-    }
+    fun writeGzip(grid: HeatmapGrid, out: OutputStream) = GzipText.write(out) { encode(grid) }
 
-    fun readGzip(input: InputStream): HeatmapGrid =
-        GZIPInputStream(input).use { decode(it.readBytes().toString(Charsets.UTF_8)) }
+    fun readGzip(input: InputStream): HeatmapGrid = GzipText.read(input, ::decode)
 }

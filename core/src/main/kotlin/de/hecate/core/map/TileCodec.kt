@@ -184,8 +184,7 @@ object TileCodec {
             if (n < 0) throw TileFormatException("negative Abschnittslänge")
             n
         }
-        var total = 0L
-        for (n in lengths) total += n
+        val total = lengths.sumOf { it.toLong() }
         if (cursor.pos + total > bytes.size) {
             throw TileFormatException("Abschnitte ragen über das Dateiende hinaus")
         }

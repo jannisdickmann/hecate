@@ -59,7 +59,7 @@ object BasemapBuilder {
             if (geometry.size < 2) continue
             val points = geometry.map { LatLon(it.lat, it.lon) }
             val closed = isClosed(points)
-            val length = lengthOf(points)
+            val length = Geo.pathLength(points)
             val area = if (closed) areaOf(points) else 0.0
             val cls = Classify.wayClass(element.tags, length, area) ?: continue
             if (!cls.inLevel(level)) continue
@@ -115,20 +115,16 @@ object BasemapBuilder {
 
         val tiles = ArrayList<Tile>(wantedSet.size)
         for (id in wantedSet.sorted()) {
-            val own = features[id] ?: emptyList<MapFeature>()
-            val ownPlaces = placesByTile[id] ?: emptyList<MapPlace>()
+            val own = features[id].orEmpty()
+            val ownPlaces = placesByTile[id].orEmpty()
             // Derived here rather than fetched: the outline of the minor roads
             // already in this tile. Only ever meaningful at the detailed level,
             // which is the only one that holds minor roads.
             val patch = UrbanPatch.of(id, own.filter { it.cls == MapClass.MINOR })
-            if (own.isEmpty() && ownPlaces.isEmpty() && patch == null) {
-                // An empty tile is still written. "Nothing here" is an answer
-                // worth storing: without it, open country is re-fetched on every
-                // visit for as long as the user keeps running through it.
-                tiles.add(Tile(id, level, builtAtUtcMs, emptyList(), emptyList(), emptyList()))
-            } else {
-                tiles.add(Tile(id, level, builtAtUtcMs, own, ownPlaces, listOfNotNull(patch)))
-            }
+            // Written even when all three are empty. "Nothing here" is an answer
+            // worth storing: without it, open country is re-fetched on every
+            // visit for as long as the user keeps running through it.
+            tiles.add(Tile(id, level, builtAtUtcMs, own, ownPlaces, listOfNotNull(patch)))
         }
 
         // Only places that actually fell inside the fetched tiles. The query
@@ -153,7 +149,7 @@ object BasemapBuilder {
             if (id !in wanted) continue
             val rect = TileGrid.bounds(id)
             val pieces = if (closedRing) {
-                Clip.polygon(points, rect)?.let { listOf(it) } ?: emptyList()
+                listOfNotNull(Clip.polygon(points, rect))
             } else {
                 Clip.polyline(points, rect)
             }
@@ -241,12 +237,6 @@ object BasemapBuilder {
 
     private fun isClosed(points: List<LatLon>): Boolean =
         points.size >= 4 && points.first() == points.last()
-
-    private fun lengthOf(points: List<LatLon>): Double {
-        var sum = 0.0
-        for (i in 1 until points.size) sum += Geo.haversine(points[i - 1], points[i])
-        return sum
-    }
 
     /** Shoelace in the local plane, which is accurate to well under a percent
      *  over anything small enough to be one OSM way. */

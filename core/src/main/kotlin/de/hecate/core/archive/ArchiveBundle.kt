@@ -37,7 +37,7 @@ object ArchiveBundle {
             for (id in ids) {
                 val s = sessions[id] ?: continue
                 val key = RouteMatcher.contextKeyOf(s.exerciseType, s.startedAtUtc, s.tzOffsetMinutes)
-                priors[key] = (priors[key] ?: 0) + 1
+                priors.merge(key, 1, Int::plus)
             }
             RouteEntry(
                 geometry = RouteGeometry(

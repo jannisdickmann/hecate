@@ -171,7 +171,7 @@ class RouteMatcher(
 
         val priors = initialPriors(usable, startedAtUtcMs, tzOffsetMinutes)
         for (e in usable) {
-            val pl = toPolyline(e)
+            val pl = Polyline.fromRoutePoints(e.geometry.points)
             val w = priors.getValue(e.geometry.routeId)
             cands[e.geometry.routeId] = Cand(e, pl, ln(max(w, 1e-12)))
         }
@@ -350,7 +350,7 @@ class RouteMatcher(
         val devFired = updateDeviation(here)
 
         val st = buildState(sample.tOffsetMs, devFired)
-        logEntry(if (fired != null) fired else if (devFired) MatchEvent.DEVIATION else MatchEvent.SAMPLE, st)
+        logEntry(fired ?: if (devFired) MatchEvent.DEVIATION else MatchEvent.SAMPLE, st)
         return st
     }
 
@@ -952,17 +952,6 @@ class RouteMatcher(
 
     companion object {
         private const val NULL_KEY = -1L
-
-        internal fun toPolyline(e: RouteEntry): Polyline {
-            val pts = e.geometry.points
-            val la = DoubleArray(pts.size)
-            val lo = DoubleArray(pts.size)
-            val cu = DoubleArray(pts.size)
-            for (i in pts.indices) {
-                la[i] = pts[i].lat; lo[i] = pts[i].lon; cu[i] = pts[i].cumDistM
-            }
-            return Polyline(la, lo, cu)
-        }
 
         /**
          * Start-of-session priors from historical frequency by (exercise type,

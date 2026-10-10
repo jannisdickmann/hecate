@@ -61,9 +61,19 @@ object HeadingUp {
      */
     fun blend(previous: Double?, next: Double, factor: Double): Double {
         if (previous == null) return normalise(next)
-        val diff = ((next - previous + 540.0) % 360.0) - 180.0
-        return normalise(previous + diff * factor)
+        return normalise(previous + signedDelta(previous, next) * factor)
     }
+
+    /**
+     * The turn from [from] to [to], degrees, the short way round and positive
+     * clockwise: for two headings in 0..360 it is in -180..180, and 350° to 10°
+     * is +20, not -340.
+     *
+     * What [blend] steps along, and what a caller keeping an unwrapped running
+     * heading — one that is never folded back into 0..360, so an animation of
+     * it never spins through south — adds on each fix.
+     */
+    fun signedDelta(from: Double, to: Double): Double = ((to - from + 540.0) % 360.0) - 180.0
 
     /**
      * Where [p] lands on a canvas whose point ([cx], [cy]) is [centre] and whose

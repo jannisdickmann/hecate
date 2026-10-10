@@ -142,14 +142,30 @@ object SessionCodec {
         return RecordedSession(h, samples, events, footer, matches, rates, altitudes, speeds)
     }
 
-    fun encodeSession(session: RecordedSession): String = buildString {
-        appendLine(encodeLine(SessionRecord.Header(session.header)))
-        for (s in session.samples) appendLine(encodeLine(SessionRecord.SampleLine(s)))
-        for (e in session.events) appendLine(encodeLine(SessionRecord.EventLine(e)))
-        for (m in session.matchLog) appendLine(encodeLine(SessionRecord.MatchLine(m)))
-        for (r in session.heartRates) appendLine(encodeLine(SessionRecord.RateLine(r)))
-        for (a in session.altitudes) appendLine(encodeLine(SessionRecord.AltitudeLine(a)))
-        for (v in session.speeds) appendLine(encodeLine(SessionRecord.SpeedLine(v)))
-        session.footer?.let { appendLine(encodeLine(SessionRecord.Footer(it))) }
+    fun encodeSession(session: RecordedSession): String = buildString { writeSession(session, this) }
+
+    /**
+     * [session] as a whole file, one line at a time into [out].
+     *
+     * The one place the order of a session file is written down. A backup
+     * streams through this rather than through [encodeSession], which would
+     * hold an hour at 1 Hz as one String of megabytes for no reason; the bytes
+     * are the same either way.
+     *
+     * The sensors' own series come after the match log. A backup once left them
+     * out — not deliberately, the phone simply had none to write, because ingest
+     * merged them into the sample columns and dropped them — and a backup
+     * without them is one a restore cannot re-join differently, which for
+     * altitude means losing six readings in seven.
+     */
+    fun writeSession(session: RecordedSession, out: Appendable) {
+        out.appendLine(encodeLine(SessionRecord.Header(session.header)))
+        for (s in session.samples) out.appendLine(encodeLine(SessionRecord.SampleLine(s)))
+        for (e in session.events) out.appendLine(encodeLine(SessionRecord.EventLine(e)))
+        for (m in session.matchLog) out.appendLine(encodeLine(SessionRecord.MatchLine(m)))
+        for (r in session.heartRates) out.appendLine(encodeLine(SessionRecord.RateLine(r)))
+        for (a in session.altitudes) out.appendLine(encodeLine(SessionRecord.AltitudeLine(a)))
+        for (v in session.speeds) out.appendLine(encodeLine(SessionRecord.SpeedLine(v)))
+        session.footer?.let { out.appendLine(encodeLine(SessionRecord.Footer(it))) }
     }
 }

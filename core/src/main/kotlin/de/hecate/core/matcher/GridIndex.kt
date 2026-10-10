@@ -4,6 +4,7 @@ import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Polyline
+import de.hecate.core.geo.cellKey
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -34,15 +35,13 @@ class GridIndex private constructor(
         val out = LinkedHashSet<Long>()
         for (dy in -reach..reach) {
             for (dx in -reach..reach) {
-                cells[key(cx + dx, cy + dy)]?.let { ids -> for (id in ids) out.add(id) }
+                cells[cellKey(cx + dx, cy + dy)]?.let { ids -> for (id in ids) out.add(id) }
             }
         }
         return out
     }
 
     val isEmpty: Boolean get() = cells.isEmpty()
-
-    private fun key(x: Long, y: Long): Long = (x shl 32) xor (y and 0xffffffffL)
 
     companion object {
 
@@ -97,8 +96,7 @@ class GridIndex private constructor(
             val local = Geo.toLocal(origin, LatLon(lat, lon))
             val cx = floor(local[0] / cellM).toLong()
             val cy = floor(local[1] / cellM).toLong()
-            val k = (cx shl 32) xor (cy and 0xffffffffL)
-            acc.getOrPut(k) { LinkedHashSet() }.add(routeId)
+            acc.getOrPut(cellKey(cx, cy)) { LinkedHashSet() }.add(routeId)
         }
     }
 }

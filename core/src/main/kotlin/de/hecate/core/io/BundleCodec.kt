@@ -8,8 +8,6 @@ import de.hecate.core.model.RouteBundle
 import kotlinx.serialization.json.Json
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 
 /**
  * Serialization of the route bundle pushed watch-wards, and of match logs.
@@ -30,30 +28,21 @@ object BundleCodec {
 
     fun decode(text: String): RouteBundle = json.decodeFromString(text)
 
-    fun writeGzip(bundle: RouteBundle, out: OutputStream) {
-        GZIPOutputStream(out).use { it.write(encode(bundle).toByteArray(Charsets.UTF_8)) }
-    }
+    fun writeGzip(bundle: RouteBundle, out: OutputStream) = GzipText.write(out) { encode(bundle) }
 
-    fun readGzip(input: InputStream): RouteBundle =
-        GZIPInputStream(input).use { decode(it.readBytes().toString(Charsets.UTF_8)) }
+    fun readGzip(input: InputStream): RouteBundle = GzipText.read(input, ::decode)
 
-    fun encodeMatchLog(entries: List<MatchLogEntry>): String =
-        entries.joinToString("\n") { json.encodeToString(it) }
+    fun encodeMatchLog(entries: List<MatchLogEntry>): String = encodeLines(entries)
 
-    fun decodeMatchLog(text: String): List<MatchLogEntry> =
-        text.lineSequence().filter { it.isNotBlank() }
-            .map { json.decodeFromString<MatchLogEntry>(it) }.toList()
+    fun decodeMatchLog(text: String): List<MatchLogEntry> = decodeLines(text)
 
     /** The session's lifecycle events — pauses, GPS, service restarts — in the
      *  same line-per-entry shape as the match log, and stored the same way. The
      *  watch already writes these into the session file; this is what lets the
      *  phone keep them once that file is gone. */
-    fun encodeEvents(events: List<SessionEvent>): String =
-        events.joinToString("\n") { json.encodeToString(it) }
+    fun encodeEvents(events: List<SessionEvent>): String = encodeLines(events)
 
-    fun decodeEvents(text: String): List<SessionEvent> =
-        text.lineSequence().filter { it.isNotBlank() }
-            .map { json.decodeFromString<SessionEvent>(it) }.toList()
+    fun decodeEvents(text: String): List<SessionEvent> = decodeLines(text)
 
     /**
      * A sensor's own series — altitude, speed — in the same line-per-entry shape,
@@ -64,19 +53,24 @@ object BundleCodec {
      * column at ingest died with that file. For altitude that is most of it, the
      * barometer reporting once every half-minute against a position a second.
      */
-    fun encodeReadings(readings: List<Reading>): String =
-        readings.joinToString("\n") { json.encodeToString(it) }
+    fun encodeReadings(readings: List<Reading>): String = encodeLines(readings)
 
-    fun decodeReadings(text: String): List<Reading> =
-        text.lineSequence().filter { it.isNotBlank() }
-            .map { json.decodeFromString<Reading>(it) }.toList()
+    fun decodeReadings(text: String): List<Reading> = decodeLines(text)
 
     /** As [encodeReadings], for the heart rate, which keeps its own older shape
      *  because every session file and backup already written uses it. */
-    fun encodeRates(rates: List<HeartRate>): String =
-        rates.joinToString("\n") { json.encodeToString(it) }
+    fun encodeRates(rates: List<HeartRate>): String = encodeLines(rates)
 
-    fun decodeRates(text: String): List<HeartRate> =
+    fun decodeRates(text: String): List<HeartRate> = decodeLines(text)
+
+    /** One JSON object per line, joined by a bare newline and with none after
+     *  the last: the shape every table above is stored in, written once. */
+    private inline fun <reified T> encodeLines(items: List<T>): String =
+        items.joinToString("\n") { json.encodeToString(it) }
+
+    /** The inverse. Blank lines are skipped rather than failed on, so a file
+     *  that gained a trailing newline somewhere along the way still reads. */
+    private inline fun <reified T> decodeLines(text: String): List<T> =
         text.lineSequence().filter { it.isNotBlank() }
-            .map { json.decodeFromString<HeartRate>(it) }.toList()
+            .map { json.decodeFromString<T>(it) }.toList()
 }

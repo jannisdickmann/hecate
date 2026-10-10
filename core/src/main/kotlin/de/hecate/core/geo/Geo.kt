@@ -1,10 +1,8 @@
 package de.hecate.core.geo
 
 import de.hecate.core.Tuning
-import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.cos
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -36,6 +34,27 @@ object Geo {
     }
 
     fun haversine(a: LatLon, b: LatLon): Double = haversine(a.lat, a.lon, b.lat, b.lon)
+
+    /** Length [m] of the path through [points] in order, vertex to vertex; 0 for
+     *  fewer than two. Summed front to back, so every caller gets the same
+     *  double for the same path. */
+    fun pathLength(points: List<LatLon>): Double {
+        var sum = 0.0
+        for (i in 1 until points.size) sum += haversine(points[i - 1], points[i])
+        return sum
+    }
+
+    /**
+     * Average speed [km/h] over [distanceM] covered in [durationMs].
+     *
+     * Kilometres over hours, in that order, rather than `m/s * 3.6`: the two can
+     * differ in the last bit, and this is the expression the speed chart, the
+     * auto-stop and both apps' average-speed figures were each written with —
+     * one copy, so that a ride cannot come out as 10.8 on one screen and
+     * 10.799999 on another. No guard: a zero [durationMs] gives Infinity or NaN,
+     * and what a speed over no time means is the caller's decision.
+     */
+    fun kmh(distanceM: Double, durationMs: Long): Double = (distanceM / 1000.0) / (durationMs / 3_600_000.0)
 
     /** Metres per degree of latitude. Constant enough for our purposes. */
     fun metersPerDegLat(): Double = Tuning.EARTH_RADIUS_M * DEG_TO_RAD
@@ -95,22 +114,5 @@ object Geo {
         val dx = apx - t * abx
         val dy = apy - t * aby
         return Projection(t, sqrt(dx * dx + dy * dy))
-    }
-
-    /** Cheap bounding-box rejection: true if the two boxes are more than [m] apart. */
-    fun boxesFartherThan(
-        minLatA: Double, maxLatA: Double, minLonA: Double, maxLonA: Double,
-        lat: Double, lon: Double, m: Double,
-    ): Boolean {
-        val dLat = max(0.0, max(minLatA - lat, lat - maxLatA)) * metersPerDegLat()
-        val dLon = max(0.0, max(minLonA - lon, lon - maxLonA)) * metersPerDegLon(lat)
-        return dLat > m || dLon > m || sqrt(dLat * dLat + dLon * dLon) > m
-    }
-
-    /** True when two bearings [deg] agree within [toleranceDeg], modulo 360. */
-    fun bearingsAgree(a: Double, b: Double, toleranceDeg: Double): Boolean {
-        var d = abs(a - b) % 360.0
-        if (d > 180.0) d = 360.0 - d
-        return d <= toleranceDeg
     }
 }

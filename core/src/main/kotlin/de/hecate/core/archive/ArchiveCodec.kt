@@ -1,9 +1,7 @@
 package de.hecate.core.archive
 
 import de.hecate.core.io.SessionCodec
-import de.hecate.core.io.SessionRecord
 import de.hecate.core.model.RecordedSession
-import kotlinx.serialization.encodeToString
 import java.io.Closeable
 import java.io.File
 import java.io.OutputStream
@@ -50,33 +48,10 @@ object ArchiveCodec {
             zip.putNextEntry(ZipEntry(Archive.sessionEntry(session.id)))
             // Deliberately not SessionCodec.encodeSession: that builds the whole
             // file as one String, which for an hour at 1 Hz is megabytes held for
-            // no reason. A writer flushed into the entry costs a buffer.
+            // no reason. A writer flushed into the entry costs a buffer, and
+            // writeSession is the same lines in the same order.
             val writer = zip.bufferedWriter()
-            writer.appendLine(SessionCodec.encodeLine(SessionRecord.Header(session.header)))
-            for (s in session.samples) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.SampleLine(s)))
-            }
-            for (e in session.events) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.EventLine(e)))
-            }
-            for (m in session.matchLog) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.MatchLine(m)))
-            }
-            // The sensors' own series. Omitted until now — not deliberately, the
-            // phone simply had none to write, because ingest merged them into the
-            // sample columns and dropped them. A backup that leaves these out is
-            // a backup a restore cannot re-join differently, which for altitude
-            // means losing six readings in seven.
-            for (r in session.heartRates) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.RateLine(r)))
-            }
-            for (a in session.altitudes) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.AltitudeLine(a)))
-            }
-            for (v in session.speeds) {
-                writer.appendLine(SessionCodec.encodeLine(SessionRecord.SpeedLine(v)))
-            }
-            session.footer?.let { writer.appendLine(SessionCodec.encodeLine(SessionRecord.Footer(it))) }
+            SessionCodec.writeSession(session, writer)
             // Flush rather than close: closing the writer would close the ZIP.
             writer.flush()
             zip.closeEntry()

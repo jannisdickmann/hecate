@@ -2,7 +2,6 @@ package de.hecate.core.recorder
 
 import de.hecate.core.Tuning
 import de.hecate.core.geo.Geo
-import de.hecate.core.geo.LatLon
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
@@ -242,9 +241,9 @@ class AutoStopWatch(private val type: ExerciseType) {
             lastPlausible = sample
             return
         }
-        if (!armed && Geo.haversine(at(start), at(sample)) > Tuning.AUTO_STOP_ARM_M) armed = true
+        if (!armed && distance(start, sample) > Tuning.AUTO_STOP_ARM_M) armed = true
         val a = anchor
-        if (a == null || Geo.haversine(at(a), at(sample)) > Tuning.AUTO_STOP_IDLE_RADIUS_M) anchor = sample
+        if (a == null || distance(a, sample) > Tuning.AUTO_STOP_IDLE_RADIUS_M) anchor = sample
     }
 
     /**
@@ -273,7 +272,7 @@ class AutoStopWatch(private val type: ExerciseType) {
             lastPlausible = sample
             return null
         }
-        val kmh = Geo.haversine(at(previous), at(sample)) / 1000.0 / (dtMs / 3_600_000.0)
+        val kmh = Geo.kmh(distance(previous, sample), dtMs)
         if (kmh <= ceiling) {
             overspeedSinceMs = null
             lastPlausible = sample
@@ -292,7 +291,7 @@ class AutoStopWatch(private val type: ExerciseType) {
     ): AutoStopVerdict {
         val note = when (reason) {
             AutoStopReason.IMPLAUSIBLE_SPEED ->
-                "Zu schnell für ${type.label} — beendet, ${discardedMinutes(keepThrough, nowMs)} min verworfen"
+                "Zu schnell für ${type.label} — beendet, ${minutes(nowMs - keepThrough.tOffsetMs)} min verworfen"
             else ->
                 "${reason.label} seit ${forMinutes ?: minutes(nowMs - keepThrough.tOffsetMs)} min — beendet"
         }
@@ -301,12 +300,9 @@ class AutoStopWatch(private val type: ExerciseType) {
         return v
     }
 
-    private fun discardedMinutes(keepThrough: Sample, nowMs: Long): Long =
-        minutes(nowMs - keepThrough.tOffsetMs)
-
     private fun minutes(ms: Long): Long = ms / 60_000L
 
-    private fun at(sample: Sample) = LatLon(sample.lat, sample.lon)
+    private fun distance(a: Sample, b: Sample): Double = Geo.haversine(a.lat, a.lon, b.lat, b.lon)
 }
 
 /**

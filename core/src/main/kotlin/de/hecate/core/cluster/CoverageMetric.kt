@@ -5,6 +5,7 @@ import de.hecate.core.geo.Geo
 import de.hecate.core.geo.LatLon
 import de.hecate.core.geo.Polyline
 import de.hecate.core.geo.Track
+import de.hecate.core.geo.cellKey
 import kotlin.math.floor
 
 /**
@@ -110,9 +111,7 @@ object CoverageMetric {
 
         private fun keyOf(lat: Double, lon: Double): Long {
             val l = Geo.toLocal(origin, LatLon(lat, lon))
-            val x = floor(l[0] / cell).toLong()
-            val y = floor(l[1] / cell).toLong()
-            return (x shl 32) xor (y and 0xffffffffL)
+            return cellKey(floor(l[0] / cell).toLong(), floor(l[1] / cell).toLong())
         }
 
         fun within(p: LatLon, tolM: Double): Boolean {
@@ -162,7 +161,7 @@ object CoverageMetric {
             val cx = floor(l[0] / cell).toLong()
             val cy = floor(l[1] / cell).toLong()
             for (dy in -1..1) for (dx in -1..1) {
-                val list = buckets[((cx + dx) shl 32) xor ((cy + dy) and 0xffffffffL)] ?: continue
+                val list = buckets[cellKey(cx + dx, cy + dy)] ?: continue
                 for (i in list) body(i)
             }
         }

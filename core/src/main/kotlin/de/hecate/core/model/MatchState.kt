@@ -110,10 +110,6 @@ data class MatchState(
     val disabled: Boolean = false,
 ) {
     val top: Candidate? get() = candidates.maxByOrNull { it.weight }
-
-    companion object {
-        fun searching(tOffsetMs: Long) = MatchState(tOffsetMs, MatchPhase.SEARCHING)
-    }
 }
 
 /** Why a log entry was written. */

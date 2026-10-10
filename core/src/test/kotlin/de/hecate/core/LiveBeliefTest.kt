@@ -3,7 +3,6 @@ package de.hecate.core
 import de.hecate.core.cluster.BundleBuilder
 import de.hecate.core.geo.Track
 import de.hecate.core.matcher.RouteMatcher
-import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.MatchPhase
 import de.hecate.core.model.MatchState
 import de.hecate.core.model.RecordedSession

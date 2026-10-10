@@ -78,9 +78,6 @@ enum class MapClass(
 
     companion object {
         fun of(id: Int): MapClass? = entries.firstOrNull { it.id == id }
-
-        /** Everything a tag can become: [URBAN] is not one of them. */
-        val classified: List<MapClass> = entries.filter { it != URBAN }
     }
 }
 

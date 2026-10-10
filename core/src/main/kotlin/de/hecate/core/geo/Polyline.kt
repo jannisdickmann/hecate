@@ -1,6 +1,7 @@
 package de.hecate.core.geo
 
 import de.hecate.core.Tuning
+import de.hecate.core.model.RoutePoint
 import kotlin.math.max
 import kotlin.math.min
 
@@ -168,7 +169,17 @@ class Polyline(
             return Polyline(la, lo, cu)
         }
 
-        val EMPTY = Polyline(DoubleArray(0), DoubleArray(0), DoubleArray(0))
+        /**
+         * A stored route's geometry, with the cumulative distances it was stored
+         * with rather than measured again: the metres the route's profile bins
+         * were built on, which is what a position along it has to be read in.
+         * The inverse of `BundleBuilder.toRoutePoints`.
+         */
+        fun fromRoutePoints(points: List<RoutePoint>): Polyline = Polyline(
+            DoubleArray(points.size) { points[it].lat },
+            DoubleArray(points.size) { points[it].lon },
+            DoubleArray(points.size) { points[it].cumDistM },
+        )
     }
 }
 

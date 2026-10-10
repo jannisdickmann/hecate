@@ -1,8 +1,8 @@
 package de.hecate.core.takeout
 
-import de.hecate.core.Tuning
 import de.hecate.core.archive.Archive
 import de.hecate.core.geo.Track
+import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RecordedSession
 import de.hecate.core.model.Sample
@@ -231,14 +231,12 @@ object TakeoutImport {
 
         val start = exercise.startUtcMs
         // As in the TCX import: a takeout records no pauses, so wall-clock time is
-        // active time except across a gap longer than a dropout, which is the best
-        // an import can do about a workout that was paused at a traffic light.
+        // active time except across a hole (see ActiveClock.importedElapsed).
         var active = 0L
         var prev = window.first().tUtcMs
         val samples = ArrayList<Sample>(window.size)
         for (fix in window) {
-            val dt = fix.tUtcMs - prev
-            if (dt in 0..Tuning.MAX_INTERPOLATION_GAP_MS) active += dt
+            active += ActiveClock.importedElapsed(prev, fix.tUtcMs)
             prev = fix.tUtcMs
             samples.add(
                 Sample(

@@ -22,11 +22,7 @@ object RouteClusterer {
         val active: Boolean,
     )
 
-    data class Result(
-        val clusters: List<Cluster>,
-        /** Pairwise distances, kept for diagnostics and tests. */
-        val distances: Map<Pair<String, String>, Double> = emptyMap(),
-    )
+    data class Result(val clusters: List<Cluster>)
 
     /**
      * Cluster [tracks]. Input order does not matter: tracks are sorted by
@@ -42,13 +38,11 @@ object RouteClusterer {
         if (n == 0) return Result(emptyList())
 
         val d = Array(n) { DoubleArray(n) }
-        val pairs = HashMap<Pair<String, String>, Double>()
         for (i in 0 until n) {
             for (j in i + 1 until n) {
                 val dist = CoverageMetric.distance(ordered[i], ordered[j])
                 d[i][j] = dist
                 d[j][i] = dist
-                pairs[ordered[i].sessionId to ordered[j].sessionId] = dist
             }
         }
 
@@ -91,7 +85,7 @@ object RouteClusterer {
                 .thenBy { it.memberSessionIds.first() },
         )
 
-        return Result(clusters, pairs)
+        return Result(clusters)
     }
 
     private fun averageLink(d: Array<DoubleArray>, a: List<Int>, b: List<Int>): Double {
