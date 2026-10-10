@@ -13,9 +13,10 @@ the OpenStreetMap streets drawn under your tracks. The watch stays offline.
 
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.
-[OPEN-POINTS.md](OPEN-POINTS.md) lists what still needs a human, a device, or a
-decision — **read it before installing anything**, in particular §1.1 on the
-release keystore. All three modules build and lint clean, and the system has
+[.agents/brain/issues/](.agents/brain/issues/README.md) lists what still needs a
+human, a device, or a decision — **read it before installing anything**, in
+particular OP-1.1 on the
+[release keystore](.agents/brain/issues/release-keystore-has-no-second-copy.md). All three modules build and lint clean, and the system has
 completed one real round trip: a Pixel Watch 4 recorded, a Pixel 8 ingested and
 acknowledged, Health Connect accepted the write, and a route bundle came back.
 That is one workout's worth of device behaviour verified, and no more.
