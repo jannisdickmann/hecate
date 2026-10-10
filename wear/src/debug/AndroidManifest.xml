@@ -12,7 +12,6 @@
              holds in its own storage. -->
         <receiver
             android:name=".recorder.ReplayReceiver"
-            android:enabled="true"
             android:exported="true"
             tools:ignore="ExportedReceiver">
             <intent-filter>

@@ -1,6 +1,8 @@
 package de.hecate.wear.ui
 
+import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -47,21 +49,14 @@ object Format {
     /** The unit [distanceValue] left off. */
     fun distanceUnit(meters: Double): String = if (meters >= 1000) "km" else "m"
 
-    /** Just the number of [speed], for the metric grid. Same floor: below
-     *  1 km/h there is nothing to report but a jittery fix. */
+    /** Speed as "10,8", for the metric grid, which puts "km/h" beside it.
+     *  Never pace: this app speaks km/h everywhere.
+     *
+     *  Below 1 km/h there is nothing to report but a jittery fix — standing
+     *  still, not a number worth showing. */
     fun speedValue(kmh: Double?): String {
         if (kmh == null || !kmh.isFinite() || kmh < 1.0) return "–"
         return String.format(DE, "%.1f", kmh)
-    }
-
-    /** Speed as "10,8 km/h". Never pace: this app speaks km/h everywhere.
-     *
-     *  The lower bound is the old one restated — a pace above 3600 s/km is a
-     *  speed below 1 km/h, which is standing still with a jittery fix, not a
-     *  number worth showing. */
-    fun speed(kmh: Double?): String {
-        if (kmh == null || !kmh.isFinite() || kmh < 1.0) return "–"
-        return String.format(DE, "%.1f km/h", kmh)
     }
 
     /** Average speed so far, in km/h. Null below 50 m, where it is all noise. */
@@ -91,7 +86,7 @@ object Format {
     fun age(
         builtAtUtcMs: Long,
         nowMs: Long,
-        zone: java.util.TimeZone = java.util.TimeZone.getDefault(),
+        zone: TimeZone = TimeZone.getDefault(),
     ): String {
         val minutes = ((nowMs - builtAtUtcMs) / 60_000L).coerceAtLeast(0L)
         if (minutes < 1) return "gerade eben"
@@ -102,7 +97,7 @@ object Format {
     }
 
     /** Days since the epoch on the local calendar of [zone]. */
-    private fun localDay(utcMs: Long, zone: java.util.TimeZone): Long =
+    private fun localDay(utcMs: Long, zone: TimeZone): Long =
         Math.floorDiv(utcMs + zone.getOffset(utcMs), 86_400_000L)
 
     /** "4 Routen", "1 Route". */
@@ -130,11 +125,11 @@ object Format {
      */
     fun arrival(atUtcMs: Long?): String {
         if (atUtcMs == null || atUtcMs <= 0) return "–"
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = atUtcMs }
+        val cal = Calendar.getInstance().apply { timeInMillis = atUtcMs }
         return String.format(
             DE, "%02d:%02d",
-            cal.get(java.util.Calendar.HOUR_OF_DAY),
-            cal.get(java.util.Calendar.MINUTE),
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
         )
     }
 

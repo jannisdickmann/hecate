@@ -3,6 +3,7 @@ package de.hecate.wear.transfer
 import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
+import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -51,7 +52,7 @@ class Uploader(
         val id = sessions.sessionIdOf(file)
 
         val gz = ByteArrayOutputStream().also { out ->
-            GZIPOutputStream(out).use { it.write(file.readBytes()) }
+            GZIPOutputStream(out).use { zip -> file.inputStream().use { it.copyTo(zip) } }
         }.toByteArray()
 
         val request = PutDataMapRequest.create(Wire.PATH_SESSION_PREFIX + id).apply {
@@ -66,9 +67,7 @@ class Uploader(
         // Tasks.await rather than kotlinx-coroutines-play-services: one more
         // third-party dependency for one blocking call on an IO dispatcher is a
         // poor trade (NFR-8).
-        com.google.android.gms.tasks.Tasks.await(
-            Wearable.getDataClient(context).putDataItem(request),
-        )
+        Tasks.await(Wearable.getDataClient(context).putDataItem(request))
         Log.i(TAG, "Sitzung $id angeboten (${gz.size} B gzip)")
     }
 
@@ -81,7 +80,7 @@ class Uploader(
                 // The confirmation the end-of-recording screen is waiting for.
                 handoff = it.handoff
                     ?.takeIf { h -> h.sessionId == sessionId && !h.confirmed }
-                    ?.copy(confirmed = true, confirmedAtMs = System.currentTimeMillis())
+                    ?.copy(confirmed = true)
                     ?: it.handoff,
             )
         }

@@ -136,7 +136,7 @@ case "${1:-up}" in
 
   push)  # a backup ZIP from the computer into the phone's Downloads, where the
          # app's Storage-Access-Framework picker (Einstellungen → Sicherung einlesen)
-         # it. No storage permission is involved on either side.
+         # can open it. No storage permission is involved on either side.
     assert_roles
     [ -f "${2:-}" ] || { echo "usage: tools/emu push <archive.zip>" >&2; exit 2; }
     adb -s "$PHONE" push "$2" /sdcard/Download/
@@ -158,7 +158,7 @@ case "${1:-up}" in
           # On a wrist this arrives over the Data Layer from the phone and there
           # is nothing to do by hand. The emulators are not paired (§6.5), so the
           # bundle has to be put there, and without one every replay below can
-          # only ever say "Unbekannt" — correctly.
+          # only ever say "Noch keine Routen" — correctly.
     assert_watch
     [ -f "${2:-}" ] || { echo "usage: tools/emu bundle <bundle.json|bundle.json.gz>" >&2; exit 2; }
     src="$(readlink -f "$2")"
@@ -236,7 +236,7 @@ case "${1:-up}" in
 
     assert_watch
     adb -s "$WATCH" shell "run-as de.hecate ls files/route-bundle.json.gz" >/dev/null 2>&1 ||
-      echo "note: no route bundle on the watch, so this will say \"Unbekannt\" throughout — tools/emu bundle <f>"
+      echo "note: no route bundle on the watch, so this will say \"Noch keine Routen\" throughout — tools/emu bundle <f>"
     push_private "$session" files/replay current.jsonl
     # The app must be in the foreground for its receiver to be allowed to start a
     # foreground service; a broadcast into a stopped app cannot. If this ever

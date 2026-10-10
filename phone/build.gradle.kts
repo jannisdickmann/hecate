@@ -63,8 +63,9 @@ android {
         // targetSdk deliberately trails compileSdk. compileSdk 37 is what Compose
         // 2026.09 requires and changes no runtime behaviour on its own; raising
         // targetSdk opts the app into new platform behaviour, and there is no
-        // device here to check that against (OPEN-POINTS §1.2, §1.3). Raise it in
-        // a session that can wear the result.
+        // device here to check that against (.agents/brain/issues/
+        // target-sdk-trails-compile-sdk-deliberately.md, OP-2.7). Raise it in a
+        // session that can wear the result.
         disable += "OldTargetApi"
     }
 
@@ -148,8 +149,6 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.core)
-    implementation(libs.compose.ui.tooling.preview)
-    debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)

@@ -1,7 +1,12 @@
 package de.hecate.wear
 
 /**
- * The watch↔phone contract. One place, so the two modules cannot drift apart.
+ * The watch↔phone contract, as the watch speaks it.
+ *
+ * Not the only copy: `de.hecate.phone.Wire` mirrors it, on purpose, because
+ * `:core` is pure algorithm and must not grow knowledge of a transport. Nothing
+ * checks the two against each other but a session actually arriving, so a change
+ * to any value here is a change to both files.
  *
  * Everything travels over the Wearable Data Layer: `DataClient` items for
  * payloads that must survive being out of range (§4 — the at-least-once

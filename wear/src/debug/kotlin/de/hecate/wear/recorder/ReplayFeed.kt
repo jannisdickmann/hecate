@@ -36,7 +36,7 @@ class ReplayFeed private constructor(
 
     override val header: SessionHeader get() = session.header
 
-    override val label: String = "Wiedergabe ×${Speed.text(speed)}"
+    override val label: String = "Wiedergabe ×${speedText(speed)}"
 
     @Volatile
     private var paused = false
@@ -49,7 +49,7 @@ class ReplayFeed private constructor(
         Log.i(
             TAG,
             "Wiedergabe von ${source.name}: ${session.samples.size} Messpunkte, " +
-                "${header.exerciseType.label}, ×${Speed.text(speed)}",
+                "${header.exerciseType.label}, ×${speedText(speed)}",
         )
         // Paced off tOffsetMs, which is the monotonic offset the watch recorded
         // (NFR-6). A gap in the recording — a GPS dropout, a long pause — is
@@ -73,12 +73,6 @@ class ReplayFeed private constructor(
         Log.i(TAG, "Wiedergabe von ${source.name} zu Ende")
     }
 
-    private object Speed {
-        /** "10" rather than "10.0", but "0.5" when someone asks for half speed. */
-        fun text(v: Double): String =
-            if (v == v.toLong().toDouble()) v.toLong().toString() else "%.1f".format(v)
-    }
-
     companion object {
         private const val TAG = "ReplayFeed"
 
@@ -94,6 +88,10 @@ class ReplayFeed private constructor(
          *  delays round to zero and the whole session arrives in one burst, which
          *  is what `selfcheck` is for and not what this is for. */
         private val SPEED_RANGE = 0.1..600.0
+
+        /** "10" rather than "10.0", but "0.5" when someone asks for half speed. */
+        private fun speedText(v: Double): String =
+            if (v == v.toLong().toDouble()) v.toLong().toString() else "%.1f".format(v)
 
         /** Where `tools/emu replay` puts the session, inside the app's own
          *  storage: a broadcast names a file in here and cannot name a path. */

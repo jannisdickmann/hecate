@@ -8,7 +8,6 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
 import androidx.health.services.client.data.Availability
-import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.ExerciseState
 import androidx.health.services.client.data.ExerciseUpdate
@@ -37,6 +36,7 @@ import de.hecate.core.model.SessionHeader
 import de.hecate.core.recorder.AutoStopVerdict
 import de.hecate.core.recorder.AutoStopWatch
 import de.hecate.wear.AppGraph
+import de.hecate.wear.R
 import de.hecate.wear.notify.Haptics
 import de.hecate.wear.notify.OngoingNotification
 import de.hecate.wear.ui.Format
@@ -127,7 +127,6 @@ class RecorderService : Service() {
     /** Each route's shape for the map page, read once with the bundle. */
     private var routeShapes: Map<Long, List<LatLon>> = emptyMap()
     private var lastNotificationUpdateMs = 0L
-    private var sawFirstLocation = false
 
     /** The last position written, which the pause flag of the next one is
      *  decided against ([ActiveClock.unpause]). */
@@ -227,7 +226,6 @@ class RecorderService : Service() {
             ACTION_PAUSE -> scope.launch(lane) { setPaused(true) }
             ACTION_RESUME -> scope.launch(lane) { setPaused(false) }
             ACTION_STOP -> scope.launch(lane) { endSession(SessionEndReason.USER_STOPPED) }
-            ACTION_UPLOAD -> scope.launch { AppGraph.uploader.uploadPending() }
             else -> {
                 // Restarted by the system (START_STICKY). Re-register and see what
                 // Health Services says the current state is; if a session is still
@@ -240,7 +238,7 @@ class RecorderService : Service() {
     }
 
     private fun startForegroundNow(type: ExerciseType) {
-        val n = OngoingNotification.build(this, getString(de.hecate.wear.R.string.app_name), "…")
+        val n = OngoingNotification.build(this, getString(R.string.app_name), "…")
         startForeground(
             OngoingNotification.NOTIFICATION_ID,
             n,
@@ -363,7 +361,7 @@ class RecorderService : Service() {
         // so the first few hundred metres — the ones the matcher needs most — are
         // not spent acquiring GNSS.
         if (!canLocate) {
-            say(getString(de.hecate.wear.R.string.no_location_permission))
+            say(getString(R.string.no_location_permission))
             Log.w(TAG, "Keine Standortberechtigung — Aufzeichnung ohne GPS")
         }
         runCatching { source.prepare(type) }
@@ -374,7 +372,7 @@ class RecorderService : Service() {
                 // said it was recording. Say so, and let the timeout below start
                 // the session anyway.
                 Log.w(TAG, "prepareExercise fehlgeschlagen", it)
-                say(getString(de.hecate.wear.R.string.warmup_failed))
+                say(getString(R.string.warmup_failed))
             }
         Haptics.tick(this)
         armPrepareTimeout(id)
@@ -419,7 +417,7 @@ class RecorderService : Service() {
         Log.i(TAG, "Automatischer Stopp: ${verdict.note}")
         recordEvent(SessionEventType.AUTO_STOP, verdict.note)
         Haptics.deviation(this)
-        say(getString(de.hecate.wear.R.string.auto_stopped, verdict.reason.label))
+        say(getString(R.string.auto_stopped, verdict.reason.label))
         endSession(SessionEndReason.AUTO_STOPPED)
     }
 
@@ -442,7 +440,7 @@ class RecorderService : Service() {
             if (sessionId != id || bus.state.value.phase != RecorderPhase.PREPARING) return@launch
             Log.w(TAG, "Kein Fix nach ${PREPARE_TIMEOUT_MS / 1000}s — Start ohne GPS")
             recordEvent(SessionEventType.GPS_LOST, "kein Fix beim Start")
-            say(getString(de.hecate.wear.R.string.started_without_gps))
+            say(getString(R.string.started_without_gps))
             startExercise()
         }
     }
@@ -586,7 +584,6 @@ class RecorderService : Service() {
         autoStopVerdict = null
         feed = null
         lastState = null
-        sawFirstLocation = false
 
         // What the two sensors actually gave, side by side. The heart rate is
         // here because nobody had that number until a ride came back with a
@@ -615,12 +612,10 @@ class RecorderService : Service() {
         if (empty) {
             Log.w(TAG, "Sitzung $id ohne Messpunkte — verworfen statt hochgeladen")
             AppGraph.sessions.discard(id)
-            say(getString(de.hecate.wear.R.string.nothing_recorded))
+            say(getString(R.string.nothing_recorded))
         }
 
         Haptics.tick(this)
-        // A replay produced no file, so there is nothing new to offer the phone
-        // and no reason to wake the Data Layer on its account.
         // Watched from the start screen until the phone confirms it (or the user
         // stops watching). Set before the upload starts, so a phone quick enough
         // to acknowledge while uploadPending is still running cannot confirm a
@@ -628,6 +623,8 @@ class RecorderService : Service() {
         if (!replaying && !empty) {
             bus.update { it.copy(handoff = Handoff(id, startedAtMs = System.currentTimeMillis())) }
         }
+        // A replay produced no file, so there is nothing new to offer the phone
+        // and no reason to wake the Data Layer on its account.
         if (!replaying) AppGraph.uploader.uploadPending()
         bus.reset()
         bus.update { it.copy(pendingUploads = AppGraph.sessions.unacked().size) }
@@ -682,11 +679,12 @@ class RecorderService : Service() {
 
         override fun onAvailability(dataType: DataType<*, *>, availability: Availability) {
             // On the lane too: it writes events into the same file the samples go to.
-            scope.launch(lane) { availabilityChanged(dataType, availability) }
+            scope.launch(lane) { availabilityChanged(availability) }
         }
     }
 
-    private fun availabilityChanged(dataType: DataType<*, *>, availability: Availability) {
+    /** Only location's availability is acted on; nothing reads the others. */
+    private fun availabilityChanged(availability: Availability) {
         if (availability is LocationAvailability) {
             val ready = availability == LocationAvailability.ACQUIRED_TETHERED ||
                 availability == LocationAvailability.ACQUIRED_UNTETHERED
@@ -711,8 +709,6 @@ class RecorderService : Service() {
             } else if (was && !ready) {
                 recordEvent(SessionEventType.GPS_LOST)
             }
-        } else if (dataType == DataType.HEART_RATE_BPM) {
-            bus.update { it.copy(heartRateAvailable = availability.toString().startsWith("AVAILABLE")) }
         }
     }
 
@@ -846,14 +842,14 @@ class RecorderService : Service() {
         // numbers as current for exactly as long as the hold allowed.
         hrPoints.lastOrNull { usableRate(it) }?.let {
             lastHrBpm = it.value.toInt()
-            lastHrAtMs = offsetOf(it.timeDurationFromBoot.toMillis())
+            lastHrAtMs = offsetOf(it)
         }
         val hr = lastHrBpm?.takeIf { nowOffsetMs() - lastHrAtMs <= Tuning.HR_HOLD_MS }
 
         val speed = speeds.lastOrNull { it.value.isFinite() && it.value >= 0 }
         speed?.let {
             lastSpeedKmh = it.value * 3.6
-            lastSpeedAtMs = offsetOf(it.timeDurationFromBoot.toMillis())
+            lastSpeedAtMs = offsetOf(it)
         }
         // Held only as long as a position fix would be: speed is a location
         // product, and once the fix is stale this is not a current speed but a
@@ -891,7 +887,7 @@ class RecorderService : Service() {
         // Health Services' own active time at each point decides it, see
         // [ActiveClock.unpause].
         val paused = bus.state.value.phase == RecorderPhase.PAUSED
-        val sorted = locations.sortedBy { it.timeDurationFromBoot.toMillis() }
+        val sorted = locations.inTimeOrder()
         for ((i, point) in sorted.withIndex()) {
             // The cumulative distance describes the delivery, so it belongs on
             // the position that ends it and on no other. Stamping it across the
@@ -931,9 +927,17 @@ class RecorderService : Service() {
             status != HeartRateAccuracy.SensorStatus.UNRELIABLE
     }
 
-    /** Session time from a boot-clock instant, the one conversion every series
-     *  and every sample goes through. */
-    private fun offsetOf(bootMs: Long): Long = bootMs - startedElapsedNs / 1_000_000
+    /** Session time of a data point, from the boot-clock instant Health Services
+     *  stamped it with: the one conversion every series and every sample goes
+     *  through. */
+    private fun offsetOf(point: SampleDataPoint<*>): Long =
+        point.timeDurationFromBoot.toMillis() - startedElapsedNs / 1_000_000
+
+    /** A delivery's points in the order they were measured. Every series is
+     *  written in it, and each one's "nothing at or before the last time
+     *  written" dedup depends on it. */
+    private fun <T : Any> List<SampleDataPoint<T>>.inTimeOrder(): List<SampleDataPoint<T>> =
+        sortedBy { it.timeDurationFromBoot.toMillis() }
 
     /**
      * Write every barometric altitude of a delivery, at the time it was measured.
@@ -952,11 +956,11 @@ class RecorderService : Service() {
      */
     private fun writeAltitudes(points: List<SampleDataPoint<Double>>) {
         val w = writer ?: return
-        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+        for (point in points.inTimeOrder()) {
             val metres = point.value
-                .takeIf { it.isFinite() && it in MIN_ALTITUDE_M..MAX_ALTITUDE_M }
+                .takeIf { it.isFinite() && it in Tuning.MIN_ALTITUDE_M..Tuning.MAX_ALTITUDE_M }
                 ?: continue
-            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+            val tOffsetMs = offsetOf(point)
             if (tOffsetMs < 0 || tOffsetMs <= lastAltitudeAtMs) continue
             w.writeAltitude(Reading(tOffsetMs = tOffsetMs, value = metres))
             lastAltitudeAtMs = tOffsetMs
@@ -974,9 +978,9 @@ class RecorderService : Service() {
      */
     private fun writeSpeeds(points: List<SampleDataPoint<Double>>) {
         val w = writer ?: return
-        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+        for (point in points.inTimeOrder()) {
             val mps = point.value.takeIf { it.isFinite() && it >= 0.0 } ?: continue
-            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+            val tOffsetMs = offsetOf(point)
             if (tOffsetMs < 0 || tOffsetMs <= lastSpeedReadingAtMs) continue
             w.writeSpeed(Reading(tOffsetMs = tOffsetMs, value = mps))
             lastSpeedReadingAtMs = tOffsetMs
@@ -995,10 +999,10 @@ class RecorderService : Service() {
     private fun writeRates(points: List<SampleDataPoint<Double>>) {
         val w = writer ?: return
         var wrote = false
-        for (point in points.sortedBy { it.timeDurationFromBoot.toMillis() }) {
+        for (point in points.inTimeOrder()) {
             if (!usableRate(point)) continue
             val bpm = point.value.toInt()
-            val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+            val tOffsetMs = offsetOf(point)
             if (tOffsetMs < 0 || tOffsetMs <= lastRateAtMs) continue
             w.writeRate(HeartRate(tOffsetMs = tOffsetMs, bpm = bpm))
             lastRateAtMs = tOffsetMs
@@ -1021,9 +1025,8 @@ class RecorderService : Service() {
     ): Sample? {
         val d = point.value
         if (!d.latitude.isFinite() || !d.longitude.isFinite()) return null
-        val tOffsetMs = offsetOf(point.timeDurationFromBoot.toMillis())
+        val tOffsetMs = offsetOf(point)
         if (tOffsetMs < 0) return null
-        sawFirstLocation = true
         return Sample(
             tOffsetMs = tOffsetMs,
             // The platform's own answer for this exact position, not ours for the
@@ -1036,8 +1039,8 @@ class RecorderService : Service() {
             // pause totals *as they stood now*, so every position in a batch got
             // the same answer and a batch delivered after a pause got the wrong
             // one — the failure that once counted a wait at a level crossing as
-            // active time. [activeAt] remains for the replay path, which has no
-            // ExerciseUpdate to ask.
+            // active time. [activeAt] is the fallback for a point Health
+            // Services cannot place.
             activeMs = runCatching { update.getActiveDurationAtDataPoint(point).toMillis() }
                 .getOrNull()
                 ?.coerceAtLeast(0L)
@@ -1202,14 +1205,15 @@ class RecorderService : Service() {
     override fun onDestroy() {
         // A destroyed service must never take an in-progress recording with it:
         // the file is synced and closed, and whatever was written survives.
-        writer?.sync()
         writer?.close()
         scope.launch { source.clearCallback() }
         scope.cancel()
         super.onDestroy()
     }
 
-    /** Filled in by the build; kept out of BuildConfig so :core stays Android-free. */
+    /** Written into every session header. Hard-coded, not generated: this
+     *  module builds no BuildConfig, so keep it in step with `versionName` in
+     *  `wear/build.gradle.kts` by hand. */
     object BuildInfo {
         const val VERSION = "1.0"
     }
@@ -1217,16 +1221,6 @@ class RecorderService : Service() {
     companion object {
         private const val TAG = "RecorderService"
 
-        /** Dead Sea shore to well above Everest. Anything outside is a sentinel
-         *  or a broken fix, not a place this watch has been. */
-        private const val MIN_ALTITUDE_M = -1_000.0
-        private const val MAX_ALTITUDE_M = 10_000.0
-
-        /** How many barometer readings to keep for joining to positions.
-         *  Ten minutes at the roughly one a second both series run at — far more
-         *  than any one delivery carries, and a few kilobytes if nothing ever
-         *  consumes them. */
-        private const val ALTITUDE_TRAIL_MAX = 600
         private const val NOTIFICATION_INTERVAL_MS = 5_000L
 
         /**
@@ -1246,7 +1240,6 @@ class RecorderService : Service() {
         const val ACTION_PAUSE = "de.hecate.wear.PAUSE"
         const val ACTION_RESUME = "de.hecate.wear.RESUME"
         const val ACTION_STOP = "de.hecate.wear.STOP"
-        const val ACTION_UPLOAD = "de.hecate.wear.UPLOAD"
         const val EXTRA_TYPE = "type"
 
         fun start(context: Context, type: ExerciseType) = context.startForegroundService(

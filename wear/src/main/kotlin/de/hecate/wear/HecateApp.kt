@@ -9,8 +9,8 @@ import de.hecate.wear.recorder.RecorderBus
 import de.hecate.wear.transfer.Uploader
 
 /**
- * §4: no dependency injection framework. Fifteen objects wired by hand in one
- * place is less machinery than a DI graph, and the wiring is readable.
+ * §4: no dependency injection framework. A handful of objects wired by hand in
+ * one place is less machinery than a DI graph, and the wiring is readable.
  *
  * Lint sees a singleton holding objects that hold a Context and calls it a leak.
  * What [init] stores is `context.applicationContext`, whose lifetime is the

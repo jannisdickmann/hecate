@@ -34,6 +34,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import de.hecate.core.Tuning
 import de.hecate.core.display.HeadingUp
+import de.hecate.core.display.RouteBeliefKind
 import de.hecate.core.geo.LatLon
 import de.hecate.wear.recorder.RecorderUiState
 
@@ -81,7 +82,7 @@ internal fun MapPage(state: RecorderUiState) {
         state.followedRoute.assumed -> RouteTone.Likely.copy(alpha = 0.45f)
         // Translucent, so the user's own line stays readable where it runs
         // on top of the route — which is, after all, where it should be.
-        state.belief.kind == de.hecate.core.display.RouteBeliefKind.ASSUMED -> RouteTone.Assumed.copy(alpha = 0.6f)
+        state.belief.kind == RouteBeliefKind.ASSUMED -> RouteTone.Assumed.copy(alpha = 0.6f)
         else -> RouteTone.Confirmed.copy(alpha = 0.6f)
     }
     val trailColor = Color.White.copy(alpha = if (state.positionStale) 0.45f else 0.95f)

@@ -10,8 +10,8 @@ import java.io.File
  * Caches the latest route bundle received from the phone.
  *
  * Read-only from the watch's point of view (§5.1). If there is no bundle — first
- * install, or the phone has never had enough history — the matcher simply reports
- * "Unbekannt", which is the honest answer and not an error state.
+ * install, or the phone has never had enough history — the watch simply says
+ * "Noch keine Routen", which is the honest answer and not an error state.
  */
 class BundleStore(context: Context) {
 
@@ -46,8 +46,6 @@ class BundleStore(context: Context) {
         load()
         Log.i(TAG, "Neues Routen-Bundle gespeichert: Version ${cached?.version}")
     }
-
-    val version: Long get() = load().version
 
     private companion object {
         const val TAG = "BundleStore"

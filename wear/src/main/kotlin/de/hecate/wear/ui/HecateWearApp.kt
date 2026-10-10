@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
@@ -72,6 +73,7 @@ import de.hecate.core.display.recordingHealth
 import de.hecate.core.model.ExerciseType
 import de.hecate.core.model.RouteBundle
 import de.hecate.wear.AppGraph
+import de.hecate.wear.R
 import de.hecate.wear.recorder.RecorderPhase
 import de.hecate.wear.recorder.RecorderService
 import de.hecate.wear.recorder.RecorderUiState
@@ -79,17 +81,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * The whole watch UI (§5.3): a start screen until something is recording, then
- * two pager pages — Live and Control.
+ * three pager pages — Map, Live and Control — opening on Live.
  *
- * **Two pages, not three.** The original Live/Route split meant swiping mid-ride
- * to answer "how am I doing", which is exactly the question you cannot take a
- * hand off the bars to ask. Everything worth knowing while moving is now on one
- * dense page; the page you must swipe to reach holds only pause and stop, where
- * the swipe is the point — it is what stops you from ending a session with a
- * sleeve.
+ * **One page of numbers, not two.** The original Live/Route split meant swiping
+ * mid-ride to answer "how am I doing", which is exactly the question you cannot
+ * take a hand off the bars to ask. Everything worth knowing while moving is now
+ * on one dense page; the map either side of it is a picture of the same answer,
+ * not more of it. The page you must swipe to reach for the controls holds only
+ * pause and stop, where the swipe is the point — it is what stops you from
+ * ending a session with a sleeve.
  *
  * **Two channels, not one.** Everything on the live page belongs to exactly one
  * of two questions, and they never share a slot, a word or a colour:
@@ -131,20 +136,20 @@ private fun StartScreen(state: RecorderUiState) {
     // arrives while this screen is up.
     //
     // It is the source of both things below: the order of the buttons, and the
-    // version in the footer. The footer used to read the version out of the
+    // routes in the footer. The footer used to read the bundle out of the
     // recorder state instead, which only ever learns it when a bundle *arrives*
     // — so every start after the app had been closed said "Keine Routen" over a
     // watch that was holding a perfectly good bundle and matching against it.
     val bundle by produceState<RouteBundle?>(null, state.bundleVersion) {
         value = withContext(Dispatchers.IO) { AppGraph.bundles.load() }
     }
-    val types = bundle?.typesByFrequency() ?: ExerciseType.entries.toList()
+    val types = bundle?.typesByFrequency() ?: ExerciseType.entries
     // The clock the footer's "vor 45 Min." is read against, ticking once a
     // minute: read once at composition, it froze at whatever it said when the
     // screen came up, and the start screen can stay up a long time.
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
-            kotlinx.coroutines.delay(60_000L)
+            delay(60_000L)
             value = System.currentTimeMillis()
         }
     }
@@ -155,8 +160,7 @@ private fun StartScreen(state: RecorderUiState) {
             modifier = Modifier.fillMaxSize(),
         ) {
             item { ListHeader { Text("Hecate") } }
-            items(types.size) { i ->
-                val type = types[i]
+            items(types) { type ->
                 Button(
                     onClick = { RecorderService.start(context, type) },
                     label = { Text(type.label) },
@@ -230,11 +234,11 @@ private fun StartScreen(state: RecorderUiState) {
 @get:DrawableRes
 private val ExerciseType.iconRes: Int
     get() = when (this) {
-        ExerciseType.RUNNING -> de.hecate.wear.R.drawable.ic_run
-        ExerciseType.WALKING -> de.hecate.wear.R.drawable.ic_walk
-        ExerciseType.HIKING -> de.hecate.wear.R.drawable.ic_hike
-        ExerciseType.BIKING -> de.hecate.wear.R.drawable.ic_bike
-        ExerciseType.SKIING -> de.hecate.wear.R.drawable.ic_ski
+        ExerciseType.RUNNING -> R.drawable.ic_run
+        ExerciseType.WALKING -> R.drawable.ic_walk
+        ExerciseType.HIKING -> R.drawable.ic_hike
+        ExerciseType.BIKING -> R.drawable.ic_bike
+        ExerciseType.SKIING -> R.drawable.ic_ski
     }
 
 // --------------------------------------------------------------------- pager
@@ -283,7 +287,6 @@ private const val PAGE_LIVE = 1
  * on both faces, and a size on it is a change this file can reason about.
  */
 internal data class LiveLayout(
-    val large: Boolean,
     val arcStroke: Dp,
     val arcInset: Dp,
     val contentPadding: Dp,
@@ -302,7 +305,6 @@ internal fun rememberLiveLayout(): LiveLayout {
     val large = LocalConfiguration.current.screenWidthDp >= LARGE_SCREEN_DP
     val numeral = MaterialTheme.typography.numeralSmall
     return LiveLayout(
-        large = large,
         arcStroke = if (large) 6.dp else 5.dp,
         arcInset = if (large) 4.dp else 3.dp,
         // The bars cost no vertical space — they are drawn behind the column —
@@ -691,6 +693,8 @@ internal fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
         val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
         val arcSize = Size(diameter, diameter)
         val stroke = Stroke(width = strokePx, cap = StrokeCap.Round)
+        val radius = diameter / 2f
+        val centre = Offset(size.width / 2f, size.height / 2f)
 
         fun arc(colour: Color, start: Float, sweep: Float) {
             if (abs(sweep) < MIN_VISIBLE_SWEEP) return
@@ -715,16 +719,14 @@ internal fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
         // pointing further along the track, in the bar's own colour. Only once
         // the animation has arrived, so it never floats ahead of a moving bar.
         if (deltaOverflow != 0 && abs(shownDelta) > OVERFLOW_ARROW_FROM) {
-            val radius = diameter / 2f
-            val centre = Offset(size.width / 2f, size.height / 2f)
             // Ahead runs anticlockwise (negative degrees), behind clockwise.
             val sign = if (deltaOverflow > 0) -1f else 1f
             val rad = (Math.PI / 180.0).toFloat()
             val baseDeg = HALF_SWEEP + (strokePx * 0.9f / radius) / rad
             val tipDeg = baseDeg + (strokePx * 1.6f / radius) / rad
             fun at(deg: Float, r: Float) = Offset(
-                centre.x + r * kotlin.math.cos(sign * deg * rad),
-                centre.y + r * kotlin.math.sin(sign * deg * rad),
+                centre.x + r * cos(sign * deg * rad),
+                centre.y + r * sin(sign * deg * rad),
             )
             val halfWidth = strokePx * 0.95f
             val path = Path().apply {
@@ -741,13 +743,10 @@ internal fun EdgeBars(state: RecorderUiState, layout: LiveLayout) {
 
         // The median, ticked across the right-hand track so that a bar sitting
         // near zero is readably near zero rather than merely short.
-        val radius = diameter / 2f
-        val centreY = size.height / 2f
-        val centreX = size.width / 2f
         drawLine(
             color = trackColour,
-            start = Offset(centreX + radius - strokePx, centreY),
-            end = Offset(centreX + radius + strokePx, centreY),
+            start = Offset(centre.x + radius - strokePx, centre.y),
+            end = Offset(centre.x + radius + strokePx, centre.y),
             strokeWidth = 1.dp.toPx(),
         )
     }

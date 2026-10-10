@@ -37,13 +37,13 @@ class MatcherHost(
 
     private var failures = 0
 
-    var disabled: Boolean = matcher == null
-        private set
+    /** True once the matcher is gone: never built, or switched off after
+     *  too many failures. Both leave [matcher] null, so that is the test. */
+    val disabled: Boolean get() = matcher == null
 
     /** Returns the new belief, or null when the matcher is unavailable. */
     fun update(sample: Sample): MatchState? {
         val m = matcher ?: return null
-        if (disabled) return null
         return try {
             m.update(sample).also { failures = 0 }
         } catch (t: Throwable) {
@@ -51,7 +51,6 @@ class MatcherHost(
             Log.e(TAG, "Matcher-Fehler #$failures", t)
             if (failures >= Tuning.MATCHER_FAILURE_LIMIT) {
                 Log.e(TAG, "Matcher wird für diese Aufzeichnung deaktiviert")
-                disabled = true
                 matcher = null
             }
             null

@@ -10,6 +10,23 @@ import androidx.core.content.ContextCompat
 import de.hecate.wear.AppGraph
 
 /**
+ * Heart rate, on Wear OS 6 and anything else targeting SDK 36.
+ *
+ * `BODY_SENSORS` used to be this, and asking for it here is what broke a
+ * whole run. For an app targeting 36 the platform no longer tracks
+ * `BODY_SENSORS` as a runtime permission at all — `dumpsys package` does
+ * not list it among the app's runtime permissions, and requesting it is a
+ * silent no-op that leaves the appop at `ignore`. The grant the platform
+ * actually wants is this one, declared by the Health Connect controller.
+ *
+ * A string rather than a constant because `android.Manifest.permission`
+ * has no entry for it; `androidx.health.connect` does, and `:wear` is not
+ * going to take that dependency for one name (NFR-8). Shared with
+ * [de.hecate.wear.recorder.ExerciseSource], which checks the same grant.
+ */
+internal const val READ_HEART_RATE = "android.permission.health.READ_HEART_RATE"
+
+/**
  * The only activity. Three pages in a pager, no navigation library (§4).
  *
  * Permissions are requested here rather than in the service: a foreground
@@ -43,22 +60,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        /**
-         * Heart rate, on Wear OS 6 and anything else targeting SDK 36.
-         *
-         * `BODY_SENSORS` used to be this, and asking for it here is what broke a
-         * whole run. For an app targeting 36 the platform no longer tracks
-         * `BODY_SENSORS` as a runtime permission at all — `dumpsys package` does
-         * not list it among the app's runtime permissions, and requesting it is a
-         * silent no-op that leaves the appop at `ignore`. The grant the platform
-         * actually wants is this one, declared by the Health Connect controller.
-         *
-         * A string rather than a constant because `android.Manifest.permission`
-         * has no entry for it; `androidx.health.connect` does, and `:wear` is not
-         * going to take that dependency for one name (NFR-8).
-         */
-        const val READ_HEART_RATE = "android.permission.health.READ_HEART_RATE"
-
         // §6.4 lists these as manual grants; asking for them is still friendlier.
         //
         // Not here, and deliberately: ACCESS_BACKGROUND_LOCATION. The platform

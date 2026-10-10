@@ -20,7 +20,6 @@ androidxFragment = "1.9.0"
 composeBom = "2026.09.00"
 wearCompose = "1.6.2"
 wearOngoing = "1.1.0"
-wearToolingPreview = "1.0.0"
 healthServices = "1.1.0-rc02"
 # Health Services declares Guava at *runtime* scope only, so ListenableFuture — the
 # return type of every ExerciseClient.*Async method — is absent from the compile
@@ -31,9 +30,8 @@ healthServices = "1.1.0-rc02"
 # Check it after any healthServices bump: ./gradlew :wear:dependencyInsight
 #   --configuration debugRuntimeClasspath --dependency com.google.guava:guava
 guava = "32.0.1-android"
-# alpha12 is where the Metadata factories (activelyRecordedWithId etc.) arrive;
-# alpha11 had only the raw constructor. 1.1.0 stable exists with the same API —
-# see OPEN-POINTS.md §1.1 before taking it.
+# The Metadata factories (activelyRecordedWithId etc.) arrived in alpha12;
+# alpha11 had only the raw constructor. 1.1.0 stable carries the same API.
 healthConnect = "1.1.0"
 room = "2.8.5"
 work = "2.11.2"
@@ -42,7 +40,7 @@ playServicesWearable = "20.0.1"
 junit = "4.13.2"
 # :phone's test stack. Robolectric runs the Android framework on the JVM, which is
 # what makes Room, WorkManager and ContentResolver testable on a laptop instead of
-# only on the phone — see OPEN-POINTS.md §3.2.
+# only on the phone — see .agents/brain/issues/no-instrumented-tests.md (OP-3.2).
 robolectric = "4.17"
 androidxTest = "1.7.0"
 
@@ -54,7 +52,6 @@ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivityCompose" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidxLifecycle" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
-androidx-lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "androidxLifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
 androidx-concurrent-futures-ktx = { module = "androidx.concurrent:concurrent-futures-ktx", version.ref = "androidxConcurrentFutures" }
 androidx-fragment = { module = "androidx.fragment:fragment", version.ref = "androidxFragment" }
@@ -62,8 +59,6 @@ androidx-fragment = { module = "androidx.fragment:fragment", version.ref = "andr
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }
-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 # The ~40 icons of the core set, which is every icon this app needs. Deliberately
@@ -77,7 +72,6 @@ compose-material-icons-core = { module = "androidx.compose.material:material-ico
 wear-compose-material3 = { module = "androidx.wear.compose:compose-material3", version.ref = "wearCompose" }
 wear-compose-foundation = { module = "androidx.wear.compose:compose-foundation", version.ref = "wearCompose" }
 wear-ongoing = { module = "androidx.wear:wear-ongoing", version.ref = "wearOngoing" }
-wear-tooling-preview = { module = "androidx.wear:wear-tooling-preview", version.ref = "wearToolingPreview" }
 
 health-services-client = { module = "androidx.health:health-services-client", version.ref = "healthServices" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }

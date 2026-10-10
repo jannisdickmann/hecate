@@ -26,13 +26,11 @@ import java.io.IOException
  *
  * Not thread-safe by contract; the recorder feeds it from a single scope.
  */
-class SessionWriter(val file: File) {
+class SessionWriter(private val file: File) {
 
     private var out: FileOutputStream? = null
     private var lastSyncMs = 0L
     private var writeFailures = 0
-
-    val exists: Boolean get() = file.exists()
 
     fun open() {
         if (out != null) return

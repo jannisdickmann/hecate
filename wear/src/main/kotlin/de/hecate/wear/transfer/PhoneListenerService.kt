@@ -1,6 +1,7 @@
 package de.hecate.wear.transfer
 
 import android.util.Log
+import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -38,7 +39,7 @@ class PhoneListenerService : WearableListenerService() {
         val asset = map.getAsset(Wire.KEY_BUNDLE_ASSET) ?: return
         val version = map.getLong(Wire.KEY_BUNDLE_VERSION)
         val client = Wearable.getDataClient(this)
-        val bytes = com.google.android.gms.tasks.Tasks.await(client.getFdForAsset(asset))
+        val bytes = Tasks.await(client.getFdForAsset(asset))
             .inputStream.use { it.readBytes() }
         AppGraph.bundles.store(bytes)
         AppGraph.recorder.update { it.copy(bundleVersion = version) }

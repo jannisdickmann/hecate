@@ -1,8 +1,6 @@
 package de.hecate.wear.data
 
 import android.content.Context
-import de.hecate.core.io.SessionCodec
-import de.hecate.core.model.RecordedSession
 import java.io.File
 
 /**
@@ -22,7 +20,7 @@ class SessionStore(context: Context) {
     fun fileFor(sessionId: String): File = File(root, "session-$sessionId.jsonl")
 
     /** Every session file currently held, oldest first. */
-    fun all(): List<File> =
+    private fun all(): List<File> =
         root.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }
             ?.sortedBy { it.lastModified() }
             ?: emptyList()
@@ -33,7 +31,7 @@ class SessionStore(context: Context) {
     /** Sessions not yet acknowledged by the phone. */
     fun unacked(): List<File> = all().filterNot { isAcked(sessionIdOf(it)) }
 
-    fun isAcked(sessionId: String): Boolean = File(ackDir, sessionId).exists()
+    private fun isAcked(sessionId: String): Boolean = File(ackDir, sessionId).exists()
 
     /**
      * Record the phone's acknowledgement and drop the payload. The marker outlives
@@ -58,12 +56,6 @@ class SessionStore(context: Context) {
         File(ackDir, sessionId).writeText("")
         pruneMarkers()
     }
-
-    fun read(file: File): RecordedSession? =
-        runCatching { file.bufferedReader().useLines { SessionCodec.decodeSession(it) } }.getOrNull()
-
-    /** Anything left behind by a process that died mid-recording. */
-    fun hasPending(): Boolean = unacked().isNotEmpty()
 
     /** Ack markers are tiny, but they should not accumulate for ever. */
     private fun pruneMarkers() {

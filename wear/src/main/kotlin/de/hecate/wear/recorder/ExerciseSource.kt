@@ -1,5 +1,6 @@
 package de.hecate.wear.recorder
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
@@ -17,6 +18,7 @@ import androidx.health.services.client.data.ExerciseUpdate
 import androidx.health.services.client.data.WarmUpConfig
 import androidx.core.content.ContextCompat
 import de.hecate.core.model.ExerciseType
+import de.hecate.wear.ui.READ_HEART_RATE
 
 /**
  * The thin layer over Health Services (§4: the only way to get fused GPS, heart
@@ -87,7 +89,7 @@ class ExerciseSource(private val context: Context) {
                 // Services reject the config as a whole, which is exactly the
                 // failure this filter exists for.
                 DataType.LOCATION, DataType.SPEED ->
-                    granted(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    granted(Manifest.permission.ACCESS_FINE_LOCATION)
                 DataType.HEART_RATE_BPM -> granted(READ_HEART_RATE) || granted(BODY_SENSORS)
                 else -> true
             }
@@ -163,14 +165,14 @@ class ExerciseSource(private val context: Context) {
         // capabilities mean off, because a session without auto-pause is worth
         // having and a session that will not start is not.
         val autoPause = caps?.supportsAutoPauseAndResume ?: false
+        val asked = permitted(wantedDataTypes)
         val config = ExerciseConfig.builder(hs)
-            .setDataTypes(supported(permitted(wantedDataTypes), caps))
+            .setDataTypes(supported(asked, caps))
             .setIsAutoPauseAndResumeEnabled(autoPause)
             .setIsGpsEnabled(true)
             .build()
         // A.17's lesson again: say what was dropped and why, on the device, rather
         // than leaving a silently thinner recording to be discovered afterwards.
-        val asked = permitted(wantedDataTypes)
         val dropped = asked - config.dataTypes
         if (dropped.isNotEmpty()) Log.w(TAG, "$hs kann nicht: ${dropped.joinToString { it.name }}")
         if (!autoPause) Log.i(TAG, "$hs ohne Auto-Pause: von Health Services nicht unterstützt")
@@ -198,8 +200,6 @@ class ExerciseSource(private val context: Context) {
     private companion object {
         const val TAG = "ExerciseSource"
 
-        /** See `MainActivity.READ_HEART_RATE`. */
-        const val READ_HEART_RATE = "android.permission.health.READ_HEART_RATE"
         const val BODY_SENSORS = "android.permission.BODY_SENSORS"
 
         val NO_OP = object : ExerciseUpdateCallback {

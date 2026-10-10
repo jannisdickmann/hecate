@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import de.hecate.wear.AppGraph
 import java.io.File
 
 /**
@@ -37,8 +38,8 @@ class ReplayReceiver : BroadcastReceiver() {
             // The phone's acknowledgement, for emulators that have no paired
             // phone to send one: confirms the session the end-of-recording
             // screen is waiting for, through the same path a real ack takes.
-            ACTION_FAKE_ACK -> de.hecate.wear.AppGraph.recorder.state.value.handoff?.let {
-                de.hecate.wear.AppGraph.uploader.onAck(it.sessionId)
+            ACTION_FAKE_ACK -> AppGraph.recorder.state.value.handoff?.let {
+                AppGraph.uploader.onAck(it.sessionId)
             }
             else -> Log.w(TAG, "Unbekannte Aktion: ${intent.action}")
         }

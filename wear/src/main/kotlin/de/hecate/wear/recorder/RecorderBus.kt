@@ -90,7 +90,6 @@ data class RecorderUiState(
      *  NO_GNSS) since it was last acquired. Unlike `!gpsReady`, never set merely
      *  because nothing has been reported, e.g. while paused. */
     val gpsSignalLost: Boolean = false,
-    val heartRateAvailable: Boolean = false,
     val locationPermission: Boolean = true,
     /** Wall clock of the last sample that was good enough to use, and of the
      *  last write to the session file. Zero means "not yet in this session".
@@ -140,7 +139,6 @@ data class Handoff(
     val sessionId: String,
     val startedAtMs: Long,
     val confirmed: Boolean = false,
-    val confirmedAtMs: Long = 0,
     val dismissed: Boolean = false,
 )
 

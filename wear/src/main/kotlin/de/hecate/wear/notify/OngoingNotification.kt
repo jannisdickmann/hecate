@@ -21,10 +21,10 @@ import de.hecate.wear.ui.MainActivity
  */
 object OngoingNotification {
 
-    const val CHANNEL_ID = "hecate.recording"
+    private const val CHANNEL_ID = "hecate.recording"
     const val NOTIFICATION_ID = 1001
 
-    fun ensureChannel(context: Context) {
+    private fun ensureChannel(context: Context) {
         val mgr = context.getSystemService(NotificationManager::class.java) ?: return
         if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
         mgr.createNotificationChannel(
@@ -65,7 +65,6 @@ object OngoingNotification {
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_WORKOUT)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
 
         OngoingActivity.Builder(context, NOTIFICATION_ID, builder)
             .setTouchIntent(open)
