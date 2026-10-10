@@ -1,5 +1,7 @@
 package de.hecate.phone.ui
 
+import de.hecate.core.display.Units
+import de.hecate.core.geo.Geo
 import de.hecate.core.model.SessionSource
 import java.util.Calendar
 import java.util.Locale
@@ -11,18 +13,11 @@ object Format {
 
     private val DE = Locale.GERMANY
 
-    fun distance(meters: Double): String =
-        if (meters >= 1000) String.format(DE, "%.2f km", meters / 1000.0)
-        else String.format(DE, "%d m", meters.roundToInt())
+    /** "4,20 km" or "840 m" — as the watch writes it. */
+    fun distance(meters: Double): String = Units.distance(meters)
 
-    fun duration(millis: Long): String {
-        val total = (millis / 1000).coerceAtLeast(0)
-        val h = total / 3600
-        val m = (total % 3600) / 60
-        val s = total % 60
-        return if (h > 0) String.format(DE, "%d:%02d:%02d", h, m, s)
-        else String.format(DE, "%d:%02d", m, s)
-    }
+    /** "23:11" or "1:04:22" — as the watch writes it. */
+    fun duration(millis: Long): String = Units.duration(millis)
 
     /** Speed as "10,8". Never pace: this app speaks km/h everywhere. The unit is
      *  left off so the number fits a narrow column; callers with room for it
@@ -39,7 +34,7 @@ object Format {
     /** km/h from a distance and the active time taken over it. */
     fun speedFrom(meters: Double, activeMs: Long): Double? {
         if (meters <= 0 || activeMs <= 0) return null
-        return (meters / 1000.0) / (activeMs / 3_600_000.0)
+        return Geo.kmh(meters, activeMs)
     }
 
     /** "14,8 MB" or "412 kB". Decimal units, as file managers show them. */
