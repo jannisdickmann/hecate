@@ -60,3 +60,10 @@ never routes ([A.15](decisions/2026-09-12-backfill-from-a-takeout.md)).
   ([A.31](decisions/2026-10-10-one-named-route-and-everything-read-off-it.md)).
 - **The heatmap is built in the same worker**, last, after the bundle is pushed
   ([A.14](decisions/2026-09-12-heatmap-drawn-around-the-routes-extent.md)).
+- **A detour is a new route.** A pair where either track leaves the other in one
+  interior stretch longer than `DETOUR_MAX_FRACTION` of its own length never
+  merges, whatever the coverage
+  ([A.32](decisions/2026-10-11-a-detour-is-a-new-route-and-temporary-routes.md)).
+- **Temporary routes.** A promoted recording forms a route on its own until a
+  real one forms around it; the worker then clears the promotion
+  ([A.32](decisions/2026-10-11-a-detour-is-a-new-route-and-temporary-routes.md)).

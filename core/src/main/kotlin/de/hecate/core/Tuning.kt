@@ -297,6 +297,18 @@ object Tuning {
      *  different start point or a lap around the block at the end. */
     const val CLUSTER_CUT: Double = 0.25
 
+    /** Longest single stretch of one track off the other, as a fraction of that
+     *  track's own length, before the pair counts as a route and a detour of it
+     *  and is never merged, whatever the coverage says. Only interior stretches
+     *  count: a different start or finish is what [CLUSTER_CUT]'s slack is for.
+     *
+     *  Set on the 2026-10-11 backup: a walk of "Abendrunde" with a 580 m
+     *  excursion is 0.17 off in one piece; the largest interior stretch between
+     *  two members of any named route is 0.11 ("Arbeit hin Kanal", two branches
+     *  of a 17 km commute). [CLUSTER_CUT] alone could not separate them — the
+     *  two merge at 0.157 and 0.151. */
+    const val DETOUR_MAX_FRACTION: Double = 0.15
+
     /** A cluster becomes an active route at this many members (US-3). */
     const val MIN_MEMBERS: Int = 3
 

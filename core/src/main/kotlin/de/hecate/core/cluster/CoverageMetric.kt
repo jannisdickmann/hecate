@@ -38,6 +38,39 @@ object CoverageMetric {
         return hits.toDouble() / a.size
     }
 
+    /**
+     * The longest stretch of [a] that leaves [b] and comes back to it, as a
+     * fraction of [a]'s points: the length of a detour, measured on the
+     * recording that took it.
+     *
+     * Only an *interior* stretch counts — one that starts after [a]'s first
+     * point and ends before its last. Off-route ground at either end is a
+     * different start or finish, which [Tuning.CLUSTER_CUT] is meant to forgive.
+     */
+    fun longestDetour(a: List<LatLon>, b: Polyline, tolM: Double = Tuning.CLUSTER_TOL_M): Double {
+        if (a.isEmpty() || b.size < 2) return 0.0
+        val idx = SegmentIndex(b, tolM)
+        var best = 0
+        var run = 0
+        var touchedRoute = false
+        for (p in a) {
+            if (idx.within(p, tolM)) {
+                if (touchedRoute && run > best) best = run
+                touchedRoute = true
+                run = 0
+            } else {
+                run++
+            }
+        }
+        return best.toDouble() / a.size
+    }
+
+    /** Whether either track leaves the other for longer than
+     *  [Tuning.DETOUR_MAX_FRACTION] of its own length before rejoining it. */
+    fun isDetour(a: Track, b: Track, tolM: Double = Tuning.CLUSTER_TOL_M): Boolean =
+        longestDetour(a.points, b.polyline, tolM) > Tuning.DETOUR_MAX_FRACTION ||
+            longestDetour(b.points, a.polyline, tolM) > Tuning.DETOUR_MAX_FRACTION
+
     /** The symmetric coverage of two tracks, in [0,1]. */
     fun coverage(a: Track, b: Track, tolM: Double = Tuning.CLUSTER_TOL_M): Double =
         minOf(fracWithin(a.points, b.polyline, tolM), fracWithin(b.points, a.polyline, tolM))
@@ -79,14 +112,22 @@ object CoverageMetric {
 
     /**
      * Clustering distance: `1 - coverage`, except that tracks of different
-     * exercise types or opposite directions are infinitely far apart and can
-     * never be merged.
+     * exercise types or opposite directions, and a track that is a detour of
+     * the other, are infinitely far apart and can never be merged.
+     *
+     * The detour test is not the coverage cut in other words. A route walked
+     * with one long excursion covers it entirely and is covered by it to
+     * 0.84 — closer than two recordings of a 17 km commute that take different
+     * branches for 2 km in the middle. Those are one route; the excursion is a
+     * new one, and what tells them apart is that the excursion is one stretch
+     * making up a large share of its own recording.
      */
     fun distance(a: Track, b: Track, tolM: Double = Tuning.CLUSTER_TOL_M): Double {
         if (a.exerciseType != b.exerciseType) return 1.0
         val cov = coverage(a, b, tolM)
         if (cov <= 0.0) return 1.0
         if (!sameDirection(a, b, tolM) || !sameDirection(b, a, tolM)) return 1.0
+        if (isDetour(a, b, tolM)) return 1.0
         return 1.0 - cov
     }
 

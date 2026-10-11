@@ -119,6 +119,9 @@ object Archive {
         val committedAtM: Double? = null,
         val avgHr: Double? = null,
         val ingestedAt: Long = 0,
+        /** Promoted to a temporary route. Added after the format was first
+         *  written, so it defaults to false, which older archives all mean. */
+        val temporaryRoute: Boolean = false,
     )
 
     /** A route row. [name] and [priority] are the reason this file exists: they
@@ -136,6 +139,8 @@ object Archive {
         val createdAt: Long,
         val active: Boolean,
         val priority: Int,
+        /** Built from one promoted recording; defaults like [Session.temporaryRoute]. */
+        val temporary: Boolean = false,
     )
 
     @Serializable

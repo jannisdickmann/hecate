@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Which route a recording is filed under is the clusterer's answer, not the
@@ -72,5 +73,21 @@ class MatchOwnershipTest {
         assertEquals(commute, db.sessions().byId("member")?.matchedRouteId)
         assertNull(db.sessions().byId("watch-said-so")?.matchedRouteId, "the watch's commit outlived the clusterer")
         assertNull(db.sessions().byId("retired-member")?.matchedRouteId, "a retired route's old member list counted")
+    }
+
+    @Test
+    fun `the clusterer keeps the promotions it was given back and clears the rest`(): Unit = runBlocking {
+        val walk = db.routes().insert(route("Abendrunde", active = true))
+        for (id in listOf("seed", "overtaken", "plain")) db.sessions().insert(session(id, walk))
+        db.sessions().setTemporaryRoute("seed", true)
+        db.sessions().setTemporaryRoute("overtaken", true)
+        assertEquals(setOf("seed", "overtaken"), db.sessions().temporaryRouteSeeds().toSet())
+
+        db.sessions().keepTemporaryRouteSeeds(listOf("seed"))
+        assertEquals(listOf("seed"), db.sessions().temporaryRouteSeeds())
+
+        // Nothing left standing clears every promotion.
+        db.sessions().keepTemporaryRouteSeeds(emptyList())
+        assertTrue(db.sessions().temporaryRouteSeeds().isEmpty())
     }
 }

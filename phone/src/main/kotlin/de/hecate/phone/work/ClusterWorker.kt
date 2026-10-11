@@ -105,8 +105,18 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         if (tracks.isEmpty()) return
 
         val trackById = tracks.associateBy { it.sessionId }
-        val computed = BundleBuilder.computeRoutes(tracks, hrBySession)
-        Log.i(TAG, "${tracks.size} Sitzungen -> ${computed.size} aktive Routen")
+        val seeds = sessions.filter { it.temporaryRoute }.map { it.id }.toSet()
+        val computed = BundleBuilder.computeRoutes(tracks, hrBySession, temporarySeeds = seeds)
+        // The promotions that still stand. Any other has been overtaken — by a
+        // real route formed around it, by an earlier promoted recording it
+        // matches — and is cleared below, so that the next recording that
+        // matches it is a member and never a second temporary route.
+        val keptSeeds = computed.filter { it.temporary }.map { it.medoidSessionId }
+        Log.i(
+            TAG,
+            "${tracks.size} Sitzungen -> ${computed.size} aktive Routen, davon ${keptSeeds.size} vorläufig" +
+                if (seeds.size > keptSeeds.size) " (${seeds.size - keptSeeds.size} Vormerkungen aufgehoben)" else "",
+        )
 
         val existing = routeDao.all()
         val existingMembers = routeDao.allMembers().groupBy({ it.routeId }, { it.sessionId })
@@ -150,6 +160,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                     // Like the name, the user's ranking is theirs and survives
                     // every re-clustering pass.
                     priority = prior?.priority ?: Tuning.DEFAULT_ROUTE_PRIORITY,
+                    temporary = cluster.temporary,
                 )
                 val routeId = if (existingId != null) {
                     routeDao.upsert(row)
@@ -194,6 +205,7 @@ class ClusterWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             // Last, once every member has been written: what is left over
             // belongs to no route, whatever the watch committed to on the way.
             sessionDao.clearMatchesOfNonMembers()
+            sessionDao.keepTemporaryRouteSeeds(keptSeeds)
         }
 
         publishBundle()

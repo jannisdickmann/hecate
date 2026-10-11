@@ -23,10 +23,12 @@ data class SessionSummary(
     val matchedRouteId: Long?,
     val routeName: String?,
     val avgHr: Double?,
+    /** Whether [routeName] is a temporary route. */
+    val routeTemporary: Boolean = false,
 )
 
 /** This session as a list row, under [routeName]. */
-fun SessionEntity.toSummary(routeName: String?) = SessionSummary(
+fun SessionEntity.toSummary(routeName: String?, routeTemporary: Boolean = false) = SessionSummary(
     id = id,
     startedAtUtc = startedAtUtc,
     tzOffsetMinutes = tzOffsetMinutes,
@@ -38,6 +40,7 @@ fun SessionEntity.toSummary(routeName: String?) = SessionSummary(
     matchedRouteId = matchedRouteId,
     routeName = routeName,
     avgHr = avgHr,
+    routeTemporary = routeTemporary,
 )
 
 /**
@@ -49,7 +52,8 @@ private const val SESSION_SUMMARY_COLUMNS = """
     s.id, s.started_at_utc AS startedAtUtc, s.tz_offset AS tzOffsetMinutes,
     s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
     s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
-    s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr
+    s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr,
+    COALESCE(r.temporary, 0) AS routeTemporary
 """
 
 /** A row of the routes list (US-8). */
@@ -62,6 +66,7 @@ data class RouteSummary(
     val medianDurationMs: Long?,
     val bestDurationMs: Long?,
     val priority: Int,
+    val temporary: Boolean,
 )
 
 @Dao
@@ -170,6 +175,18 @@ interface SessionDao {
      * is a fact about the recording, and an entity write would let a stale copy
      * held by a screen quietly put the rest of them back.
      */
+    /** Promote a recording to a temporary route, or withdraw that. */
+    @Query("UPDATE session SET temporary_route = :temporary WHERE id = :id")
+    suspend fun setTemporaryRoute(id: String, temporary: Boolean)
+
+    @Query("SELECT id FROM session WHERE temporary_route")
+    suspend fun temporaryRouteSeeds(): List<String>
+
+    /** Keep the promotion on [ids] and clear it everywhere else: what the
+     *  clusterer does once it knows which seeds still form a temporary route. */
+    @Query("UPDATE session SET temporary_route = (id IN (:ids))")
+    suspend fun keepTemporaryRouteSeeds(ids: List<String>)
+
     @Query("UPDATE session SET exercise_type = :type WHERE id = :id")
     suspend fun setExerciseType(id: String, type: ExerciseType)
 
@@ -255,7 +272,7 @@ interface RouteDao {
               FROM route_member m JOIN session s ON s.id = m.session_id
         )
         SELECT r.id, r.name, r.exercise_type AS exerciseType, r.length_m AS lengthM,
-               r.member_count AS memberCount, r.priority,
+               r.member_count AS memberCount, r.priority, r.temporary,
                (SELECT CAST(AVG(d.duration_ms) AS INTEGER)
                   FROM member_duration d
                  WHERE d.route_id = r.id AND d.rn IN ((d.n + 1) / 2, (d.n + 2) / 2)

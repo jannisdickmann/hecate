@@ -113,6 +113,9 @@ data class RouteDetail(
     val bestDurationMs: Long?,
     val worstDurationMs: Long?,
     val priority: Int,
+    /** A temporary route, built from the one recording [seedSessionId]. */
+    val temporary: Boolean = false,
+    val seedSessionId: String? = null,
     /** The route's own elevation profile, thinned for drawing, and the numbers
      *  read off the full one. Empty and null when no member recorded altitude,
      *  or when the route has not been clustered since schema v6. */
@@ -137,6 +140,10 @@ data class SessionDetail(
      *  drawing can be coloured by effort. */
     val geometry: List<TrackPoint>,
     val routeName: String?,
+    val routeTemporary: Boolean = false,
+    /** The user promoted this recording to a temporary route, and it still is
+     *  one — or will be, once the clustering that was started finishes. */
+    val temporaryRouteSeed: Boolean = false,
     val coverage: Double?,
     val committedAtM: Double?,
     val hcState: Int,
@@ -713,6 +720,39 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         _status.value = "Art: ${type.label} — Routen werden neu berechnet"
     }
 
+    /**
+     * Promote a recording that belongs to no route to a temporary route, or
+     * withdraw that.
+     *
+     * A temporary route is matched like any other, on the watch and by the
+     * clusterer, until the history has [Tuning.MIN_MEMBERS] recordings that
+     * belong together; then it is an ordinary route and the promotion is
+     * cleared by the clusterer (`BundleBuilder.computeRoutes`). Only a recording
+     * outside every route can be promoted: one inside a route — temporary or
+     * not — already has one.
+     */
+    fun setTemporaryRoute(id: String, temporary: Boolean) = viewModelScope.launch {
+        val dao = db.sessions()
+        val session = dao.byId(id) ?: return@launch
+        if (temporary && session.matchedRouteId != null) return@launch
+        dao.setTemporaryRoute(id, temporary)
+        loadSession(id)
+        Jobs.enqueueClustering(getApplication())
+        _status.value =
+            if (temporary) "Vorläufige Route wird angelegt"
+            else "Vorläufige Route wird aufgehoben"
+    }
+
+    /** Re-read the detail screen in front, after a re-clustering has changed
+     *  which route its recording belongs to or what its route is. */
+    fun reloadDetail() {
+        when (val screen = _screen.value) {
+            is Screen.RouteDetail -> loadRoute(screen.id)
+            is Screen.SessionDetail -> loadSession(screen.id)
+            else -> Unit
+        }
+    }
+
     fun deleteSession(id: String) = viewModelScope.launch {
         db.sessions().delete(id)
         // Its detail screen is now a screen about nothing, so it must not be
@@ -755,6 +795,8 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
             lengthM = route.lengthM,
             memberCount = route.memberCount,
             priority = route.priority,
+            temporary = route.temporary,
+            seedSessionId = route.medoidSessionId.takeIf { route.temporary },
             // The route's heart rate is the per-bin median over its members, and
             // a route point's distance along the route is what says which bin it
             // is in — the geometry is resampled at exactly the profile's bin
@@ -841,9 +883,11 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val chartedHeartRate = Timeline.simplify(Timeline.heartRateOfSamples(charted), CHART_POINTS)
 
         _sessionDetail.value = SessionDetail(
-            summary = entity.toSummary(route?.name),
+            summary = entity.toSummary(route?.name, route?.temporary ?: false),
             geometry = moving.mapIndexed { i, it -> TrackPoint(LatLon(it.lat, it.lon), hrAt(i)) },
             routeName = route?.name,
+            routeTemporary = route?.temporary ?: false,
+            temporaryRouteSeed = entity.temporaryRoute,
             coverage = entity.matchCoverage,
             committedAtM = entity.committedAtM,
             hcState = entity.hcWriteState,

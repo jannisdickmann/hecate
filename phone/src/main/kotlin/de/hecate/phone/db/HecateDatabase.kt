@@ -28,7 +28,7 @@ import java.time.ZoneId
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -241,9 +241,21 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9: temporary routes. A recording the user promoted, and the route
+         * built from it. Both default to "no", which is what every row written
+         * before the feature existed is.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE session ADD COLUMN temporary_route INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE route ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         val MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7, MIGRATION_7_8,
+            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
         )
 
         @Volatile

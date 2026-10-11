@@ -189,6 +189,15 @@ object Synthetic {
         listOf(at(0.0, 0.0), at(1000.0, 0.0), at(1000.0, 1500.0), at(3000.0, 1500.0)),
     )
 
+    /** The work route with an excursion of [northM] up and back down a side
+     *  street 1 km in, rejoining it 200 m further on. */
+    fun detour(northM: Double): List<LatLon> = path(
+        listOf(
+            at(0.0, 0.0), at(1000.0, 0.0), at(1000.0, northM), at(1200.0, northM),
+            at(1200.0, 0.0), at(2000.0, 0.0), at(2000.0, 1500.0), at(3000.0, 1500.0),
+        ),
+    )
+
     /** The work route walked backwards. */
     val reverseRoute: List<LatLon> = workRoute.asReversed()
 

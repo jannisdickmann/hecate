@@ -36,6 +36,10 @@ object BundleBuilder {
         val medianHr: List<Double?>,
         val medianAltM: List<Double?>,
         val prior: RoutePrior,
+        /** A route the user asked for before the history had one: see
+         *  [computeRoutes]'s `temporarySeeds`. Its geometry and profile are its
+         *  seed's alone, and [medoidSessionId] is that seed. */
+        val temporary: Boolean = false,
     )
 
     /**
@@ -44,18 +48,38 @@ object BundleBuilder {
      * Route ids are *not* assigned here: identity across re-clustering is the
      * phone's business (it has to preserve user-given names), so this returns
      * clusters in a deterministic order and the caller maps them onto rows.
+     *
+     * [temporarySeeds] are recordings the user promoted to a temporary route
+     * before the history had enough of them to form one. A cluster too small to
+     * be a route that holds a seed becomes one anyway, flagged [ComputedRoute.temporary]:
+     * every member is filed under it, but its geometry and profile are the
+     * earliest seed's alone — that recording *is* the route, the others merely
+     * match it — so a cluster never yields two temporary routes. A seed in a
+     * cluster big enough to be a route is simply a member of that route: the
+     * history has caught up and the promotion has nothing left to do. Which
+     * seeds still stand is therefore exactly the medoids of the temporary
+     * routes returned, and the phone keeps no other.
      */
     fun computeRoutes(
         tracks: List<Track>,
         hrBySession: Map<String, List<Sample>> = emptyMap(),
         minMembers: Int = Tuning.MIN_MEMBERS,
+        temporarySeeds: Set<String> = emptySet(),
     ): List<ComputedRoute> {
         if (tracks.isEmpty()) return emptyList()
         val byId = tracks.associateBy { it.sessionId }
         val result = RouteClusterer.cluster(tracks, minMembers = minMembers)
 
-        return result.clusters.filter { it.active }.mapNotNull { cluster ->
-            val medoid = byId[cluster.medoidSessionId] ?: return@mapNotNull null
+        return result.clusters.mapNotNull { cluster ->
+            // Members are in start-time order, so the first seed is the
+            // earliest recording the user promoted.
+            val seed = if (cluster.active) {
+                null
+            } else {
+                cluster.memberSessionIds.firstOrNull { it in temporarySeeds } ?: return@mapNotNull null
+            }
+            val medoidId = seed ?: cluster.medoidSessionId
+            val medoid = byId[medoidId] ?: return@mapNotNull null
             val members = cluster.memberSessionIds.mapNotNull { byId[it] }
             if (members.isEmpty()) return@mapNotNull null
 
@@ -65,13 +89,14 @@ object BundleBuilder {
             val profile = ProfileBuilder.build(
                 routeId = 0L,
                 geometry = geometry,
-                members = members,
+                members = if (seed != null) listOf(medoid) else members,
                 hrBySession = hrBySession,
             )
 
             ComputedRoute(
                 memberSessionIds = cluster.memberSessionIds,
-                medoidSessionId = cluster.medoidSessionId,
+                medoidSessionId = medoidId,
+                temporary = seed != null,
                 exerciseType = medoid.exerciseType,
                 geometry = toRoutePoints(geometry),
                 lengthM = geometry.lengthM,

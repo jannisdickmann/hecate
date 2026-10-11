@@ -91,6 +91,13 @@ class ArchiveRepositoryTest {
         assertTrue(routes.getValue(1).nameIsCustom)
         assertEquals("Feierabendrunde", routes.getValue(2).name)
         assertEquals(-2, routes.getValue(2).priority)
+
+        // A promotion is the user's, like a name: a re-clustering after the
+        // restore can only keep it if the archive carried it.
+        assertTrue(routes.getValue(2).temporary)
+        assertTrue(!routes.getValue(1).temporary)
+        assertTrue(target.sessions().byId("s-2")!!.temporaryRoute)
+        assertTrue(!target.sessions().byId("s-1")!!.temporaryRoute)
     }
 
     @Test
@@ -279,7 +286,10 @@ class ArchiveRepositoryTest {
         )
 
         db.routes().upsert(Fixtures.route(1, "Zur Arbeit", priority = 2, medoidSessionId = "s-1"))
-        db.routes().upsert(Fixtures.route(2, "Feierabendrunde", priority = -2, medoidSessionId = "s-2"))
+        db.routes().upsert(
+            Fixtures.route(2, "Feierabendrunde", priority = -2, medoidSessionId = "s-2").copy(temporary = true),
+        )
+        db.sessions().setTemporaryRoute("s-2", true)
         db.routes().insertMembers(
             listOf(RouteMemberEntity(1, "s-1"), RouteMemberEntity(1, "s-3"), RouteMemberEntity(2, "s-2")),
         )

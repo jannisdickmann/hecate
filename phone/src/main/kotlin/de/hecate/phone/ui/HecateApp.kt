@@ -2,6 +2,7 @@ package de.hecate.phone.ui
 
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.activity.compose.BackHandler
@@ -419,7 +420,7 @@ private fun RecordingRow(s: SessionSummary, standout: Standout, onClick: () -> U
                 }
                 // A matched route is the whole point of the app, so it gets a
                 // filled pill rather than another line of grey text.
-                s.routeName?.let { RoutePill(it) }
+                s.routeName?.let { RoutePill(it, s.routeTemporary) }
                     ?: Quiet(if (s.source.isImport) "importiert" else "keine Route")
             }
         }
@@ -486,11 +487,31 @@ private fun Quiet(text: String) {
  * Shortened to [Format.MAX_ROUTE_NAME_CHARS]: the pill is as wide as what is in
  * it, and a route carrying a long name pushed the figures beside it off the row.
  */
+/**
+ * Re-read the detail screen once a re-clustering it may have been waiting for
+ * finishes: promoting a recording, withdrawing it, or correcting its sport all
+ * change what route it belongs to, and the screen that asked should say so
+ * without being left and re-entered.
+ */
 @Composable
-private fun RoutePill(name: String) {
+private fun ReloadAfterClustering(vm: HecateViewModel) {
+    val clustering by vm.clustering.collectAsStateWithLifecycle()
+    var was by remember { mutableStateOf(clustering) }
+    LaunchedEffect(clustering) {
+        if (was && !clustering) vm.reloadDetail()
+        was = clustering
+    }
+}
+
+@Composable
+private fun RoutePill(name: String, temporary: Boolean) {
+    // A temporary route only outlined, so that a list of recordings does not
+    // present one promoted walk as an established route. A second fill colour
+    // was tried first and is indistinguishable from the first in this theme.
     Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        color = if (temporary) Color.Transparent else MaterialTheme.colorScheme.primaryContainer,
+        contentColor = if (temporary) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimaryContainer,
+        border = if (temporary) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
@@ -509,6 +530,7 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
     val d = detail ?: return
     var confirmDelete by remember { mutableStateOf(false) }
     var editingType by remember { mutableStateOf(false) }
+    ReloadAfterClustering(vm)
 
     val startedAt = Format.dateTime(d.summary.startedAtUtc, d.summary.tzOffsetMinutes)
 
@@ -533,7 +555,24 @@ private fun RecordingDetailScreen(vm: HecateViewModel) {
         KeyValue("Ø Geschwindigkeit", averageSpeed(d.summary))
         KeyValue("Quelle", Format.source(d.summary.source))
 
-        KeyValue("Route", d.routeName ?: "keine")
+        KeyValue(
+            "Route",
+            when {
+                d.routeName == null && d.temporaryRouteSeed -> "vorläufig, wird angelegt"
+                d.routeName == null -> "keine"
+                d.routeTemporary -> "${d.routeName} (vorläufig)"
+                else -> d.routeName
+            },
+        )
+        if (d.temporaryRouteSeed) {
+            TextButton(onClick = { vm.setTemporaryRoute(d.summary.id, false) }) {
+                Text("Vorläufige Route aufheben")
+            }
+        } else if (d.routeName == null) {
+            TextButton(onClick = { vm.setTemporaryRoute(d.summary.id, true) }) {
+                Text("Als vorläufige Route verwenden")
+            }
+        }
 
         // What the watch's matcher did, and what the recording logged along the
         // way: worth having when a match looks wrong, and noise the rest of the
@@ -774,7 +813,11 @@ private fun RouteRow(r: RouteSummary, onClick: () -> Unit) {
                 Text(r.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(4.dp))
-            Quiet("${Format.distance(r.lengthM)} · ${r.memberCount} Aufzeichnungen")
+            Quiet(
+                "${Format.distance(r.lengthM)} · " +
+                    (if (r.temporary) "vorläufig · " else "") +
+                    "${r.memberCount} ${if (r.memberCount == 1) "Aufzeichnung" else "Aufzeichnungen"}",
+            )
             Quiet(
                 buildString {
                     append("Median ")
@@ -800,6 +843,7 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
     val d = detail ?: return
     var editing by remember { mutableStateOf(false) }
     var draft by remember(d.id) { mutableStateOf(d.name) }
+    ReloadAfterClustering(vm)
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         if (editing) {
@@ -838,6 +882,20 @@ private fun RouteDetailScreen(vm: HecateViewModel) {
 
         PriorityPicker(d.priority) { vm.setPriority(d.id, it) }
         Spacer(Modifier.height(16.dp))
+
+        if (d.temporary) {
+            Quiet(
+                "Vorläufige Route aus einer Aufzeichnung. Passende Aufzeichnungen werden ihr " +
+                    "zugeordnet; ab ${Tuning.MIN_MEMBERS} zusammenpassenden wird daraus eine " +
+                    "normale Route.",
+            )
+            d.seedSessionId?.let { seed ->
+                TextButton(onClick = { vm.setTemporaryRoute(seed, false); vm.back() }) {
+                    Text("Vorläufige Route aufheben")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         KeyValue("Art", d.exerciseType.label)
         KeyValue("Länge", Format.distance(d.lengthM))

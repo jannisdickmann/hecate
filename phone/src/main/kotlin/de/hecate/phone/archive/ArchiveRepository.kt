@@ -334,6 +334,7 @@ class ArchiveRepository(
             committedAtM = committedAtM,
             avgHr = avgHr,
             ingestedAt = ingestedAt,
+            temporaryRoute = temporaryRoute,
         )
 
         fun Archive.Session.toEntity() = SessionEntity(
@@ -352,6 +353,7 @@ class ArchiveRepository(
             committedAtM = committedAtM,
             avgHr = avgHr,
             ingestedAt = ingestedAt,
+            temporaryRoute = temporaryRoute,
         )
 
         fun RouteEntity.toArchive() = Archive.Route(
@@ -365,6 +367,7 @@ class ArchiveRepository(
             createdAt = createdAt,
             active = active,
             priority = priority,
+            temporary = temporary,
         )
 
         fun Archive.Route.toEntity() = RouteEntity(
@@ -385,6 +388,7 @@ class ArchiveRepository(
             // first. A 9 becomes the top of the new scale, which is what it
             // meant.
             priority = priority.coerceIn(Tuning.MIN_ROUTE_PRIORITY, Tuning.MAX_ROUTE_PRIORITY),
+            temporary = temporary,
         )
     }
 }

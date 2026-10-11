@@ -44,6 +44,12 @@ data class SessionEntity(
     @ColumnInfo(name = "committed_at_m") val committedAtM: Double? = null,
     @ColumnInfo(name = "avg_hr") val avgHr: Double? = null,
     @ColumnInfo(name = "ingested_at") val ingestedAt: Long = 0,
+    /** The user promoted this recording to a temporary route before the history
+     *  had enough like it to form one (schema v9). The clusterer clears it again
+     *  once it no longer seeds a temporary route — normally because a real
+     *  route has formed around it. See `BundleBuilder.computeRoutes`. */
+    @ColumnInfo(name = "temporary_route", defaultValue = "0")
+    val temporaryRoute: Boolean = false,
 )
 
 @Entity(
@@ -88,6 +94,10 @@ data class RouteEntity(
      *  re-clustering, like the name. */
     @ColumnInfo(name = "priority", defaultValue = "0")
     val priority: Int = Tuning.DEFAULT_ROUTE_PRIORITY,
+    /** Built from one promoted recording rather than from a cluster of
+     *  [Tuning.MIN_MEMBERS]; [medoidSessionId] is that recording (schema v9). */
+    @ColumnInfo(name = "temporary", defaultValue = "0")
+    val temporary: Boolean = false,
 )
 
 @Entity(
