@@ -66,6 +66,26 @@ object Jobs {
         )
     }
 
+    /** Public so the settings card can say a backfill is under way. */
+    const val WEATHER = "hecate.weather"
+
+    /**
+     * The weather backfill (A.30). Any network: one recording is a few
+     * kilobytes. Appended rather than replaced, so a recording arriving
+     * mid-backfill waits for the running pass instead of restarting it — the
+     * next pass only asks for what is still missing.
+     */
+    fun enqueueWeather(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            WEATHER,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<WeatherWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .build(),
+        )
+    }
+
     fun enqueueHealthConnect(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             HEALTH_CONNECT,

@@ -121,6 +121,9 @@ class MainActivity : ComponentActivity() {
         // Anything the watch delivered while the app was closed is already in the
         // database; this only nudges the writes that are still outstanding.
         Jobs.enqueueHealthConnect(this)
+        // The weather backfill: a no-op when every recording has its weather,
+        // and the way restored and imported history gets it.
+        Jobs.enqueueWeather(this)
     }
 
     /**

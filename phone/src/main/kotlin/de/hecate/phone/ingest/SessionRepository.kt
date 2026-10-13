@@ -134,11 +134,13 @@ class SessionRepository(
         return IngestResult.Stored(session.id)
     }
 
-    /** §5.4: clustering is the only deferred job, and the Health Connect write is
-     *  retried independently so a failure there never blocks local history. */
+    /** §5.4: clustering, the Health Connect write and the weather (A.30) are
+     *  deferred, each retried independently so that a failure in one never
+     *  blocks local history or the others. */
     fun queueFollowUp() {
         Jobs.enqueueHealthConnect(context)
         Jobs.enqueueClustering(context)
+        Jobs.enqueueWeather(context)
     }
 
     private fun trackDistance(session: RecordedSession): Double =

@@ -315,6 +315,44 @@ data class HeatmapEntity(
     }
 }
 
+/**
+ * A recording's weather, fetched after the fact from Open-Meteo (schema v10,
+ * Appendix A.30).
+ *
+ * The readings are one JSON text ([de.hecate.core.weather.WeatherTrack]); the
+ * summary beside it is in columns so that the recordings list can show a
+ * symbol and a temperature per row without decoding anything.
+ *
+ * Not in the backup archive: it is derived from the samples and a public
+ * model, and the backfill fetches it again after a restore.
+ *
+ * A row with no readings is a real answer ("nothing to ask about") and keeps
+ * the backfill from asking again; a failed fetch writes no row at all.
+ */
+@Entity(
+    tableName = "session_weather",
+    primaryKeys = ["session_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["session_id"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class SessionWeatherEntity(
+    @ColumnInfo(name = "session_id") val sessionId: String,
+    @ColumnInfo(name = "payload") val payload: String,
+    /** The WMO code most of the recording was under. */
+    @ColumnInfo(name = "code") val code: Int?,
+    @ColumnInfo(name = "temp_min_c") val tempMinC: Double?,
+    @ColumnInfo(name = "temp_max_c") val tempMaxC: Double?,
+    @ColumnInfo(name = "precip_mm") val precipMm: Double?,
+    @ColumnInfo(name = "is_day") val isDay: Boolean?,
+    @ColumnInfo(name = "fetched_at_utc") val fetchedAtUtc: Long,
+)
+
 /** Small key/value table for the bundle version counter and similar. */
 @Entity(tableName = "meta")
 data class MetaEntity(

@@ -25,10 +25,11 @@ import java.time.ZoneId
         MatchLogEntity::class,
         SessionEventsEntity::class,
         SessionSeriesEntity::class,
+        SessionWeatherEntity::class,
         HeatmapEntity::class,
         MetaEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -37,6 +38,7 @@ abstract class HecateDatabase : RoomDatabase() {
     abstract fun routes(): RouteDao
     abstract fun heatmap(): HeatmapDao
     abstract fun meta(): MetaDao
+    abstract fun weather(): WeatherDao
 
     companion object {
         /** v2 records the session's stop time. Ingest previously kept only the
@@ -253,9 +255,35 @@ abstract class HecateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v10: each recording's weather (A.30). A new table and nothing else;
+         * every existing recording simply has no row yet, which is exactly what
+         * the backfill looks for.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_weather (
+                        session_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        code INTEGER,
+                        temp_min_c REAL,
+                        temp_max_c REAL,
+                        precip_mm REAL,
+                        is_day INTEGER,
+                        fetched_at_utc INTEGER NOT NULL,
+                        PRIMARY KEY(session_id),
+                        FOREIGN KEY(session_id) REFERENCES session(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         val MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
         )
 
         @Volatile

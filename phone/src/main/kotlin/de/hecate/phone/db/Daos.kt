@@ -25,6 +25,12 @@ data class SessionSummary(
     val avgHr: Double?,
     /** Whether [routeName] is a temporary route. */
     val routeTemporary: Boolean = false,
+    /** The weather summary (A.30), all null until the backfill reaches it. */
+    val weatherCode: Int? = null,
+    val tempMinC: Double? = null,
+    val tempMaxC: Double? = null,
+    val precipMm: Double? = null,
+    val weatherIsDay: Boolean? = null,
 )
 
 /** This session as a list row, under [routeName]. */
@@ -53,8 +59,13 @@ private const val SESSION_SUMMARY_COLUMNS = """
     s.exercise_type AS exerciseType, s.active_duration_ms AS activeDurationMs,
     s.total_distance_m AS totalDistanceM, s.source, s.hc_write_state AS hcWriteState,
     s.matched_route_id AS matchedRouteId, r.name AS routeName, s.avg_hr AS avgHr,
-    COALESCE(r.temporary, 0) AS routeTemporary
+    COALESCE(r.temporary, 0) AS routeTemporary,
+    w.code AS weatherCode, w.temp_min_c AS tempMinC, w.temp_max_c AS tempMaxC,
+    w.precip_mm AS precipMm, w.is_day AS weatherIsDay
 """
+
+/** The join every [SESSION_SUMMARY_COLUMNS] query needs for the weather. */
+private const val WEATHER_JOIN = "LEFT JOIN session_weather w ON w.session_id = s.id"
 
 /** A row of the routes list (US-8). */
 data class RouteSummary(
@@ -110,6 +121,7 @@ interface SessionDao {
         """
         SELECT $SESSION_SUMMARY_COLUMNS
         FROM session s LEFT JOIN route r ON r.id = s.matched_route_id
+        $WEATHER_JOIN
         ORDER BY s.started_at_utc DESC
         """,
     )
@@ -293,6 +305,7 @@ interface RouteDao {
         FROM route_member m
         JOIN session s ON s.id = m.session_id
         LEFT JOIN route r ON r.id = m.route_id
+        $WEATHER_JOIN
         WHERE m.route_id = :routeId
         ORDER BY s.started_at_utc DESC
         """,
@@ -327,6 +340,39 @@ object Settings {
      *  until the user changes it; [de.hecate.core.Tuning.DEFAULT_PEAK_HR_BPM]
      *  stands in until then. */
     const val PEAK_HR_BPM = "peak_hr_bpm"
+
+    /** "0" once the user has switched the weather backfill off (A.30).
+     *  Absent means on: the feature was asked for. */
+    const val WEATHER_ENABLED = "weather_enabled"
+}
+
+@Dao
+interface WeatherDao {
+    @Upsert
+    suspend fun put(weather: SessionWeatherEntity)
+
+    @Query("SELECT * FROM session_weather WHERE session_id = :id")
+    fun watch(id: String): Flow<SessionWeatherEntity?>
+
+    @Query("SELECT * FROM session_weather WHERE session_id = :id")
+    suspend fun get(id: String): SessionWeatherEntity?
+
+    /** The recordings still without weather, newest first: the one just
+     *  finished is the one most likely to be opened next. */
+    @Query(
+        """
+        SELECT s.* FROM session s LEFT JOIN session_weather w ON w.session_id = s.id
+        WHERE w.session_id IS NULL ORDER BY s.started_at_utc DESC
+        """,
+    )
+    suspend fun missing(): List<SessionEntity>
+
+    /** How many recordings have a weather row, for the settings card. */
+    @Query("SELECT COUNT(*) FROM session_weather")
+    fun countWatched(): Flow<Int>
+
+    @Query("DELETE FROM session_weather")
+    suspend fun clear()
 }
 
 @Dao
