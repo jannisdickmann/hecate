@@ -134,7 +134,7 @@ class SessionRepository(
         return IngestResult.Stored(session.id)
     }
 
-    /** §5.4: clustering, the Health Connect write and the weather (A.30) are
+    /** §5.4: clustering, the Health Connect write and the weather (A.33) are
      *  deferred, each retried independently so that a failure in one never
      *  blocks local history or the others. */
     fun queueFollowUp() {

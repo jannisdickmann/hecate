@@ -9,7 +9,9 @@ Google Health records workouts well but never learns that today's run is last
 Tuesday's run. Hecate does exactly that and not much else.
 
 Since A.29 one thing does leave the phone, on request: a bounding box, to fetch
-the OpenStreetMap streets drawn under your tracks. The watch stays offline.
+the OpenStreetMap streets drawn under your tracks. Since A.33 a second does:
+dates and 2 km squares, to fetch each recording's weather from Open-Meteo
+(switchable in Settings). The watch stays offline.
 
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.

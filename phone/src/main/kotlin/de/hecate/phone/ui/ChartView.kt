@@ -1,6 +1,14 @@
 package de.hecate.phone.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -132,6 +140,11 @@ fun Chart(
     modifier: Modifier = Modifier,
     height: Dp = CHART_HEIGHT,
     peakHrBpm: Int = Tuning.DEFAULT_PEAK_HR_BPM,
+    /** Where the shared cursor is, in this chart's own x units; null for none. */
+    cursorX: Double? = null,
+    /** Called with the x under the finger while it presses or drags across
+     *  the chart. Null makes the chart inert, as it always used to be. */
+    onScrub: ((Double) -> Unit)? = null,
 ) {
     val minSpanY = kind.minSpanY
     val measurer = rememberTextMeasurer()
@@ -145,7 +158,31 @@ fun Chart(
     // glow — see [HecateIntensityColors.unmeasured].
     val plain = HecateIntensityColors.unmeasured(measured = points.any { it.hrBpm != null })
 
-    Box(modifier.fillMaxWidth().height(height)) {
+    // Drawn in from the left once, the first time it is shown: the eye follows
+    // the line the way the effort went.
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { reveal.animateTo(1f, tween(durationMillis = 650)) }
+    val cursorColor = MaterialTheme.colorScheme.onSurface
+
+    val firstX = points.firstOrNull()?.x ?: 0.0
+    val spanX = max((points.lastOrNull()?.x ?: 0.0) - firstX, 1e-9)
+    // The inverse of `toCanvas` below for x, for the finger.
+    fun xAt(px: Float, width: Float): Double =
+        firstX + ((px - CHART_PAD_X) / (width - 2 * CHART_PAD_X)).coerceIn(0f, 1f) * spanX
+    val gestures = if (onScrub == null || points.size < 2) Modifier else Modifier
+        .pointerInput(points, onScrub) {
+            detectTapGestures(onPress = { onScrub(xAt(it.x, size.width.toFloat())) })
+        }
+        .pointerInput(points, onScrub) {
+            // Horizontal only, so a vertical swipe still scrolls the screen the
+            // chart is on.
+            detectHorizontalDragGestures { change, _ ->
+                change.consume()
+                onScrub(xAt(change.position.x, size.width.toFloat()))
+            }
+        }
+
+    Box(modifier.fillMaxWidth().height(height).then(gestures)) {
         if (points.size < 2) return@Box
         Canvas(Modifier.fillMaxWidth().height(height)) {
             var minY = Double.MAX_VALUE
@@ -160,9 +197,6 @@ fun Chart(
             val span = max(maxY - minY, minSpanY).takeIf { it > 0 } ?: 1.0
             val mid = (maxY + minY) / 2.0
             val lo = mid - span / 2.0
-            val firstX = points.first().x
-            val spanX = max(points.last().x - firstX, 1e-9)
-
             // Room above the plot for the top label and below it for the bottom
             // one, so neither is ever cut off by the edge of the chart.
             val maxIdx = points.indices.maxBy { points[it].y }
@@ -170,7 +204,7 @@ fun Chart(
             val maxText = measurer.measure(kind.label(points[maxIdx].y), labelStyle)
             val minText = measurer.measure(kind.label(points[minIdx].y), labelStyle)
             val gap = 4.dp.toPx()
-            val padX = 10f
+            val padX = CHART_PAD_X
             val padTop = maxText.size.height + gap + 2f
             val padBottom = minText.size.height + gap + 2f
             val usableW = size.width - 2 * padX
@@ -188,6 +222,7 @@ fun Chart(
             // second, so the runs are long and this is a handful of paths rather
             // than four hundred. A gap ends a run too, and starts the next one
             // after it rather than across it.
+            clipRect(right = padX + usableW * reveal.value + 2f) {
             var runStart = 0
             var runBand = bandOf(points, 1, peakHrBpm)
             for (i in 1 until points.size) {
@@ -205,15 +240,39 @@ fun Chart(
                 }
             }
             drawSection(points, runStart, points.size - 1, ::toCanvas, floor, runBand, plain)
+            }
 
             drawExtreme(toCanvas(points[maxIdx]), maxText, above = true, gap, dot, halo)
             // A series that never moved has one value, and one label says it.
             if (minText.layoutInput.text != maxText.layoutInput.text) {
                 drawExtreme(toCanvas(points[minIdx]), minText, above = false, gap, dot, halo)
             }
+
+            cursorX?.let { cx ->
+                val i = points.indexOfFirst { it.x >= cx }.let { if (it < 0) points.size - 1 else it }
+                val p = if (i > 0 && points[i].x != points[i - 1].x) {
+                    val a = points[i - 1]
+                    val b = points[i]
+                    val f = ((cx - a.x) / (b.x - a.x)).coerceIn(0.0, 1.0)
+                    ChartPoint(cx, a.y + (b.y - a.y) * f, b.hrBpm)
+                } else points[i]
+                val at = toCanvas(p)
+                drawLine(
+                    cursorColor.copy(alpha = 0.35f),
+                    Offset(at.x, 0f),
+                    Offset(at.x, size.height),
+                    strokeWidth = 1.5.dp.toPx(),
+                )
+                val color = Intensity.of(p.hrBpm, peakHrBpm)?.let(HecateIntensityColors::of) ?: plain
+                drawCircle(halo, radius = 7.dp.toPx(), center = at)
+                drawCircle(color, radius = 5.dp.toPx(), center = at)
+            }
         }
     }
 }
+
+/** The horizontal inset of the plot inside a chart [px]. */
+private const val CHART_PAD_X = 10f
 
 /** The default height of every chart, labels included. */
 val CHART_HEIGHT: Dp = 124.dp

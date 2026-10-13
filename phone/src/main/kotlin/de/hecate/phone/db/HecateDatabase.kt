@@ -256,7 +256,7 @@ abstract class HecateDatabase : RoomDatabase() {
         }
 
         /**
-         * v10: each recording's weather (A.30). A new table and nothing else;
+         * v10: each recording's weather (A.33). A new table and nothing else;
          * every existing recording simply has no row yet, which is exactly what
          * the backfill looks for.
          */

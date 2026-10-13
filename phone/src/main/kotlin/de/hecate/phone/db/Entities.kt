@@ -317,7 +317,7 @@ data class HeatmapEntity(
 
 /**
  * A recording's weather, fetched after the fact from Open-Meteo (schema v10,
- * Appendix A.30).
+ * Appendix A.33).
  *
  * The readings are one JSON text ([de.hecate.core.weather.WeatherTrack]); the
  * summary beside it is in columns so that the recordings list can show a

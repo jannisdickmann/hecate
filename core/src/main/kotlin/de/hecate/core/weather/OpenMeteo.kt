@@ -31,7 +31,7 @@ import java.util.zip.GZIPInputStream
  *   takeout reaches back years, and ERA5 back to 1940.
  *
  * What is sent: dates (never a time of day) and positions rounded to
- * [WeatherPlan.GRID_DEG], deduplicated. See Appendix A.30.
+ * [WeatherPlan.GRID_DEG], deduplicated. See Appendix A.33.
  */
 object OpenMeteo {
 

@@ -70,7 +70,7 @@ object Jobs {
     const val WEATHER = "hecate.weather"
 
     /**
-     * The weather backfill (A.30). Any network: one recording is a few
+     * The weather backfill (A.33). Any network: one recording is a few
      * kilobytes. Appended rather than replaced, so a recording arriving
      * mid-backfill waits for the running pass instead of restarting it — the
      * next pass only asks for what is still missing.

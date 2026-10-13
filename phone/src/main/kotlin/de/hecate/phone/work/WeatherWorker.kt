@@ -10,7 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * The weather backfill (A.30): every recording without weather gets it, on any
+ * The weather backfill (A.33): every recording without weather gets it, on any
  * network. A run that could not finish — no answer, or the free tier spent for
  * the day — is retried with WorkManager's backoff, and picks up only what is
  * still missing.

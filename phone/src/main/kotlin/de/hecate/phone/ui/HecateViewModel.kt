@@ -15,17 +15,20 @@ import de.hecate.core.heat.HeatmapCodec
 import de.hecate.core.heat.HeatmapGrid
 import de.hecate.core.io.BundleCodec
 import de.hecate.core.map.TileStore
-import de.hecate.core.model.ActiveClock
 import de.hecate.core.model.ExerciseType
-import de.hecate.core.model.MatchEvent
 import de.hecate.core.model.MatchLogEntry
 import de.hecate.core.model.Sample
 import de.hecate.core.model.SessionEvent
+import de.hecate.core.profile.Analysis
 import de.hecate.core.profile.Elevation
-import de.hecate.core.profile.Series
 import de.hecate.core.profile.Timeline
 import de.hecate.phone.AppGraph
 import de.hecate.core.archive.Archive
+import de.hecate.core.weather.WeatherSummary
+import de.hecate.core.weather.WeatherTrack
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import de.hecate.phone.db.HcWriteState
 import de.hecate.phone.db.HeatmapEntity
 import de.hecate.phone.db.MetaEntity
@@ -50,7 +53,6 @@ import java.io.ByteArrayInputStream
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 /**
  * Which screen is showing (§4: no Compose Navigation).
@@ -171,7 +173,31 @@ data class SessionDetail(
      *  — every imported session, and any recording whose route was assigned by
      *  the clusterer afterwards rather than live. */
     val committedByPriority: Boolean?,
+    /** The recording as moments a cursor can look up — when, how far, where. */
+    val moments: List<Analysis.Moment> = emptyList(),
+    /** The series every chart and card is computed from: moving samples on the
+     *  repaired clock, carrying the smoothed heart rate. Kept so the zones can
+     *  be recomputed when the peak heart rate changes. */
+    val charted: List<Sample> = emptyList(),
+    val splits: List<Analysis.Split> = emptyList(),
+    /** Every active duration on this recording's route, this one included —
+     *  what "how did today compare" is answered from. Empty without a route. */
+    val routeDurationsMs: List<Long> = emptyList(),
 )
+
+/** A recording's weather as the detail screen shows it (A.33). */
+sealed interface WeatherView {
+    /** Not fetched yet: the backfill has not reached it, or has no network. */
+    data object Pending : WeatherView
+
+    /** The user switched weather off and this recording has none. */
+    data object Off : WeatherView
+
+    /** Asked, and there was nothing to ask about. */
+    data object Unavailable : WeatherView
+
+    data class Ready(val track: WeatherTrack, val summary: WeatherSummary) : WeatherView
+}
 
 /**
  * One view model for the whole phone app. Five screens do not need five.
@@ -314,6 +340,27 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         .map { rows -> rows.firstOrNull()?.toIntOrNull() ?: Tuning.DEFAULT_PEAK_HR_BPM }
         .stateIn(viewModelScope, WHILE_SHOWN, Tuning.DEFAULT_PEAK_HR_BPM)
 
+    /** Whether the weather backfill may ask Open-Meteo (A.33). On unless the
+     *  user switched it off. */
+    val weatherEnabled: StateFlow<Boolean> = db.meta().watch(Settings.WEATHER_ENABLED)
+        .map { rows -> rows.firstOrNull() != "0" }
+        .stateIn(viewModelScope, WHILE_SHOWN, true)
+
+    /** How many recordings have their weather, for the settings card. */
+    val weatherCount: StateFlow<Int> = db.weather().countWatched()
+        .stateIn(viewModelScope, WHILE_SHOWN, 0)
+
+    /** A weather backfill is running right now. */
+    val weatherRunning: StateFlow<Boolean> =
+        WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.WEATHER)
+            .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING } }
+            .stateIn(viewModelScope, WHILE_SHOWN, false)
+
+    fun setWeatherEnabled(on: Boolean) = viewModelScope.launch {
+        db.meta().put(MetaEntity(Settings.WEATHER_ENABLED, if (on) "1" else "0"))
+        if (on) Jobs.enqueueWeather(getApplication())
+    }
+
     /** Null until the database has answered once; see [sessionsOrNull]. */
     private val routesOrNull: StateFlow<List<RouteSummary>?> = db.routes().summaries()
         .stateIn(viewModelScope, WHILE_SHOWN, null)
@@ -325,6 +372,12 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     val routesLoaded: StateFlow<Boolean> = routesOrNull
         .map { it != null }
         .stateIn(viewModelScope, WHILE_SHOWN, false)
+
+    /** Each route's member times, oldest first, for the trend line on its row. */
+    val routeTrends: StateFlow<Map<Long, List<Long>>> = db.routes().memberDurations()
+        .map { rows -> rows.groupBy({ it.routeId }, { it.durationMs }) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, WHILE_SHOWN, emptyMap())
 
     /**
      * The card's heatmap, and the geometry of the routes it accepted (US-8).
@@ -825,96 +878,26 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         val entity = dao.byId(id) ?: return@launch
         val samples = dao.samples(id)
         val route = entity.matchedRouteId?.let { db.routes().byId(it) }
+        val members = route?.let { db.routes().memberSessions(it.id) }.orEmpty()
         val log = dao.matchLog(id)?.payload.decodeOrEmpty(BundleCodec::decodeMatchLog)
         val events = dao.events(id)?.payload.decodeOrEmpty(BundleCodec::decodeEvents)
-
-        // Paused samples are dropped once, here, so that the track drawing, the
-        // altitude profile and the smoothed heart rate all index the same series
-        // — the colours would otherwise slide along the line by however many
-        // samples a level crossing took.
-        val moving = samples.filterNot { it.paused }
-
-        // Heart rate is smoothed before anything reads it, and for a reason that
-        // has nothing to do with the sensor being noisy: the screen quantises it
-        // into four bands, so a steady effort sitting on a boundary would cross
-        // it every few seconds and the drawing would alternate between two
-        // colours every few pixels. See Tuning.HR_MEDIAN_WINDOW.
-        //
-        // Held across short holes before anything else touches it: a watch
-        // stamps a rate only on the samples whose batch happened to carry one,
-        // which is about a third of them, and read literally that is a ride
-        // whose effort looks unmeasured for two thirds of its length. See
-        // Tuning.HR_HOLD_MS.
-        val heartRate = Series.rollingMedian(
-            Series.hold(
-                DoubleArray(moving.size) { i ->
-                    moving[i].hrBpm?.takeIf { it > 0 }?.toDouble() ?: Double.NaN
-                },
-                LongArray(moving.size) { moving[it].tOffsetMs },
-                Tuning.HR_HOLD_MS,
-            ),
-            Tuning.HR_MEDIAN_WINDOW,
-        )
-        fun hrAt(i: Int): Double? = heartRate[i].takeIf { !it.isNaN() }
-
-        // One list of samples for all three charts, carrying the *smoothed* heart
-        // rate: they must colour the same second the same way, and three
-        // conversions of the same rows would be three chances for them not to.
-        //
-        // On the repaired clock, because two of the three are drawn against
-        // time: as recorded, a watch session's active clock stands still for
-        // minutes and then steps backwards, and the speed chart it produced was
-        // the fault that found it (`ActiveClock`).
-        val charted = ActiveClock.repair(
-            moving.mapIndexed { i, it ->
-                Sample(
-                    tOffsetMs = it.tOffsetMs,
-                    activeMs = it.activeMs,
-                    lat = it.lat,
-                    lon = it.lon,
-                    altM = it.altM,
-                    hrBpm = hrAt(i)?.roundToInt(),
-                    paused = it.paused,
-                )
-            },
-        )
-        val sessionElevation = Elevation.of(charted)
-        val chartedSpeed = Timeline.simplify(Timeline.speedOfSamples(charted), CHART_POINTS)
-        val chartedHeartRate = Timeline.simplify(Timeline.heartRateOfSamples(charted), CHART_POINTS)
-
-        _sessionDetail.value = SessionDetail(
-            summary = entity.toSummary(route?.name, route?.temporary ?: false),
-            geometry = moving.mapIndexed { i, it -> TrackPoint(LatLon(it.lat, it.lon), hrAt(i)) },
-            routeName = route?.name,
-            routeTemporary = route?.temporary ?: false,
-            temporaryRouteSeed = entity.temporaryRoute,
-            coverage = entity.matchCoverage,
-            committedAtM = entity.committedAtM,
-            hcState = entity.hcWriteState,
-            hcError = entity.hcError,
-            matchLogSize = log.size,
-            committedByPriority = log.lastOrNull {
-                it.event == MatchEvent.COMMIT ||
-                    it.event == MatchEvent.COMMIT_BY_PRIORITY
-            }?.let { it.event == MatchEvent.COMMIT_BY_PRIORITY },
-            // Only the interesting lines: commits, demotions, deviations.
-            matchEvents = log.filter { it.event != MatchEvent.SAMPLE }.take(50),
-            // Uncapped on purpose: a handful per session, and the one that
-            // matters is usually the one you did not expect to be there.
-            sessionEvents = events,
-            elevation = Elevation.simplify(sessionElevation, CHART_POINTS),
-            elevationStats = Elevation.stats(sessionElevation),
-            // Stats off the *drawn* series, not the raw one: the line under a
-            // chart says what that chart covers, and on a long recording the
-            // drawn series is smoothed to the scale it can show (`simplify`).
-            // A caption naming a peak that is nowhere on the picture above it
-            // is a caption about a different chart.
-            speed = chartedSpeed,
-            speedStats = Timeline.stats(chartedSpeed),
-            heartRate = chartedHeartRate,
-            heartRateStats = Timeline.stats(chartedHeartRate),
-        )
+        _sessionDetail.value = withContext(Dispatchers.Default) {
+            SessionDetailBuilder.build(entity, samples, route, members, log, events)
+        }
     }
+
+    /** The weather of the recording on screen, watched so that it appears
+     *  while the screen is open if the backfill gets there first. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val sessionWeather: StateFlow<WeatherView> = _screen
+        .flatMapLatest { screen ->
+            if (screen !is Screen.SessionDetail) flowOf(WeatherView.Pending)
+            else combine(db.weather().watch(screen.id), weatherEnabled) { row, enabled ->
+                weatherViewOf(row, enabled)
+            }
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, WHILE_SHOWN, WeatherView.Pending)
 
     /**
      * Run [block] with the busy indicator up, and hand back how it went.
@@ -945,10 +928,7 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
          *  to ride out a configuration change without re-running its query. */
         private val WHILE_SHOWN = SharingStarted.WhileSubscribed(5000)
 
-        /** Points kept for a chart — elevation, speed or heart rate. A phone is a
-         *  few hundred pixels wide and an hour's ride is thousands of samples —
-         *  see [Elevation.simplify], which keeps the peaks rather than averaging
-         *  them away, and [Timeline.simplify], which deliberately does not. */
-        private const val CHART_POINTS = 400
+        /** One number for every chart in the app; see the builder. */
+        private const val CHART_POINTS = SessionDetailBuilder.CHART_POINTS
     }
 }

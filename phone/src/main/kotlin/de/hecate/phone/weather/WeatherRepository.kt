@@ -13,7 +13,7 @@ import de.hecate.phone.db.toSample
 import java.io.IOException
 
 /**
- * Fills in the weather of every recording that has none (A.30).
+ * Fills in the weather of every recording that has none (A.33).
  *
  * One request per recording, newest first, one at a time with a pause between
  * them: the free tier allows thousands a day, and a history backfill is a few

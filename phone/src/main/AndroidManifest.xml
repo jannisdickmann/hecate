@@ -10,7 +10,9 @@
          learns which squares of ground were asked for. It is bounded by asking
          only in tile-grid-aligned rectangles — never a track, never a position,
          never a time — and by sending nothing else but a generic User-Agent.
-         Nothing about a recording ever leaves this phone. -->
+         Since A.33 the phone also asks Open-Meteo for each recording's
+         weather: dates (never a time of day) and positions rounded to 0.02°,
+         one request per recording, switchable in Settings. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- So WorkManager can hold the prefetch job until the network is
          unmetered. -->

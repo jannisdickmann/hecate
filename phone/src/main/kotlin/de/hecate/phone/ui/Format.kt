@@ -142,4 +142,98 @@ object Format {
         2 -> "fehlgeschlagen"
         else -> "übersprungen"
     }
+
+    /** "13°", a temperature where the unit is understood. The minus is U+2212. */
+    fun temp(c: Double?): String {
+        if (c == null) return "–"
+        val v = c.roundToInt()
+        return if (v < 0) "−${-v}°" else "$v°"
+    }
+
+    /** "12–14 °C", or "13 °C" when it did not change. */
+    fun tempRange(min: Double?, max: Double?): String {
+        if (min == null || max == null) return "–"
+        val a = temp(min).removeSuffix("°")
+        val b = temp(max).removeSuffix("°")
+        return if (a == b) "$a °C" else "$a–$b °C"
+    }
+
+    /** "1,2 mm", or "0 mm" for anything that would round to nothing. */
+    fun precip(mm: Double?): String = when {
+        mm == null -> "–"
+        mm < 0.05 -> "0 mm"
+        mm < 10 -> String.format(DE, "%.1f mm", mm)
+        else -> String.format(DE, "%d mm", mm.roundToInt())
+    }
+
+    /** "0,8 mm/h" — an intensity, as a weather strip labels it. */
+    fun precipRate(mmH: Double?): String =
+        if (mmH == null || mmH < 0.05) "" else String.format(DE, "%.1f mm/h", mmH)
+
+    /**
+     * What a recording is called on its own screen: "Morgenlauf",
+     * "Abendradfahrt" — the time of day it started, in the session's own
+     * clock, and the noun Health Connect also uses.
+     */
+    fun title(type: de.hecate.core.model.ExerciseType, utcMs: Long, tzOffsetMinutes: Int): String {
+        val hour = localCalendar(utcMs, tzOffsetMinutes).get(Calendar.HOUR_OF_DAY)
+        val part = when (hour) {
+            in 5..10 -> "Morgen"
+            in 11..13 -> "Mittags"
+            in 14..17 -> "Nachmittags"
+            in 18..21 -> "Abend"
+            else -> "Nacht"
+        }
+        return part + type.sessionTitle.lowercase(DE)
+    }
+
+    /** "Sa, 10. Okt. · 08:12" — the subtitle under a title that is already
+     *  about the time of day. The year only when it is not this one. */
+    fun dayAndTime(utcMs: Long, tzOffsetMinutes: Int, nowUtcMs: Long = System.currentTimeMillis()): String {
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
+        val year = cal.get(Calendar.YEAR)
+        val thisYear = localCalendar(nowUtcMs, tzOffsetMinutes).get(Calendar.YEAR)
+        return String.format(
+            DE, "%s, %d. %s%s · %02d:%02d",
+            DAYS[cal.get(Calendar.DAY_OF_WEEK) - 1],
+            cal.get(Calendar.DAY_OF_MONTH),
+            MONTHS_SHORT[cal.get(Calendar.MONTH)],
+            if (year != thisYear) " $year" else "",
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+        )
+    }
+
+    /** "Oktober 2026". */
+    fun month(utcMs: Long, tzOffsetMinutes: Int): String {
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
+        return "${MONTHS[cal.get(Calendar.MONTH)]} ${cal.get(Calendar.YEAR)}"
+    }
+
+    /** A month as a sortable key, 2026 * 12 + 9. */
+    fun monthKey(utcMs: Long, tzOffsetMinutes: Int): Int {
+        val cal = localCalendar(utcMs, tzOffsetMinutes)
+        return cal.get(Calendar.YEAR) * 12 + cal.get(Calendar.MONTH)
+    }
+
+    /** "1:23" or "0:42" — a difference in time, signless; the caller says
+     *  which way. */
+    fun delta(millis: Long): String {
+        val s = kotlin.math.abs(millis) / 1000
+        return if (s >= 3600) String.format(DE, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+        else String.format(DE, "%d:%02d", s / 60, s % 60)
+    }
+
+    /** "1,0 km" for a split's end. */
+    fun splitKm(meters: Double): String =
+        if (meters % 1000.0 == 0.0) String.format(DE, "%d km", (meters / 1000).toInt())
+        else String.format(DE, "%.1f km", meters / 1000)
+
+    private val MONTHS = arrayOf(
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+    )
+    private val MONTHS_SHORT = arrayOf(
+        "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sep.", "Okt.", "Nov.", "Dez.",
+    )
 }

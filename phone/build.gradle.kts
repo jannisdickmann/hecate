@@ -171,4 +171,11 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.work.testing)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // The screenshot harness: every screen rendered on the JVM from synthetic
+    // data, written to build/screenshots. `ui-test-manifest` supplies the
+    // activity the rule hosts compositions in; debug only, never in a release.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

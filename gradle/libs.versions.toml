@@ -65,6 +65,10 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 # NOT material-icons-extended: release builds run with isMinifyEnabled = false
 # (§6.3), so an unused icon is an icon that ships.
 compose-material-icons-core = { module = "androidx.compose.material:material-icons-core" }
+# The screenshot harness (phone/src/test/.../screenshots): Compose rendered under
+# Robolectric's native graphics, captured to PNG. Test-only; nothing ships.
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 
 # Wear Material 3. Same version as the rest of the Wear Compose group, so the
 # catalog needs no new version line — see Appendix A on the move off Material

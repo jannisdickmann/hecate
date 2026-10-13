@@ -25,7 +25,7 @@ data class SessionSummary(
     val avgHr: Double?,
     /** Whether [routeName] is a temporary route. */
     val routeTemporary: Boolean = false,
-    /** The weather summary (A.30), all null until the backfill reaches it. */
+    /** The weather summary (A.33), all null until the backfill reaches it. */
     val weatherCode: Int? = null,
     val tempMinC: Double? = null,
     val tempMaxC: Double? = null,
@@ -311,7 +311,21 @@ interface RouteDao {
         """,
     )
     suspend fun memberSessions(routeId: Long): List<SessionSummary>
+
+    /** Every route's members in the order they were recorded, so a list row
+     *  can draw how the route has been going. */
+    @Query(
+        """
+        SELECT m.route_id AS routeId, s.started_at_utc AS startedAtUtc, s.active_duration_ms AS durationMs
+        FROM route_member m JOIN session s ON s.id = m.session_id
+        ORDER BY s.started_at_utc
+        """,
+    )
+    fun memberDurations(): Flow<List<MemberDuration>>
 }
+
+/** One member's time on its route, for the routes list's trend lines. */
+data class MemberDuration(val routeId: Long, val startedAtUtc: Long, val durationMs: Long)
 
 @Dao
 interface HeatmapDao {
@@ -341,7 +355,7 @@ object Settings {
      *  stands in until then. */
     const val PEAK_HR_BPM = "peak_hr_bpm"
 
-    /** "0" once the user has switched the weather backfill off (A.30).
+    /** "0" once the user has switched the weather backfill off (A.33).
      *  Absent means on: the feature was asked for. */
     const val WEATHER_ENABLED = "weather_enabled"
 }

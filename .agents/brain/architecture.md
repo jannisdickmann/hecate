@@ -227,6 +227,9 @@ backup archive and for replay fixtures.
 - `ArchiveRepository` — maps Room rows to and from the `:core` archive; restore
   merges and bypasses ingest
   ([A.10](decisions/2026-09-11-backup-is-a-file-not-a-cloud.md)).
+- `WeatherRepository` / `WeatherWorker` — each recording's weather from
+  Open-Meteo, backfilled on any network after ingest and on resume
+  ([A.33](decisions/2026-10-13-weather-and-a-phone-app-to-read-it-in.md)).
 - Basemap tile store under `filesDir/karte/`, outside Room so that a map never
   enters a backup ([A.29](decisions/2026-09-20-osm-basemap-under-every-track.md)).
 - UI: **Aufzeichnungen** list → **Recording detail**; **Routes** list →
@@ -272,6 +275,7 @@ As built, the schema has more, each addition with its reason in the linked ADR:
 | `session_events` (one blob per session) | v3 | [A.12](decisions/2026-09-12-session-lifecycle-events-are-kept.md) |
 | `heatmap` (one gzipped, run-length encoded raster per row; two rows) | v4 | [A.14](decisions/2026-09-12-heatmap-drawn-around-the-routes-extent.md), [A.21](decisions/2026-09-13-filter-louder-mark-real-heatmap-no-splits.md), [A.23](decisions/2026-09-15-two-heatmap-rasters-and-one-chart-composable.md) |
 | data only: imported sessions at `tz_offset = 0` repaired | v5 | [A.15](decisions/2026-09-12-backfill-from-a-takeout.md) |
+| `session_weather` (readings as JSON, summary in columns) | v10 | [A.33](decisions/2026-10-13-weather-and-a-phone-app-to-read-it-in.md) |
 | `route_profile.median_alt_m` | v6 | [A.20](decisions/2026-09-13-altitude-profiles.md) |
 | `route.priority` rescaled to −2..2, every route reset to 0 (table rebuilt) | v7 | [A.21](decisions/2026-09-13-filter-louder-mark-real-heatmap-no-splits.md) |
 

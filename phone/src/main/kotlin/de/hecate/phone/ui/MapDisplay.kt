@@ -297,8 +297,12 @@ fun HecateMap(
      *  screen passes one that keeps the start and end clear of its title bar,
      *  its caption and the system bars, which all sit over the map. */
     frame: PaddingValues? = null,
+    /** A moment picked on a chart, drawn as a ringed dot that stays the size
+     *  of a fingertip at every zoom. */
+    cursor: LatLon? = null,
 ) {
     val surface = MaterialTheme.colorScheme.surfaceContainerLow
+    val cursorColor = MaterialTheme.colorScheme.primary
     val basemapColors = remember(dark, content.ground) {
         if (content.ground == MapGround.HEAT) BasemapColors.forHeat(dark) else BasemapColors.forTrack(dark)
     }
@@ -399,6 +403,13 @@ fun HecateMap(
                 drawCircle(markerOutline, radius = r + 1.5.dp.toPx(), center = at)
                 drawCircle(m.color, radius = r, center = at)
             }
+            cursor?.let { c ->
+                val l = Geo.toLocal(content.origin, c)
+                val at = camera.toScreen(Offset(view.canvasX(l[0]).toFloat(), view.canvasY(l[1]).toFloat()))
+                drawCircle(cursorColor.copy(alpha = 0.22f), radius = 13.dp.toPx(), center = at)
+                drawCircle(markerOutline, radius = 7.5.dp.toPx(), center = at)
+                drawCircle(cursorColor, radius = 5.5.dp.toPx(), center = at)
+            }
         }
     }
 }
@@ -442,18 +453,21 @@ fun MapCard(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
     caption: (@Composable ColumnScope.() -> Unit)? = null,
+    aspect: Float = MAP_CARD_ASPECT,
+    cursor: LatLon? = null,
 ) {
     Card(
         onClick = onOpen,
         enabled = content != null,
         modifier = modifier.fillMaxWidth(),
+        shape = HecateDesign.CardShape,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(MAP_CARD_ASPECT)) {
-            if (content != null) HecateMap(content, Modifier.fillMaxSize())
+        Box(Modifier.fillMaxWidth().aspectRatio(aspect)) {
+            if (content != null) HecateMap(content, Modifier.fillMaxSize(), cursor = cursor)
             ExpandGlyph(
                 Modifier
                     .align(Alignment.TopEnd)
