@@ -64,7 +64,8 @@ sheet ([A.13](decisions/2026-09-12-settings-panel-back-stack-and-standout-marks.
 | Layer | What it covers | How |
 |---|---|---|
 | `:core` unit tests | metric, clustering, projection, profile maths, archive format, takeout import, auto-stop, basemap codec, CPU budget | JUnit, synthetic geometries (5° divergence, self-intersecting loop, injected jitter) |
-| `:phone` JVM tests | Room migrations, ingest, backup round trip, TCX import, standout arithmetic | Robolectric ([A.16](decisions/2026-09-12-robolectric-for-the-phone.md)) — not in the original strategy |
+| `:phone` JVM tests | Room migrations, ingest, backup round trip, TCX import, standout arithmetic, weather backfill | Robolectric ([A.16](decisions/2026-09-12-robolectric-for-the-phone.md)) — not in the original strategy |
+| Phone layout | every phone screen, light and dark, as a picture | `ScreenshotTest`: the real composables rendered under Robolectric native graphics with `androidx.compose.ui:ui-test-junit4`, written to `phone/build/screenshots` — see *Verifying a layout off-device* below ([A.33](decisions/2026-10-13-weather-and-a-phone-app-to-read-it-in.md)) |
 | Replay harness | matcher decisions on real tracks | `ReplayMain` over a fixture set of stored sessions, golden-file assertions |
 | Wear emulator | service lifecycle, permissions, UI layout, Ongoing Activity | Emulator synthetic data — plumbing only; it emits a **single default route** with identical values every run, so it can never test matching |
 | Replay on the emulator | what the watch *shows* while matching: commitment, deviation, ahead/behind | `tools/emu replay` — a stored session fed to the recorder in place of the sensors, so the decisions are the matcher's own ([A.28](decisions/2026-09-13-replaying-an-activity-into-the-recorder.md)). Debug builds only; writes nothing, uploads nothing |
@@ -94,7 +95,9 @@ Lessons the layers have taught, each with its record:
   ([A.23](decisions/2026-09-15-two-heatmap-rasters-and-one-chart-composable.md),
   [A.13](decisions/2026-09-12-settings-panel-back-stack-and-standout-marks.md)).
 - **Render it.** `:core` drawing code can be rasterised to PNG or SVG
-  off-device, and looking at it found what no assertion would
+  off-device, and so can every phone screen (`ScreenshotTest`); looking at it
+  found what no assertion would — a label wrapping mid-word, a section title
+  said twice, a heading that did not fit
   ([A.14](decisions/2026-09-12-heatmap-drawn-around-the-routes-extent.md),
   [A.29](decisions/2026-09-20-osm-basemap-under-every-track.md)).
 - **Anything that talks to `com.google.android.gms`, `androidx.health` or
@@ -174,13 +177,86 @@ Without a local Android Studio, the whole project builds and tests in a fresh
 Linux container: a JDK 25 (Adoptium), the command-line tools with
 `platforms;android-37.0` (`android-37` alone is not a package name),
 `sdk.dir` in `local.properties`, and Gradle with
-`-Dorg.gradle.java.installations.paths=<jdk25>`. Maven Central rate-limits
-(HTTP 429) a cold build from a shared egress; an init script that puts
-`https://maven-central.storage-download.googleapis.com/maven2/` first in both
-`pluginManagement` and `dependencyResolutionManagement` fixes it, and Robolectric
-needs the same mirror as `-Drobolectric.dependency.repo.url` on the test task,
-because it downloads `android-all` at test time. Run once without `-q` to see
+`-Dorg.gradle.java.installations.paths=<jdk25>`. Run once without `-q` to see
 compiler warnings.
+
+Maven Central rate-limits (HTTP 429) a cold build from a shared egress, and a
+429 is a hard failure — Gradle does not fall through to the next repository.
+What worked on 2026-10-13, as `~/.gradle/init.d/mirror.gradle.kts`:
+
+```kotlin
+val mirror = "https://maven-central.storage-download.googleapis.com/maven2/"
+fun RepositoryHandler.mirrorFirst() {
+    // Google first: AGP's aapt2 is only there, and asking Central for it first
+    // is a 429 that fails the build.
+    val g = google { name = "googleFirst"; content {
+        includeGroupByRegex("com\\.android.*"); includeGroupByRegex("com\\.google.*"); includeGroupByRegex("androidx.*") } }
+    remove(g); add(0, g)
+    val r = maven { name = "gcsMirror"; url = uri(mirror) }
+    remove(r); add(1, r)
+}
+settingsEvaluated {
+    pluginManagement.repositories.mirrorFirst()
+    dependencyResolutionManagement.repositories.mirrorFirst()
+}
+allprojects {
+    // Robolectric downloads android-all at test time, from inside the test JVM:
+    // a -D on the Gradle command line never reaches it.
+    tasks.withType<Test>().configureEach {
+        systemProperty("robolectric.dependency.repo.url", mirror)
+    }
+}
+```
+
+`maven(url)` already adds the repository, so it is removed and re-added at the
+front rather than added twice ("a repository with that name already exists").
+
+### Verifying a layout off-device
+
+`phone/src/test/.../screenshots/ScreenshotTest` renders every phone screen to
+PNG on the JVM — no emulator, no phone:
+
+```
+./gradlew :phone:testDebugUnitTest --tests '*ScreenshotTest*'
+# → phone/build/screenshots/*.png
+```
+
+How it works, and why it is shaped this way:
+
+- **The external package** is `androidx.compose.ui:ui-test-junit4`
+  (`testImplementation`, versioned by the Compose BOM) plus
+  `ui-test-manifest` (`debugImplementation`, the activity the rule hosts
+  compositions in). Both are AndroidX and test-only; nothing ships in a
+  release. Rendering is Robolectric's `@GraphicsMode(NATIVE)`;
+  `onRoot().captureToImage()` is written out with `Bitmap.compress`. No
+  Roborazzi or Paparazzi: that would be a dependency outside AndroidX for what
+  forty lines do ([A.7](decisions/2026-09-11-dependencies-outside-androidx.md)).
+- **Screens take state, not the view model.** Each screen is a thin
+  `XScreen(vm)` that collects flows and a `XContent(state, actions)` that
+  draws; the harness calls the `Content`. A screen that reads the view model
+  inside its drawing cannot be rendered here — keep the split when adding one.
+- **Synthetic data, no randomness** (`Synthetic.kt`): a 10 km loop at Hanau
+  with a hill, surges, a stop at a light and a shower; sixty history rows;
+  three heatmap routes. Same pictures every run, so two runs can be compared.
+  The recording detail goes through `SessionDetailBuilder` — the app's own
+  assembly, not a hand-made `SessionDetail`.
+- **Size and theme come from Robolectric qualifiers.** `w400dp-h2900dp-xxhdpi`
+  captures a scrolling screen whole, as a page; `h860dp` is a phone. Dark is
+  `-night-`, and it must stand *before* the density (`…-h2900dp-night-xxhdpi`),
+  or the qualifier parser throws.
+- **The bars are a stand-in.** `HecateApp`'s scaffold needs a live view model,
+  so the test draws the same `MediumTopAppBar` / `NavigationBar` around the
+  real panel content.
+- **Time:** animations run on the test clock (`mainClock.advanceTimeBy`), but
+  work on `Dispatchers.Default` — the heatmap raster — does not; the harness
+  sleeps briefly for it, and the raster still did not reliably appear.
+
+What it cannot show: **no basemap** (tiles live in `filesDir/karte/` on the
+phone, and `AppGraph` is not initialised), so maps are tracks on blank ground;
+dynamic colour is Robolectric's default palette, not a wallpaper's; touch
+behaviour — scrubbing, scrolling, the full-screen map — is not exercised beyond
+`initialCursorMs`, which pre-places the cursor for one picture. A layout seen
+here is a layout, not a verified screen (open point §3.2 still applies).
 
 ## Build order (§6.6)
 
