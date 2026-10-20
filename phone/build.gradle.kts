@@ -7,8 +7,15 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Version: CI passes its run number as HECATE_VERSION_CODE
+// (.github/workflows/android.yml), which becomes the version code and the last
+// part of the name; local builds are 1. The prefix is `hecate.version` in
+// gradle.properties, shared with the other module so the pair always match.
+val hecateVersionCode = providers.environmentVariable("HECATE_VERSION_CODE").orNull?.toIntOrNull() ?: 1
+val hecateVersionName = "${providers.gradleProperty("hecate.version").get()}.$hecateVersionCode"
+
 // §6.3 release signing: coordinates live in keystore.properties at the repository
-// root and are never committed. Read once here — `java.util.Properties` cannot be
+// root and are never committed. CI writes one from repository secrets. Read once here — `java.util.Properties` cannot be
 // spelled out inside the `signingConfigs` lambda, whose receiver shadows `java`.
 val keystoreProperties: Properties? = rootProject.file("keystore.properties")
     .takeIf { it.exists() }
@@ -26,8 +33,8 @@ android {
         applicationId = "de.hecate"
         minSdk = 34
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = hecateVersionCode
+        versionName = hecateVersionName
         // Room schemas are exported so a future migration has something to diff.
         ksp { arg("room.schemaLocation", "$projectDir/schemas") }
     }
@@ -178,4 +185,10 @@ dependencies {
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)
+}
+
+// CI reads the version back for the APK file names and the release tag.
+tasks.register("printVersionName") {
+    val name = hecateVersionName
+    doLast { println(name) }
 }
