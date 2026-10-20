@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher foreground as one flat silhouette, for themed icons:
+     the system tints it, so colour and the torch's halo are dropped. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path
+        android:pathData="M49,89 C51,80 55,72 54,62"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M54,62 C50,55 41,53 34,47 C31,44.5 29,41 28,38"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M54,62 C60,57 67,57 73,53 C77,50.5 80,47 81,44"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M48.5,62 a5.5,5.5 0 1,0 11.0,0 a5.5,5.5 0 1,0 -11.0,0 Z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M64.20,37.12 A11,11 0 1,1 53.73,22.00 A9.2,9.2 0 0,0 64.20,37.12 Z"
+        android:fillColor="#FFFFFF" />
+</vector>
