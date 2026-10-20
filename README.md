@@ -177,6 +177,30 @@ Do not ship with the debug keystore. See §6.3 of the specification and §1.1 of
 the open points: a signature mismatch means an uninstall, and an uninstall means
 losing any session the watch has not uploaded yet.
 
+### Builds from CI
+
+Every pull request runs `.github/workflows/android.yml`: all unit tests, lint,
+and release builds of both apps, with the phone screenshots and the APKs kept
+as workflow artifacts. Every push to `main` also publishes a GitHub release,
+`hecate-v1.0.<run>`, with `hecate-phone-….apk` and `hecate-wear-….apk`; the run
+number is the version code of both. Install the watch APK over adb as under
+*Testing on the wrist*, and let the watch upload first.
+
+The release keystore reaches CI as four repository secrets (Settings → Secrets
+and variables → Actions), the same names Nexus uses:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 hecate-release.jks` — the existing keystore, never a new one |
+| `ANDROID_KEYSTORE_PASSWORD` | `storePassword` from `keystore.properties` |
+| `ANDROID_KEY_ALIAS` | `keyAlias` (`hecate`) |
+| `ANDROID_KEY_PASSWORD` | `keyPassword` |
+
+Without them CI still tests and builds, but the APKs are unsigned and no
+release is published. A local build is version code 1, so once a CI build is
+installed, build with `HECATE_VERSION_CODE` above its run number or Android
+refuses the downgrade.
+
 Versions are pinned in `gradle/libs.versions.toml`, every one of them, with the
 reasoning beside anything that is not simply the newest release. §7 of the
 specification asks for upgrades to be deliberate; that file is where you make

@@ -163,8 +163,9 @@ behind:
 - **Per-session fields in `RecorderService` must be reset in `beginSession`**: the
   service instance outlives a session
   ([issues/speed-carries-over-into-the-next-session.md](issues/speed-carries-over-into-the-next-session.md)).
-- **`RecorderService.BuildInfo.VERSION` is hard-coded** — `:wear` builds no
-  `BuildConfig` — and must be bumped by hand with `versionName`.
+- **The session header's `appVersion` is `:wear`'s `BuildConfig.VERSION_NAME`**,
+  so it follows the CI-numbered version (*Continuous integration* below) rather
+  than a constant bumped by hand.
 - **Dead dependencies ship.** Release builds are not minified, so an unused
   library is APK weight: `lifecycle-service`, Compose `ui-tooling(-preview)`,
   `wear-tooling-preview` and `:wear`'s own serialization plugin and dependency
@@ -257,6 +258,32 @@ dynamic colour is Robolectric's default palette, not a wallpaper's; touch
 behaviour — scrubbing, scrolling, the full-screen map — is not exercised beyond
 `initialCursorMs`, which pre-places the cursor for one picture. A layout seen
 here is a layout, not a verified screen (open point §3.2 still applies).
+
+## Continuous integration
+
+`.github/workflows/android.yml` follows Nexus's Android build: one Gradle run
+of every unit test (screenshots included, kept as an artifact), lint and both
+release builds on each pull request, and on `main` a GitHub release carrying
+the phone and the watch APK. What differs from Nexus, and why:
+
+- **Signing goes through `keystore.properties`.** CI decodes the keystore from
+  repository secrets and writes the same file a local build reads, so there is
+  one signing path, not a second one keyed on environment variables. The
+  secret must be *the* release keystore
+  ([issues/release-keystore-has-no-second-copy.md](issues/release-keystore-has-no-second-copy.md));
+  a new key would make every CI build a different app. Without the secret the
+  APKs are unsigned and nothing is published — never debug-signed, which
+  §6.3 rules out.
+- **One release, two APKs, one version.** The phone and the watch app share an
+  `applicationId` and a signature, so they are built, numbered and published
+  together. The run number is the version code of both; the prefix is
+  `hecate.version` in `gradle.properties`.
+- **A local build is version code 1.** Once a CI build is installed, a local
+  `installRelease` is a downgrade and Android refuses it. Install the CI
+  APKs, or build locally with `HECATE_VERSION_CODE` set above the installed one.
+- **No in-app update check.** Nexus's apps look for a newer release; Hecate's
+  watch has no network and the phone sends out only what Settings lists, so
+  updates stay manual.
 
 ## Build order (§6.6)
 

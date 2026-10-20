@@ -1,0 +1,157 @@
+name: Android
+
+# The one build of both Hecate apps, modelled on Nexus's android-app.yml. Pull
+# requests get every unit test (with the phone screenshots), lint and release
+# builds of the phone and the watch app; a push to main also publishes the
+# signed pair as a GitHub release, which is how they are installed (sideloaded,
+# no Play Store — README, "Building").
+#
+# Keep this file's name: its run number is the apps' version code, and a
+# renamed workflow would start counting from one, below what is installed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - "phone/**"
+      - "wear/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "core/**"
+      - "phone/**"
+      - "wear/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Becomes versionCode and the last part of versionName in both modules
+      # (phone/build.gradle.kts). The two must match: they share one
+      # applicationId and one signature (.agents/brain/development.md, §6.3).
+      HECATE_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        # 25, the jvmToolchain every module declares (README step 1).
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Setup Android SDK packages
+        # The runner's SDK does not carry compileSdk 37 yet.
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # Only main writes the cache; pull requests read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Write signing coordinates
+        # The release keystore — the very one the installed apps carry, never a
+        # new one (issues/release-keystore-has-no-second-copy.md) — comes from
+        # repository secrets and goes through the same keystore.properties a
+        # local build reads. Without it the release APKs are unsigned and
+        # nothing is published.
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set: the APKs are unsigned and no release is published."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/hecate-release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/hecate-release.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > keystore.properties
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Test, lint and build
+        # One Gradle run: :core's suite, the phone's Robolectric tests (which
+        # include ScreenshotTest), lint as README "Testing locally" runs it,
+        # and both release builds, sharing configuration and compiled modules.
+        # androidModules=true so a missing SDK fails here instead of quietly
+        # building :core alone.
+        run: |
+          ./gradlew -Phecate.androidModules=true \
+            :core:test :phone:testDebugUnitTest \
+            :phone:lintDebug :wear:lintDebug \
+            :phone:assembleRelease :wear:assembleRelease
+          version="$(./gradlew -q -Phecate.androidModules=true :phone:printVersionName)"
+          echo "APP_VERSION=${version}" >> "$GITHUB_ENV"
+          # phone-release.apk when signed, phone-release-unsigned.apk when not.
+          for app in phone wear; do
+            cp "$app"/build/outputs/apk/release/"$app"-release*.apk "$RUNNER_TEMP/hecate-$app-${version}.apk"
+          done
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phone-screenshots
+          path: phone/build/screenshots/*.png
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Keep the test and lint reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports
+          path: |
+            */build/reports/
+            */build/test-results/
+          retention-days: 14
+
+      - name: Keep the APKs as a build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hecate-apks
+          path: ${{ runner.temp }}/hecate-*.apk
+          retention-days: 14
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.signing.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${APP_VERSION}"
+          gh release create "hecate-v${version}" \
+            "$RUNNER_TEMP/hecate-phone-${version}.apk" \
+            "$RUNNER_TEMP/hecate-wear-${version}.apk" \
+            --title "Hecate ${version}" \
+            --notes "Built from ${GITHUB_SHA::7}. Install both: the phone APK from this page on the phone, the watch APK with \`adb -s <watch> install -r\` (README, \"Testing on the wrist\"). Let the watch upload before updating either — Android updates in place only while the signature matches." \
+            --target "$GITHUB_SHA"
