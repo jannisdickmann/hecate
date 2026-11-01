@@ -34,6 +34,11 @@ Two traps learned creating it:
 - **A missing file does not fail at all.** `assembleRelease` succeeds and quietly
   produces `phone-release-unsigned.apk`, which only refuses at install time.
 
+Since A.34 CI signs releases with the same key, decoded from the repository
+secret `ANDROID_KEYSTORE_BASE64`. That secret must hold **this** keystore — a
+release signed with another key cannot update the installed apps — and it is
+not a backup: GitHub never shows a secret again, so it cannot be restored from.
+
 ## Impact
 
 Loss of the keystore forces an uninstall on both devices, and with it the loss of

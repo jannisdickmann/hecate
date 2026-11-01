@@ -163,8 +163,12 @@ behind:
 - **Per-session fields in `RecorderService` must be reset in `beginSession`**: the
   service instance outlives a session
   ([issues/speed-carries-over-into-the-next-session.md](issues/speed-carries-over-into-the-next-session.md)).
-- **`RecorderService.BuildInfo.VERSION` is hard-coded** — `:wear` builds no
-  `BuildConfig` — and must be bumped by hand with `versionName`.
+- **Versions come from CI, not from the build scripts.** `versionCode` is the
+  workflow's run number (`HECATE_VERSION_CODE`), `versionName` `1.0.<code>`;
+  a local build is 1. Code that needs the version reads it from the package
+  (`de.hecate.wear.AppVersion`, `UpdateRepository.installedPhone`) — `:wear`
+  builds no `BuildConfig`
+  ([A.34](decisions/2026-11-01-updates-from-github-releases.md)).
 - **Dead dependencies ship.** Release builds are not minified, so an unused
   library is APK weight: `lifecycle-service`, Compose `ui-tooling(-preview)`,
   `wear-tooling-preview` and `:wear`'s own serialization plugin and dependency

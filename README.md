@@ -11,7 +11,9 @@ Tuesday's run. Hecate does exactly that and not much else.
 Since A.29 one thing does leave the phone, on request: a bounding box, to fetch
 the OpenStreetMap streets drawn under your tracks. Since A.33 a second does:
 dates and 2 km squares, to fetch each recording's weather from Open-Meteo
-(switchable in Settings). The watch stays offline.
+(switchable in Settings). Since A.34 the phone also asks GitHub, once a day,
+whether a newer phone or watch build has been released — a request that
+carries nothing about you. The watch stays offline.
 
 The full design is in [SPECIFICATION.md](SPECIFICATION.md); its Appendix A
 records where the implementation departs from it, and why.
@@ -160,7 +162,8 @@ dependency graph, so give it a few minutes:
 ./gradlew :wear:installRelease          # with the watch connected over adb
 ```
 
-The two `installRelease` tasks **do not exist until `keystore.properties` does**.
+The two `installRelease` tasks **do not exist until `keystore.properties` does**
+(or, as on CI, `ANDROID_KEYSTORE_PATH` and its three companions are set).
 AGP only creates an install task for a variant it can sign, so without that file
 Gradle answers `Task 'installRelease' not found in project ':phone'` — which
 reads like a typo rather than a missing keystore. `installDebug` is always there;
@@ -181,6 +184,53 @@ Versions are pinned in `gradle/libs.versions.toml`, every one of them, with the
 reasoning beside anything that is not simply the newest release. §7 of the
 specification asks for upgrades to be deliberate; that file is where you make
 them.
+
+## Releases and updates
+
+Merging to `main` releases. GitHub Actions builds each APK in its own workflow —
+`android-phone.yml` when `phone/`, `core/` or the shared Gradle files change,
+`android-wear.yml` when `wear/`, `core/` or the shared Gradle files change —
+runs the tests and lint, and publishes the signed APK as a GitHub release:
+`phone-v1.0.<n>` and `wear-v1.0.<n>`, where `<n>` is that workflow's run number
+and the APK's `versionCode`. Pull requests build the same APKs and keep them as
+14-day artifacts (`phone-apk`, `wear-apk`, plus `phone-screenshots`), but never
+publish. [A.34](.agents/brain/decisions/2026-11-01-updates-from-github-releases.md)
+has the reasoning.
+
+**Nothing is published without the signing key.** The repository secrets, named
+as in Nexus:
+
+| Secret | What |
+| :--- | :--- |
+| `ANDROID_KEYSTORE_BASE64` | the release keystore, `base64 -w0 hecate-release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore's password |
+| `ANDROID_KEY_ALIAS` | the key's alias inside it (`hecate`) |
+| `ANDROID_KEY_PASSWORD` | the key's password |
+
+Without `ANDROID_KEYSTORE_BASE64` the APK is built unsigned, a warning says so,
+and no release is made. **It must be the keystore the installed apps are signed
+with** ([OP-1.1](.agents/brain/issues/release-keystore-has-no-second-copy.md)) —
+a release signed with any other key, Nexus's included, cannot update them.
+
+**Updating.** The phone checks GitHub's releases once a day, on every start, and
+whenever the watch reports a different build, and posts a notification for each
+new phone or watch release; tapping it opens the release page. Settings →
+**Version** shows the same for as long as it is true. The watch never checks — it
+has no network — but tells the phone its version over the Data Layer.
+
+- Phone: open the release page on the phone, download the APK, install it over
+  the existing app.
+- Watch: download the APK from the release page, then over wireless debugging
+  (*Testing on the wrist*): `adb -s <watch> install -r hecate-wear-1.0.<n>.apk`.
+  Let the watch upload its sessions first.
+
+**A local build cannot replace a released one**: it is `versionCode` 1, and
+Android refuses a downgrade without an uninstall — which on the watch costs every
+session not yet uploaded. Once a release is installed, build locally with a
+higher code if you must: `HECATE_VERSION_CODE=9999 ./gradlew :wear:assembleRelease`.
+
+Do not rename the two workflow files: a renamed workflow starts its run number,
+and with it the version code, at one.
 
 ## Testing locally
 
