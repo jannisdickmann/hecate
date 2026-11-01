@@ -17,6 +17,7 @@ on:
       - "gradlew"
       - ".github/workflows/android-wear.yml"
       - ".github/workflows/android-app.yml"
+      - ".github/gradle/**"
   pull_request:
     paths:
       - "wear/**"
@@ -27,6 +28,7 @@ on:
       - "gradlew"
       - ".github/workflows/android-wear.yml"
       - ".github/workflows/android-app.yml"
+      - ".github/gradle/**"
   workflow_dispatch:
 
 permissions:

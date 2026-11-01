@@ -70,6 +70,13 @@ jobs:
           # Only main writes the cache; pull requests read it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      - name: Prefer the Maven Central mirror
+        # Central answers a cold build from a shared runner with 429s, which
+        # fail the build outright (.github/gradle/mirror.init.gradle.kts).
+        run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          cp .github/gradle/mirror.init.gradle.kts "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d/"
+
       - name: Decode signing key
         id: signing
         env:
