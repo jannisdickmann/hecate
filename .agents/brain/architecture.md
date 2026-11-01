@@ -165,6 +165,10 @@ the database and in every backup and the rule can change without a migration.
 - `Uploader` — on stop, and on service start (to catch reboot leftovers), puts
   each unacked session file as a `DataClient` Asset. A session with no samples
   is dropped rather than offered.
+- `VersionPublisher` — on every process start, puts the installed version as
+  the data item `/hecate/watch-version`, so the phone can tell whether the
+  watch is behind the newest release
+  ([A.34](decisions/2026-11-01-updates-from-github-releases.md)).
 - `SampleFeed` — where `ExerciseSource` stands; a debug-only implementation
   replays a stored session into the recorder
   ([A.28](decisions/2026-09-13-replaying-an-activity-into-the-recorder.md)).
@@ -230,6 +234,11 @@ backup archive and for replay fixtures.
 - `WeatherRepository` / `WeatherWorker` — each recording's weather from
   Open-Meteo, backfilled on any network after ingest and on resume
   ([A.33](decisions/2026-10-13-weather-and-a-phone-app-to-read-it-in.md)).
+- `UpdateRepository` / `UpdateWorker` — asks GitHub's release list for a newer
+  phone or watch build (the watch's version from its data item), daily, on
+  every start and when the watch reports a new build; one notification per
+  release, and the **Version** card in Settings
+  ([A.34](decisions/2026-11-01-updates-from-github-releases.md)).
 - Basemap tile store under `filesDir/karte/`, outside Room so that a map never
   enters a backup ([A.29](decisions/2026-09-20-osm-basemap-under-every-track.md)).
 - UI: **Aufzeichnungen** list → **Recording detail**; **Routes** list →

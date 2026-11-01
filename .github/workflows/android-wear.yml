@@ -1,0 +1,48 @@
+name: Hecate Watch
+
+# Builds the wear APK (android-app.yml), only when its own code or the shared
+# code changes. Keep this file's name: its run number is the APK's version
+# code, and a renamed workflow would start counting from one — which Android
+# refuses to install over a higher one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wear/**"
+      - "core/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android-wear.yml"
+      - ".github/workflows/android-app.yml"
+      - ".github/gradle/**"
+  pull_request:
+    paths:
+      - "wear/**"
+      - "core/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android-wear.yml"
+      - ".github/workflows/android-app.yml"
+      - ".github/gradle/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-wear-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/android-app.yml
+    with:
+      module: wear
+      title: the watch
+      tasks: ":core:test :wear:lintDebug"
+    secrets: inherit

@@ -7,6 +7,7 @@ import de.hecate.wear.data.BundleStore
 import de.hecate.wear.data.SessionStore
 import de.hecate.wear.recorder.RecorderBus
 import de.hecate.wear.transfer.Uploader
+import de.hecate.wear.transfer.VersionPublisher
 
 /**
  * §4: no dependency injection framework. A handful of objects wired by hand in
@@ -47,5 +48,6 @@ class HecateApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AppGraph.init(this)
+        VersionPublisher.publish(this)
     }
 }

@@ -1,7 +1,9 @@
 package de.hecate.phone.ui
 
+import android.Manifest
 import android.content.ClipData
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -86,6 +88,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Only the update notification needs it (A.34). Asked when the app opens
+     *  until it is answered — Android itself stops showing the question after
+     *  a second refusal — and the settings card shows an available update
+     *  either way. */
+    private val requestNotifications = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted: Boolean ->
+        if (granted) Jobs.enqueueUpdateCheck(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Draw behind the status and navigation bars. targetSdk 36 enforces this
         // anyway; opting in explicitly means the Scaffold's window insets are
@@ -93,6 +105,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AppGraph.init(this)
+        if (savedInstanceState == null) {
+            Jobs.enqueueUpdateCheck(this)
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
         setContent {
             HecateApp(
                 vm = vm,

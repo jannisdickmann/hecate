@@ -7,12 +7,37 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-// §6.3 release signing: coordinates live in keystore.properties at the repository
-// root and are never committed. Read once here — `java.util.Properties` cannot be
-// spelled out inside the `signingConfigs` lambda, whose receiver shadows `java`.
+// §6.3 release signing. On a laptop the coordinates live in keystore.properties
+// at the repository root and are never committed; on CI (A.34) the same four
+// values come from the environment, the keystore decoded from a repository
+// secret into ANDROID_KEYSTORE_PATH. Read once here — `java.util.Properties`
+// cannot be spelled out inside the `signingConfigs` lambda, whose receiver
+// shadows `java`.
 val keystoreProperties: Properties? = rootProject.file("keystore.properties")
     .takeIf { it.exists() }
     ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+    ?: providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+        ?.takeIf { file(it).isFile }
+        ?.let { path ->
+            Properties().apply {
+                setProperty("storeFile", path)
+                setProperty("storePassword", providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull.orEmpty())
+                setProperty("keyAlias", providers.environmentVariable("ANDROID_KEY_ALIAS").orNull.orEmpty())
+                setProperty("keyPassword", providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull.orEmpty())
+            }
+        }
+
+// A.34: CI passes its workflow run number, which becomes the version code and
+// the last part of the name; a local build is 1. Phone and watch each have
+// their own workflow and so count on their own. The phone's update check
+// compares the version code with the one in the newest release tag, and CI
+// reads the name back with `printVersionName` for the APK file and the tag.
+val hecateVersionCode: Int = providers.environmentVariable("HECATE_VERSION_CODE").orNull?.toIntOrNull() ?: 1
+val hecateVersionName = "1.0.$hecateVersionCode"
+tasks.register("printVersionName") {
+    val name = hecateVersionName
+    doLast { println(name) }
+}
 
 android {
     namespace = "de.hecate.phone"
@@ -26,8 +51,8 @@ android {
         applicationId = "de.hecate"
         minSdk = 34
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = hecateVersionCode
+        versionName = hecateVersionName
         // Room schemas are exported so a future migration has something to diff.
         ksp { arg("room.schemaLocation", "$projectDir/schemas") }
     }

@@ -1,0 +1,130 @@
+package de.hecate.phone.update
+
+import android.Manifest
+import android.app.Application
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import androidx.test.core.app.ApplicationProvider
+import de.hecate.core.update.ReleaseClient
+import de.hecate.core.update.UpdateTarget
+import de.hecate.phone.Fixtures
+import de.hecate.phone.db.HecateDatabase
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import java.io.IOException
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+@RunWith(RobolectricTestRunner::class)
+class UpdateRepositoryTest {
+
+    private val context: Context = ApplicationProvider.getApplicationContext()
+    private val notifications = context.getSystemService(NotificationManager::class.java)
+    private lateinit var db: HecateDatabase
+
+    @Before
+    fun setUp() {
+        db = Fixtures.database(context)
+        shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    @After
+    fun tearDown() = db.close()
+
+    private fun releases(vararg tags: String) = tags.joinToString(",", "[", "]") { tag ->
+        """{"tag_name":"$tag","html_url":"https://github.com/jannisdickmann/hecate/releases/tag/$tag","draft":false,"prerelease":false}"""
+    }
+
+    private fun repo(
+        body: () -> String,
+        phone: Long = 5,
+        watch: InstalledVersion? = InstalledVersion(3, "1.0.3"),
+    ) = UpdateRepository(
+        context, db,
+        client = ReleaseClient { body() },
+        installedPhone = { InstalledVersion(phone, "1.0.$phone") },
+        installedWatch = { watch },
+        now = { 1_000L },
+    )
+
+    private fun posted() = shadowOf(notifications).allNotifications
+
+    @Test
+    fun `a newer phone and a newer watch release are each announced, and open their page`(): Unit = runBlocking {
+        val status = repo({ releases("phone-v1.0.6", "wear-v1.0.4", "phone-v1.0.5") }).check()
+
+        assertEquals(6, status.phoneUpdate?.versionCode)
+        assertEquals(4, status.watchUpdate?.versionCode)
+        assertEquals(1_000L, status.checkedAtUtcMs)
+        assertEquals(2, posted().size)
+
+        val phone = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.PHONE))
+        assertEquals("Hecate 1.0.6 für das Telefon", phone.extras.getString("android.title"))
+        val tap = shadowOf(phone.contentIntent).savedIntent
+        assertEquals(Intent.ACTION_VIEW, tap.action)
+        assertEquals("https://github.com/jannisdickmann/hecate/releases/tag/phone-v1.0.6", tap.dataString)
+
+        val watch = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.WATCH))
+        assertEquals("Hecate 1.0.4 für die Uhr", watch.extras.getString("android.title"))
+        assertTrue(watch.extras.getString("android.text")!!.contains("Installiert ist 1.0.3"))
+    }
+
+    @Test
+    fun `up to date is no notification`(): Unit = runBlocking {
+        val status = repo({ releases("phone-v1.0.5", "wear-v1.0.3") }).check()
+        assertNull(status.phoneUpdate)
+        assertNull(status.watchUpdate)
+        assertTrue(posted().isEmpty())
+    }
+
+    @Test
+    fun `a release is announced once, and the next one again`(): Unit = runBlocking {
+        var body = releases("phone-v1.0.6")
+        val repo = repo({ body })
+        repo.check()
+        notifications.cancelAll()
+
+        repo.check()
+        assertTrue(posted().isEmpty(), "the same release twice")
+
+        body = releases("phone-v1.0.7", "phone-v1.0.6")
+        repo.check()
+        assertEquals(1, posted().size)
+    }
+
+    @Test
+    fun `without a version from the watch it is not nagged about, but the card can point at the release`(): Unit = runBlocking {
+        val status = repo({ releases("wear-v1.0.9") }, watch = null).check()
+        assertNull(status.watchUpdate)
+        assertEquals(9, status.latestWatch?.versionCode)
+        assertTrue(posted().isEmpty())
+    }
+
+    @Test
+    fun `without the notification permission nothing is posted, and it is tried again later`(): Unit = runBlocking {
+        shadowOf(context as Application).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val repo = repo({ releases("phone-v1.0.6") })
+        assertNotNull(repo.check().phoneUpdate)
+        assertTrue(posted().isEmpty())
+
+        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        repo.check()
+        assertEquals(1, posted().size)
+    }
+
+    @Test
+    fun `an unreachable GitHub is a status, not a crash`(): Unit = runBlocking {
+        val status = repo({ throw IOException("offline") }).check()
+        assertTrue(status.failed)
+        assertEquals(5, status.phone?.code)
+        assertTrue(posted().isEmpty())
+    }
+}

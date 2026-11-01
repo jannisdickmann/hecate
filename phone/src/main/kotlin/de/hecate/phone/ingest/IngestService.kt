@@ -6,6 +6,7 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.WearableListenerService
 import de.hecate.phone.AppGraph
 import de.hecate.phone.Wire
+import de.hecate.phone.work.Jobs
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -31,6 +32,12 @@ class IngestService : WearableListenerService() {
         for (event in events) {
             if (event.type != DataEvent.TYPE_CHANGED) continue
             val path = event.dataItem.uri.path ?: continue
+            if (path == Wire.PATH_WATCH_VERSION) {
+                // The watch runs a different build: whether it is behind is
+                // worth asking now rather than tomorrow (A.34).
+                Jobs.enqueueUpdateCheck(this)
+                continue
+            }
             if (!path.startsWith(Wire.PATH_SESSION_PREFIX)) continue
             runCatching { runBlocking { AppGraph.dataLayer.ingest(event.dataItem) } }
                 .onFailure { Log.e(TAG, "Ingest von $path fehlgeschlagen", it) }

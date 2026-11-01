@@ -23,6 +23,7 @@ import de.hecate.core.profile.Analysis
 import de.hecate.core.profile.Elevation
 import de.hecate.core.profile.Timeline
 import de.hecate.phone.AppGraph
+import de.hecate.phone.update.UpdateStatus
 import de.hecate.core.archive.Archive
 import de.hecate.core.weather.WeatherSummary
 import de.hecate.core.weather.WeatherTrack
@@ -355,6 +356,11 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
         WorkManager.getInstance(app).getWorkInfosForUniqueWorkFlow(Jobs.WEATHER)
             .map { infos -> infos.any { it.state == WorkInfo.State.RUNNING } }
             .stateIn(viewModelScope, WHILE_SHOWN, false)
+
+    /** The update check's last answer (A.34), for the settings card. */
+    val updates: StateFlow<UpdateStatus> = AppGraph.updates.status
+
+    fun checkForUpdates() = viewModelScope.launch { AppGraph.updates.check() }
 
     fun setWeatherEnabled(on: Boolean) = viewModelScope.launch {
         db.meta().put(MetaEntity(Settings.WEATHER_ENABLED, if (on) "1" else "0"))

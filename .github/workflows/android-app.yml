@@ -1,0 +1,141 @@
+name: Android app
+
+# The one build of a Hecate APK, called by android-phone.yml and
+# android-wear.yml, each of which triggers only when its own module or the
+# shared code changes. Pull requests get the tests, lint and a release build; a
+# push to main also publishes the signed APK as a GitHub release, which is how
+# phone and watch are installed and updated (sideloaded, no Play Store — A.34).
+#
+# Nothing is published without the signing key: with ANDROID_KEYSTORE_BASE64
+# unset the APK is built unsigned, kept as an artifact, and no release is made.
+# Same-repository pull requests are signed with the release key too, so their
+# APK artifact installs over the released app; a fork's gets no secrets.
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: The Gradle module, phone or wear
+        required: true
+        type: string
+      title:
+        description: The release title's device, e.g. "the phone"
+        required: true
+        type: string
+      tasks:
+        description: The Gradle tasks that test and check this module
+        required: true
+        type: string
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MODULE: ${{ inputs.module }}
+      # Becomes versionCode and the last part of versionName (both build
+      # scripts). In a called workflow this is the caller's run number, so
+      # phone and watch count on their own. The phone's update check compares
+      # it with the newest release tag's.
+      HECATE_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        # 25 because every module declares jvmToolchain(25) (README step 1).
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Install the SDK packages
+        # compileSdk 37; the runner's preinstalled SDK may not have it yet.
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # Only main writes the cache; pull requests read it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Prefer the Maven Central mirror
+        # Central answers a cold build from a shared runner with 429s, which
+        # fail the build outright (.github/gradle/mirror.init.gradle.kts).
+        run: |
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+          cp .github/gradle/mirror.init.gradle.kts "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d/"
+
+      - name: Decode signing key
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set: the APK is unsigned and no release is published."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Test, lint and build
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TASKS: ${{ inputs.tasks }}
+        run: |
+          # shellcheck disable=SC2086 # TASKS is a list of task names
+          ./gradlew $TASKS ":$MODULE:assembleRelease"
+          version="$(./gradlew -q ":$MODULE:printVersionName")"
+          echo "APP_VERSION=${version}" >> "$GITHUB_ENV"
+          # phone-release.apk when signed, phone-release-unsigned.apk when not.
+          apk="$(ls "$MODULE"/build/outputs/apk/release/*.apk | head -n 1)"
+          cp "$apk" "$RUNNER_TEMP/hecate-$MODULE-${version}.apk"
+
+      - name: Keep the screenshots
+        if: always() && inputs.module == 'phone'
+        uses: actions/upload-artifact@v7
+        with:
+          name: phone-screenshots
+          path: phone/build/screenshots/*.png
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Keep the APK as a build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.module }}-apk
+          path: ${{ runner.temp }}/hecate-${{ inputs.module }}-*.apk
+          retention-days: 14
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.signing.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          version="${APP_VERSION}"
+          if [ "$MODULE" = "wear" ]; then
+            notes="Built from ${GITHUB_SHA::7}. Download the APK and install it on the watch over wireless debugging: \`adb -s <watch> install -r hecate-wear-${version}.apk\`. Android updates the installed app in place; upload pending sessions to the phone first."
+          else
+            notes="Built from ${GITHUB_SHA::7}. Open this page on the phone and install the APK; Android updates the installed app in place."
+          fi
+          gh release create "$MODULE-v${version}" "$RUNNER_TEMP/hecate-$MODULE-${version}.apk" \
+            --title "Hecate for ${TITLE} ${version}" \
+            --notes "$notes" \
+            --target "$GITHUB_SHA" \
+            --latest=false

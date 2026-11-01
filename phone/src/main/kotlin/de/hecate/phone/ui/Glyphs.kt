@@ -177,7 +177,7 @@ private fun DrawScope.flake(c: Offset, r: Float) {
 }
 
 /** The figure icons of the analysis cards, line-drawn in the content colour. */
-enum class Figure { TIMER, DISTANCE, SPEED, MOUNTAIN, HEART, SPLITS, ZONES, CHART, ROUTE, WEATHER, CALENDAR, TROPHY }
+enum class Figure { TIMER, DISTANCE, SPEED, MOUNTAIN, HEART, SPLITS, ZONES, CHART, ROUTE, WEATHER, CALENDAR, TROPHY, UPDATE }
 
 @Composable
 fun FigureGlyph(figure: Figure, color: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
@@ -259,6 +259,23 @@ fun DrawScope.drawFigure(figure: Figure, color: Color) {
             drawLine(color, p(.12f, .42f), p(.88f, .42f), strokeWidth = stroke.width)
             drawLine(color, p(.34f, .1f), p(.34f, .26f), strokeWidth = stroke.width, cap = StrokeCap.Round)
             drawLine(color, p(.66f, .1f), p(.66f, .26f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        }
+        Figure.UPDATE -> {
+            // An arrow down into a tray: a download.
+            drawLine(color, p(.5f, .12f), p(.5f, .6f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+            val head = Path().apply {
+                moveTo(.3f * s, .42f * s)
+                lineTo(.5f * s, .62f * s)
+                lineTo(.7f * s, .42f * s)
+            }
+            drawPath(head, color, style = stroke)
+            val tray = Path().apply {
+                moveTo(.14f * s, .64f * s)
+                lineTo(.14f * s, .86f * s)
+                lineTo(.86f * s, .86f * s)
+                lineTo(.86f * s, .64f * s)
+            }
+            drawPath(tray, color, style = stroke)
         }
         Figure.TROPHY -> {
             val cup = Path().apply {
