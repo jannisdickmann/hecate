@@ -306,7 +306,7 @@ class RecorderService : Service() {
                     tzOffsetMinutes = tzOffsetMinutes,
                     exerciseType = exerciseType,
                     bundleVersion = bundle.version.takeIf { it > 0 },
-                    appVersion = BuildInfo.VERSION,
+                    appVersion = de.hecate.wear.AppVersion.name(this),
                 ),
             )
             writer = w
@@ -1210,13 +1210,6 @@ class RecorderService : Service() {
         scope.launch { source.clearCallback() }
         scope.cancel()
         super.onDestroy()
-    }
-
-    /** Written into every session header. Hard-coded, not generated: this
-     *  module builds no BuildConfig, so keep it in step with `versionName` in
-     *  `wear/build.gradle.kts` by hand. */
-    object BuildInfo {
-        const val VERSION = "1.0"
     }
 
     companion object {
