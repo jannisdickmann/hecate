@@ -1,0 +1,46 @@
+name: Hecate Phone
+
+# Builds the phone APK (android-app.yml), only when its own code or the shared
+# code changes. Keep this file's name: its run number is the APK's version
+# code, and a renamed workflow would start counting from one — which Android
+# refuses to install over a higher one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "phone/**"
+      - "core/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android-phone.yml"
+      - ".github/workflows/android-app.yml"
+  pull_request:
+    paths:
+      - "phone/**"
+      - "core/**"
+      - "gradle/**"
+      - "*.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - ".github/workflows/android-phone.yml"
+      - ".github/workflows/android-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-phone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/android-app.yml
+    with:
+      module: phone
+      title: the phone
+      tasks: ":core:test :phone:testDebugUnitTest :phone:lintDebug"
+    secrets: inherit
