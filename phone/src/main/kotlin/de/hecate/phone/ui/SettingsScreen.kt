@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -48,7 +49,9 @@ import de.hecate.core.Tuning
 import de.hecate.core.map.KarteIndex
 import de.hecate.core.map.TileStore
 import de.hecate.core.model.Intensity
+import de.hecate.core.update.AvailableUpdate
 import de.hecate.core.weather.OpenMeteo
+import de.hecate.phone.update.UpdateStatus
 
 /** What the settings panel shows. */
 data class SettingsState(
@@ -61,6 +64,7 @@ data class SettingsState(
     val weatherRunning: Boolean = false,
     val mapStats: TileStore.Stats = TileStore.Stats(0, 0, null, 0),
     val mapPrefetch: MapPrefetch? = null,
+    val updates: UpdateStatus = UpdateStatus(),
 )
 
 /** What the settings panel can ask for. */
@@ -76,6 +80,7 @@ class SettingsActions(
     val onPickTcx: () -> Unit = {},
     val onExportArchive: () -> Unit = {},
     val onRestoreArchive: () -> Unit = {},
+    val onCheckUpdates: () -> Unit = {},
 )
 
 /**
@@ -100,13 +105,14 @@ fun SettingsScreen(
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val mapStats by vm.mapStats.collectAsStateWithLifecycle()
     val prefetch by vm.mapPrefetch.collectAsStateWithLifecycle()
+    val updates by vm.updates.collectAsStateWithLifecycle()
 
     // Both the grant and its removal can happen in Health Connect's own
     // settings, so the switch is re-read every time this panel appears.
     LaunchedEffect(Unit) { vm.refreshHealthConnect() }
 
     SettingsContent(
-        SettingsState(clustering, hc, peakHr, weatherEnabled, weatherCount, sessions.size, weatherRunning, mapStats, prefetch),
+        SettingsState(clustering, hc, peakHr, weatherEnabled, weatherCount, sessions.size, weatherRunning, mapStats, prefetch, updates),
         SettingsActions(
             onRecluster = { vm.recluster() },
             onPeakHr = { vm.setPeakHr(it) },
@@ -119,6 +125,7 @@ fun SettingsScreen(
             onPickTcx = onPickTcx,
             onExportArchive = onExportArchive,
             onRestoreArchive = onRestoreArchive,
+            onCheckUpdates = { vm.checkForUpdates() },
         ),
     )
 }
@@ -196,7 +203,78 @@ fun SettingsContent(state: SettingsState, actions: SettingsActions) {
                 actions.onRestoreArchive,
             )
         }
+        SectionCard("Version", Figure.UPDATE, Modifier.appear(6)) { UpdateSettings(state.updates, actions) }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * What is installed on phone and watch, and whether GitHub has anything newer
+ * (A.34). The notification says the same once per release; this says it for as
+ * long as it is true, and is the way to the release page when notifications
+ * are off. The watch has no network and no browser, so its row is the phone's
+ * to show.
+ */
+@Composable
+private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
+    val uri = LocalUriHandler.current
+    VersionRow(
+        "Telefon",
+        status.phone?.name ?: "–",
+        status.phoneUpdate,
+        upToDate = status.checkedAtUtcMs != null,
+        onOpen = { uri.openUri(it) },
+    )
+    SettingsDivider()
+    VersionRow(
+        "Uhr",
+        status.watch?.name ?: "noch nicht gemeldet",
+        status.watchUpdate ?: status.latestWatch.takeIf { status.watch == null },
+        upToDate = status.checkedAtUtcMs != null && status.watch != null,
+        onOpen = { uri.openUri(it) },
+    )
+    SettingsDivider()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Quiet(
+            when {
+                status.checking -> "Wird geprüft…"
+                status.failed -> "GitHub war nicht erreichbar. Nächster Versuch beim nächsten Start oder morgen."
+                status.checkedAtUtcMs != null -> "Zuletzt geprüft: ${Format.dateTime(status.checkedAtUtcMs, localOffsetMinutes(status.checkedAtUtcMs))}. Gefragt wird GitHub, " +
+                    "einmal am Tag und bei jedem Start; gesendet wird dabei nichts über dich."
+                else -> "Gefragt wird GitHub, einmal am Tag und bei jedem Start; gesendet wird dabei nichts über dich."
+            },
+            Modifier.weight(1f),
+        )
+        if (status.checking) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else {
+            TextButton(onClick = actions.onCheckUpdates) { Text("Prüfen") }
+        }
+    }
+}
+
+private fun localOffsetMinutes(utcMs: Long): Int = java.util.TimeZone.getDefault().getOffset(utcMs) / 60_000
+
+@Composable
+private fun VersionRow(device: String, installed: String, update: AvailableUpdate?, upToDate: Boolean, onOpen: (String) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(device, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Quiet(
+                buildString {
+                    append(installed)
+                    when {
+                        update != null -> append(" · ${update.versionName} ist verfügbar")
+                        upToDate -> append(" · aktuell")
+                    }
+                },
+            )
+        }
+        if (update != null) {
+            Spacer(Modifier.width(12.dp))
+            FilledTonalButton(onClick = { onOpen(update.pageUrl) }) { Text("Öffnen") }
+        }
     }
 }
 

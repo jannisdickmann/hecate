@@ -3,16 +3,18 @@ package de.hecate.phone.work
 import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import de.hecate.phone.map.BasemapPrefetchWorker
 import java.util.concurrent.TimeUnit
 
 /**
- * §4: WorkManager, phone only, one-shot after ingest. Three jobs now, all
- * replaceable — a burst of five sessions arriving at once should cluster once,
+ * §4: WorkManager, phone only, one-shot after ingest — and, since A.34, one
+ * daily job, the update check. The one-shot jobs are replaceable — a burst of five sessions arriving at once should cluster once,
  * not five times, which `REPLACE` gives for free.
  */
 object Jobs {
@@ -93,6 +95,32 @@ object Jobs {
             OneTimeWorkRequestBuilder<HealthConnectWorker>()
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
                 .build(),
+        )
+    }
+
+    private const val UPDATE_DAILY = "hecate.update.daily"
+
+    /** Public so the settings card can say a check is under way. */
+    const val UPDATE_NOW = "hecate.update.now"
+
+    /**
+     * The update check (A.34): daily, plus once now — on every app start and
+     * whenever the watch reports a different build. KEEP for the daily one so
+     * starting the app does not keep pushing it back a day; REPLACE for the
+     * immediate one, which is idempotent.
+     */
+    fun enqueueUpdateCheck(context: Context) {
+        val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val work = WorkManager.getInstance(context)
+        work.enqueueUniquePeriodicWork(
+            UPDATE_DAILY,
+            ExistingPeriodicWorkPolicy.KEEP,
+            PeriodicWorkRequestBuilder<UpdateWorker>(1, TimeUnit.DAYS).setConstraints(online).build(),
+        )
+        work.enqueueUniqueWork(
+            UPDATE_NOW,
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<UpdateWorker>().setConstraints(online).build(),
         )
     }
 }

@@ -11,6 +11,7 @@ import de.hecate.phone.ingest.DataLayerIngest
 import de.hecate.phone.ingest.SessionRepository
 import de.hecate.phone.map.BasemapRepository
 import de.hecate.phone.tcx.TcxImporter
+import de.hecate.phone.update.UpdateRepository
 
 /**
  * §4: no dependency injection framework. Manual constructor wiring, one object;
@@ -44,6 +45,12 @@ object AppGraph {
     lateinit var basemap: BasemapRepository
         private set
 
+    /** The update check (A.34). Here because its status is held in memory and
+     *  shared by a WorkManager job, which writes it, and the settings card,
+     *  which shows it. */
+    lateinit var updates: UpdateRepository
+        private set
+
     @Volatile
     private var initialised = false
 
@@ -60,6 +67,7 @@ object AppGraph {
             dataLayer = DataLayerIngest(app, repository)
             gpx = GpxExporter(app, db)
             basemap = BasemapRepository(app)
+            updates = UpdateRepository(app, db)
             initialised = true
         }
     }

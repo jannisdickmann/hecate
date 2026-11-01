@@ -20,4 +20,8 @@ object Wire {
     const val KEY_BUNDLE_ASSET = "bundle"
     const val KEY_BUNDLE_VERSION = "version"
     const val KEY_ATTEMPT = "attempt"
+
+    const val PATH_WATCH_VERSION = "/hecate/watch-version"
+    const val KEY_VERSION_CODE = "versionCode"
+    const val KEY_VERSION_NAME = "versionName"
 }

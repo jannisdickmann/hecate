@@ -29,6 +29,8 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import de.hecate.core.model.ExerciseType
+import de.hecate.core.update.AvailableUpdate
+import de.hecate.core.update.UpdateTarget
 import de.hecate.phone.db.RouteSummary
 import de.hecate.phone.db.SessionSummary
 import de.hecate.phone.ui.HecateTheme
@@ -43,6 +45,8 @@ import de.hecate.phone.ui.SessionDetailBuilder
 import de.hecate.phone.ui.SettingsActions
 import de.hecate.phone.ui.SettingsContent
 import de.hecate.phone.ui.SettingsState
+import de.hecate.phone.update.InstalledVersion
+import de.hecate.phone.update.UpdateStatus
 import de.hecate.phone.ui.Standout
 import de.hecate.phone.ui.HealthConnectState
 import de.hecate.phone.ui.heatmapCaption
@@ -182,6 +186,12 @@ class ScreenshotTest {
 
     private val settings = SettingsState(
         healthConnect = HealthConnectState.CONNECTED, peakHr = 186, weatherCount = 212, sessionCount = 248, weatherRunning = true,
+        updates = UpdateStatus(
+            phone = InstalledVersion(41, "1.0.41"),
+            watch = InstalledVersion(17, "1.0.17"),
+            watchUpdate = AvailableUpdate(UpdateTarget.WATCH, "1.0.19", 19, "https://github.com/jannisdickmann/hecate/releases/tag/wear-v1.0.19"),
+            checkedAtUtcMs = 1_793_520_000_000L,
+        ),
     )
 
     @Test fun recordingDetail() = shoot("1-recording-detail") { Detail { RecordingDetailContent(detail, 186, weather, RecordingActions()) } }

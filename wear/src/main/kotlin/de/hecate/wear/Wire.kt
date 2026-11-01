@@ -35,4 +35,10 @@ object Wire {
     /** Bumped on every upload attempt so the Data Layer sees a changed item even
      *  when the payload is byte-identical. */
     const val KEY_ATTEMPT = "attempt"
+
+    /** Data item carrying the watch's installed version, watch → phone (A.34),
+     *  so the phone can say when a newer watch build has been released. */
+    const val PATH_WATCH_VERSION = "/hecate/watch-version"
+    const val KEY_VERSION_CODE = "versionCode"
+    const val KEY_VERSION_NAME = "versionName"
 }
