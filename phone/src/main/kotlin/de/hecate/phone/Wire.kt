@@ -25,4 +25,14 @@ object Wire {
     const val KEY_VERSION_CODE = "versionCode"
     const val KEY_VERSION_NAME = "versionName"
     const val PATH_APK = "/hecate/apk"
+
+    /** Capability a watch build advertises once it can receive [PATH_APK]
+     *  (wear `res/values/wear.xml`). A watch without it is too old: nothing
+     *  there reads the channel, and the phone's write would only hang. */
+    const val CAPABILITY_APK = "hecate_apk"
+
+    /** The watch closes the APK channel with one of these codes, so the phone
+     *  learns whether the build was kept. */
+    const val APK_ACCEPTED = 0
+    const val APK_REJECTED = 1
 }

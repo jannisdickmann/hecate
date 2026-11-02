@@ -1,6 +1,7 @@
 package de.hecate.phone.update
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -67,6 +68,8 @@ open class UpdateNotifier(private val context: Context) {
         SENDING("Wird an die Uhr gesendet…", true),
         SENT("Auf der Uhr installieren", false),
         NO_WATCH("Uhr nicht verbunden", false),
+        WATCH_TOO_OLD("Uhr-App zu alt", false),
+        REJECTED("Von der Uhr abgelehnt", false),
         FAILED("Senden fehlgeschlagen", false),
     }
 
@@ -77,6 +80,11 @@ open class UpdateNotifier(private val context: Context) {
         ) {
             return
         }
+        runCatching { NotificationManagerCompat.from(context).notify(TRANSFER_ID, transferNotification(state)) }
+    }
+
+    /** Also the foreground notification of the transfer's worker. */
+    fun transferNotification(state: Transfer): Notification {
         ensureChannel(context)
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_hecate)
@@ -84,7 +92,7 @@ open class UpdateNotifier(private val context: Context) {
             .setOngoing(state.ongoing)
             .setAutoCancel(!state.ongoing)
         if (state.ongoing) builder.setProgress(0, 0, true)
-        runCatching { NotificationManagerCompat.from(context).notify(TRANSFER_ID, builder.build()) }
+        return builder.build()
     }
 
     companion object {
