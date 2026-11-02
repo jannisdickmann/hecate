@@ -214,9 +214,7 @@ fun RecordingDetailContent(
             title = "Aufzeichnung löschen?",
             // Names what actually goes. "Are you sure" is not information.
             body = "${Format.dateTime(s.startedAtUtc, s.tzOffsetMinutes)} — " +
-                "${Format.distance(s.totalDistanceM)}, ${Format.duration(s.activeDurationMs)}.\n\n" +
-                "Messpunkte, Match-Log und Verlauf werden mitgelöscht. Zurückholen lässt sich das " +
-                "nur aus einer Sicherung. Der Eintrag in Health Connect bleibt bestehen.",
+                "${Format.distance(s.totalDistanceM)}, ${Format.duration(s.activeDurationMs)}",
             confirm = "Löschen",
             onConfirm = { confirmDelete = false; actions.onDelete() },
             onDismiss = { confirmDelete = false },
@@ -320,8 +318,6 @@ private fun RouteCard(d: SessionDetail, actions: RecordingActions, modifier: Mod
             }
             d.routeName == null -> {
                 Text("Keiner Route zugeordnet", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Quiet("Eine Route entsteht, sobald drei ähnliche Aufzeichnungen vorliegen — oder sofort, als vorläufige Route aus dieser.")
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = { actions.onTemporaryRoute(true) }) { Text("Als vorläufige Route verwenden") }
             }
@@ -356,8 +352,6 @@ private fun RouteCard(d: SessionDetail, actions: RecordingActions, modifier: Mod
 @Composable
 private fun Comparison(mine: Long, all: List<Long>) {
     if (all.size < 2) {
-        Spacer(Modifier.height(4.dp))
-        Quiet("Die erste Aufzeichnung dieser Route — ab der zweiten steht hier der Vergleich.")
         return
     }
     val sorted = all.sorted()
@@ -440,21 +434,16 @@ private fun WeatherCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     WeatherGlyph(Sky.CLOUDY, true, size = 40.dp, modifier = Modifier.clip(CircleShape))
                     Spacer(Modifier.width(14.dp))
-                    Column {
-                        Text("Wetter wird geholt…", style = MaterialTheme.typography.titleSmall)
-                        Quiet("Sobald das Telefon online ist, kommt das Wetter dieser Aufzeichnung von Open-Meteo.")
-                    }
+                    Text("Wetter wird geholt…", style = MaterialTheme.typography.titleSmall)
                 }
             }
             WeatherView.Off -> {
                 Text("Wetter ist ausgeschaltet", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
-                Quiet("Eingeschaltet holt die App für jede Aufzeichnung alle 10 Minuten Wetter, Temperatur und Niederschlag.")
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = actions.onEnableWeather) { Text("Einschalten") }
             }
             WeatherView.Unavailable -> {
-                Quiet("Für diese Aufzeichnung gibt es kein Wetter: sie hat keine Positionen, nach denen gefragt werden könnte.")
+                Quiet("Kein Wetter verfügbar")
             }
             is WeatherView.Ready -> WeatherReady(weather, points, startedAtUtc, tzOffsetMinutes, cursorMs, onCursor)
         }
@@ -508,10 +497,7 @@ private fun WeatherReady(
     Spacer(Modifier.height(10.dp))
     WeatherChart(points, cursorMs, onScrub = { onCursor(it) })
     Spacer(Modifier.height(8.dp))
-    Quiet(
-        OpenMeteo.ATTRIBUTION + " · " +
-            if (weather.track.resolution == "15min") "Modell in 15-Minuten-Schritten" else "Reanalyse in Stundenschritten",
-    )
+    Quiet(OpenMeteo.ATTRIBUTION)
 }
 
 @Composable
@@ -654,7 +640,6 @@ private fun ChartsCard(d: SessionDetail, peakHr: Int, cursorMs: Long?, onCursor:
         "Verlauf",
         Figure.CHART,
         modifier,
-        trailing = { if (cursorMs == null) Quiet("Zum Ablesen wischen") },
     ) {
         if (d.elevation.size >= 2 && d.elevationStats != null) {
             ChartTitle("Höhe", "${Format.elevation(d.elevation.minOf { it.altM })} – ${Format.elevation(d.elevation.maxOf { it.altM })}")
@@ -666,7 +651,7 @@ private fun ChartsCard(d: SessionDetail, peakHr: Int, cursorMs: Long?, onCursor:
                 onScrub = { dist -> Analysis.atDistance(d.moments, dist)?.let { onCursor(it.activeMs) } },
             )
         } else {
-            Quiet("Kein Höhenprofil: die Uhr hat keine Höhe geliefert.")
+            Quiet("Kein Höhenprofil")
         }
         if (d.speed.size >= 2 && d.speedStats != null) {
             Spacer(Modifier.height(10.dp))

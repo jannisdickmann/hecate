@@ -89,12 +89,7 @@ fun RoutesContent(
     onOpen: (Long) -> Unit,
 ) {
     if (routes.isEmpty() && !clustering) {
-        Empty(
-            "Noch keine Routen",
-            "Eine Route entsteht, sobald drei ähnliche Aufzeichnungen vorliegen. " +
-                "Bis dahin hilft der TCX-Import unter „Einstellungen“.",
-            Figure.ROUTE,
-        )
+        Empty("Noch keine Routen", Figure.ROUTE)
         return
     }
     Column(Modifier.fillMaxSize()) {

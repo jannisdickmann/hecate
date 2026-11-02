@@ -134,7 +134,7 @@ class ScreenshotTest {
     private val members = Synthetic.routeDurations(session.activeDurationMs).mapIndexed { i, ms ->
         SessionSummary(
             "m$i", Synthetic.START_UTC - i * 4 * 86_400_000L - (i % 3) * 3_600_000L, Synthetic.TZ,
-            ExerciseType.RUNNING, ms, session.totalDistanceM, session.source, 1, 7, "Mainufer-Runde",
+            ExerciseType.RUNNING, ms, session.totalDistanceM, session.source, 1, 7, "Flussufer-Runde",
             avgHr = 132.0 + (i * 5 % 14),
             weatherCode = listOf(1, 3, 61, 0, 2, 80, 3)[i % 7], tempMaxC = 8.0 + i % 9, weatherIsDay = true,
         )
@@ -145,7 +145,7 @@ class ScreenshotTest {
     private val now = Synthetic.START_UTC + 3 * 3_600_000L
 
     private fun buildRouteDetail() = RouteDetail(
-        id = 7, name = "Mainufer-Runde", exerciseType = ExerciseType.RUNNING, lengthM = session.totalDistanceM,
+        id = 7, name = "Flussufer-Runde", exerciseType = ExerciseType.RUNNING, lengthM = session.totalDistanceM,
         memberCount = members.size, geometry = detail.geometry.filterIndexed { i, _ -> i % 4 == 0 },
         medianDurationMs = members.map { it.activeDurationMs }.sorted().let { (it[6] + it[7]) / 2 },
         bestDurationMs = members.minOf { it.activeDurationMs }, worstDurationMs = members.maxOf { it.activeDurationMs },
@@ -155,9 +155,9 @@ class ScreenshotTest {
     )
 
     private val routes = listOf(
-        RouteSummary(7, "Mainufer-Runde", ExerciseType.RUNNING, 8_240.0, 14, 2_798_000, 2_481_000, 1, false),
+        RouteSummary(7, "Flussufer-Runde", ExerciseType.RUNNING, 8_240.0, 14, 2_798_000, 2_481_000, 1, false),
         RouteSummary(8, "Zur Arbeit", ExerciseType.BIKING, 12_600.0, 31, 1_706_000, 1_552_000, 0, false),
-        RouteSummary(9, "Wilhelmsbad", ExerciseType.WALKING, 4_100.0, 9, 2_950_000, 2_701_000, 0, false),
+        RouteSummary(9, "Parkrunde", ExerciseType.WALKING, 4_100.0, 9, 2_950_000, 2_701_000, 0, false),
         RouteSummary(10, "Kinzig-Damm", ExerciseType.RUNNING, 11_900.0, 4, 3_930_000, 3_801_000, 0, false),
         RouteSummary(11, "Hohe Straße", ExerciseType.HIKING, 15_300.0, 1, 13_200_000, 13_200_000, 0, true),
     )

@@ -141,11 +141,6 @@ fun SettingsContent(state: SettingsState, actions: SettingsActions) {
         SectionCard("Belastung", Figure.HEART, Modifier.appear(1)) { PeakHrField(state.peakHr, actions.onPeakHr) }
         SectionCard("Routen", Figure.ROUTE, Modifier.appear(2)) {
             Text("Routen neu berechnen", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            Quiet(
-                "Gruppiert alle Aufzeichnungen neu zu Routen. Nötig nach dem Einlesen einer Sicherung oder " +
-                    "nach vielen Importen; sonst läuft es nach jeder neuen Aufzeichnung von selbst.",
-            )
             Spacer(Modifier.height(12.dp))
             if (state.clustering) {
                 // Gone while the work runs rather than disabled: the job is
@@ -168,14 +163,9 @@ fun SettingsContent(state: SettingsState, actions: SettingsActions) {
             SwitchRow(
                 "Nach Health Connect schreiben",
                 when (hc) {
-                    HealthConnectState.CONNECTED ->
-                        "Abgeschlossene Aufzeichnungen erscheinen in Google Health. Ausschalten entzieht die " +
-                            "Berechtigung; bereits geschriebene Einträge bleiben dort bestehen."
-                    HealthConnectState.DISCONNECTED ->
-                        "Aus. Einschalten fragt die Berechtigung ab — das muss Android selbst tun, die App " +
-                            "kann sie sich nicht geben."
-                    HealthConnectState.UPDATE_REQUIRED -> "Health Connect ist zu alt und muss erst aktualisiert werden."
-                    HealthConnectState.UNAVAILABLE -> "Health Connect ist auf diesem Gerät nicht verfügbar."
+                    HealthConnectState.CONNECTED, HealthConnectState.DISCONNECTED -> null
+                    HealthConnectState.UPDATE_REQUIRED -> "Health Connect muss aktualisiert werden"
+                    HealthConnectState.UNAVAILABLE -> "Nicht verfügbar"
                 },
                 checked = hc == HealthConnectState.CONNECTED,
                 enabled = hc == HealthConnectState.CONNECTED || hc == HealthConnectState.DISCONNECTED,
@@ -184,24 +174,11 @@ fun SettingsContent(state: SettingsState, actions: SettingsActions) {
         }
         SectionCard("Karte", Figure.MOUNTAIN, Modifier.appear(4)) { MapDataSettings(state, actions) }
         SectionCard("Daten", Figure.SPLITS, Modifier.appear(5)) {
-            SettingsAction(
-                "TCX importieren",
-                "Liest Trainings aus einem Google-Health-Export ein, damit Routen sofort gelernt werden statt erst nach drei neuen Läufen.",
-                actions.onPickTcx,
-            )
+            SettingsAction("TCX importieren", actions.onPickTcx)
             SettingsDivider()
-            SettingsAction(
-                "Sicherung exportieren",
-                "Schreibt die gesamte Datenbank in eine Datei. Namen und Prioritäten sind das Einzige darin, was sonst nirgends steht.",
-                actions.onExportArchive,
-            )
+            SettingsAction("Sicherung exportieren", actions.onExportArchive)
             SettingsDivider()
-            SettingsAction(
-                "Sicherung einlesen",
-                "Führt eine Sicherung mit dem zusammen, was schon da ist. Vorhandenes bleibt unangetastet. " +
-                    "Danach lohnt sich „Routen neu berechnen“.",
-                actions.onRestoreArchive,
-            )
+            SettingsAction("Sicherung einlesen", actions.onRestoreArchive)
         }
         SectionCard("Version", Figure.UPDATE, Modifier.appear(6)) { UpdateSettings(state.updates, actions) }
         Spacer(Modifier.height(24.dp))
@@ -228,7 +205,7 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
     SettingsDivider()
     VersionRow(
         "Uhr",
-        status.watch?.name ?: "noch nicht gemeldet",
+        status.watch?.name ?: "unbekannt",
         status.watchUpdate ?: status.latestWatch.takeIf { status.watch == null },
         upToDate = status.checkedAtUtcMs != null && status.watch != null,
         onOpen = { uri.openUri(it) },
@@ -238,10 +215,10 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
         Quiet(
             when {
                 status.checking -> "Wird geprüft…"
-                status.failed -> "GitHub war nicht erreichbar. Nächster Versuch beim nächsten Start oder morgen."
-                status.checkedAtUtcMs != null -> "Zuletzt geprüft: ${Format.dateTime(status.checkedAtUtcMs, localOffsetMinutes(status.checkedAtUtcMs))}. Gefragt wird GitHub, " +
-                    "einmal am Tag und bei jedem Start; gesendet wird dabei nichts über dich."
-                else -> "Gefragt wird GitHub, einmal am Tag und bei jedem Start; gesendet wird dabei nichts über dich."
+                status.failed -> "Prüfung fehlgeschlagen"
+                status.checkedAtUtcMs != null ->
+                    "Geprüft: ${Format.dateTime(status.checkedAtUtcMs, localOffsetMinutes(status.checkedAtUtcMs))}"
+                else -> ""
             },
             Modifier.weight(1f),
         )
@@ -273,7 +250,7 @@ private fun VersionRow(device: String, installed: String, update: AvailableUpdat
         }
         if (update != null) {
             Spacer(Modifier.width(12.dp))
-            FilledTonalButton(onClick = { onOpen(update.pageUrl) }) { Text("Öffnen") }
+            FilledTonalButton(onClick = { onOpen(update.downloadUrl) }) { Text("Laden") }
         }
     }
 }
@@ -288,7 +265,7 @@ private fun WeatherSettings(state: SettingsState, actions: SettingsActions, modi
     SectionCard("Wetter", Figure.WEATHER, modifier) {
         SwitchRow(
             "Wetter zu Aufzeichnungen holen",
-            "Alle 10 Minuten Wettersymbol, Temperatur und Niederschlag, nachträglich von Open-Meteo.",
+            null,
             checked = state.weatherEnabled,
             onChange = actions.onWeather,
         )
@@ -303,34 +280,23 @@ private fun WeatherSettings(state: SettingsState, actions: SettingsActions, modi
             Spacer(Modifier.height(6.dp))
             Quiet(
                 "${state.weatherCount} von ${state.sessionCount} Aufzeichnungen mit Wetter" +
-                    when {
-                        state.weatherRunning -> " · wird geholt…"
-                        !state.weatherEnabled -> ""
-                        state.weatherCount < state.sessionCount -> " · der Rest folgt, sobald das Telefon online ist"
-                        else -> ""
-                    },
+                    if (state.weatherRunning) " · wird geholt…" else "",
             )
         }
-        Spacer(Modifier.height(12.dp))
-        Box(
-            Modifier.fillMaxWidth().clip(HecateDesign.InnerShape)
-                .background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
-        ) {
-            Quiet(
-                "Gesendet werden nur das Datum und auf etwa 2 km gerundete Orte — nie eine Uhrzeit, " +
-                    "nie die Spur selbst. ${OpenMeteo.ATTRIBUTION}.",
-            )
-        }
+        Spacer(Modifier.height(8.dp))
+        Quiet(OpenMeteo.ATTRIBUTION)
     }
 }
 
 @Composable
-private fun SwitchRow(title: String, body: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(title: String, body: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(2.dp))
-            Quiet(body)
+            if (body != null) {
+                Spacer(Modifier.height(2.dp))
+                Quiet(body)
+            }
         }
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
@@ -352,7 +318,7 @@ private fun MapDataSettings(state: SettingsState, actions: SettingsActions) {
     Text("Kartendaten", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(2.dp))
     if (stats.isEmpty) {
-        Quiet("Noch keine Kartendaten. Streckenbilder werden auf leerem Grund gezeichnet; beim Öffnen einer Strecke lädt die App die Umgebung nach.")
+        Quiet("Noch keine Kartendaten")
     } else {
         Quiet(
             buildString {
@@ -386,24 +352,18 @@ private fun MapDataSettings(state: SettingsState, actions: SettingsActions) {
             if (!running.running) TextButton(onClick = { actions.onPrefetchMap(true) }) { Text("Jetzt starten") }
         }
     } else {
-        SettingsAction(
-            "Karte vorladen",
-            "Lädt die Umgebung aller Aufzeichnungen im Hintergrund, nur über WLAN. Danach funktioniert die Karte auch ohne Empfang.",
-            { actions.onPrefetchMap(false) },
-        )
+        SettingsAction("Karte vorladen", { actions.onPrefetchMap(false) })
     }
     SettingsDivider()
-    SettingsAction("Karte einlesen", "Übernimmt eine am Rechner erzeugte Kartendatei, statt sie hier zu laden.", actions.onImportMap)
+    SettingsAction("Karte einlesen", actions.onImportMap)
     if (!stats.isEmpty) {
         SettingsDivider()
-        SettingsAction("Karte löschen", "Entfernt alle Kartendaten. Die Aufzeichnungen bleiben unberührt.", { confirmDelete = true })
+        SettingsAction("Karte löschen", { confirmDelete = true })
     }
     if (confirmDelete) {
         ConfirmDialog(
             title = "Kartendaten löschen?",
-            body = "${plural(stats.tiles, "Kachel", "Kacheln")}, ${Format.fileSize(stats.bytes)}. Streckenbilder " +
-                "werden danach wieder auf leerem Grund gezeichnet. Aufzeichnungen, Routen und Namen bleiben " +
-                "unberührt, und die Karte lässt sich jederzeit neu laden.",
+            body = "${plural(stats.tiles, "Kachel", "Kacheln")}, ${Format.fileSize(stats.bytes)}",
             confirm = "Löschen",
             onConfirm = { confirmDelete = false; actions.onDeleteMap() },
             onDismiss = { confirmDelete = false },
@@ -428,8 +388,6 @@ private fun PeakHrField(current: Int, onChange: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("Maximalpuls", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(2.dp))
-            Quiet("Der eigene Höchstwert, nicht „220 minus Alter“. Grundlage aller Belastungsfarben.")
         }
         Spacer(Modifier.width(12.dp))
         OutlinedTextField(
@@ -467,18 +425,14 @@ private fun PeakHrField(current: Int, onChange: (Int) -> Unit) {
     }
 }
 
-/** A named action with a sentence saying what it does, the whole row tappable. */
+/** A named action, the whole row tappable. */
 @Composable
-private fun SettingsAction(title: String, body: String, onClick: () -> Unit) {
+private fun SettingsAction(title: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(HecateDesign.InnerShape).clickable(onClick = onClick).padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(2.dp))
-            Quiet(body)
-        }
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).padding(vertical = 6.dp))
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,

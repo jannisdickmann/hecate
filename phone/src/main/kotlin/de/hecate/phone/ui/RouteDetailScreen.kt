@@ -41,7 +41,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.hecate.core.Tuning
 import de.hecate.core.weather.WeatherCode
 import de.hecate.phone.db.SessionSummary
 import kotlin.math.abs
@@ -140,10 +139,7 @@ fun RouteDetailContent(d: RouteDetail, peakHr: Int, actions: RouteActions) {
             PriorityPicker(d.priority, actions.onPriority)
             if (d.temporary) {
                 Spacer(Modifier.height(12.dp))
-                Quiet(
-                    "Vorläufige Route aus einer Aufzeichnung. Passende Aufzeichnungen werden ihr zugeordnet; " +
-                        "ab ${Tuning.MIN_MEMBERS} zusammenpassenden wird daraus eine normale Route.",
-                )
+                Quiet("Vorläufige Route")
                 d.seedSessionId?.let { seed ->
                     TextButton(onClick = { actions.onDropTemporary(seed) }) { Text("Vorläufige Route aufheben") }
                 }

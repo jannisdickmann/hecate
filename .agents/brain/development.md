@@ -109,6 +109,14 @@ Lessons the layers have taught, each with its record:
   been discarding recordings
   ([A.26](decisions/2026-09-16-heart-rate-is-its-own-series.md)).
 
+## UI text
+
+Short labels, values and status words only — at best none. No sentence on a
+screen or in a notification explains the app's inner workings (what is sent
+where, what runs in the background, why a control exists); that belongs here
+and in the code. Legal attributions stay. Decided 2026-11-02, after the
+settings panel had grown a paragraph under every control (`CLAUDE.md`).
+
 ## Where shared code lives
 
 A cleanup on 2026-10-10 replaced the copies across the three modules with one
@@ -239,7 +247,7 @@ How it works, and why it is shaped this way:
   `XScreen(vm)` that collects flows and a `XContent(state, actions)` that
   draws; the harness calls the `Content`. A screen that reads the view model
   inside its drawing cannot be rendered here — keep the split when adding one.
-- **Synthetic data, no randomness** (`Synthetic.kt`): a 10 km loop at Hanau
+- **Synthetic data, no randomness** (`Synthetic.kt`): a 10 km loop in a city
   with a hill, surges, a stop at a light and a shower; sixty history rows;
   three heatmap routes. Same pictures every run, so two runs can be compared.
   The recording detail goes through `SessionDetailBuilder` — the app's own

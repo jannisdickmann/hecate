@@ -285,7 +285,7 @@ fun ActivityBadge(type: ExerciseType, size: Dp = 44.dp) {
 
 /** The centred, friendly text of a screen that has nothing to show yet. */
 @Composable
-fun Empty(title: String, text: String, figure: Figure = Figure.ROUTE) {
+fun Empty(title: String, figure: Figure = Figure.ROUTE) {
     Box(Modifier.fillMaxSize().padding(40.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             FigureBadge(
@@ -296,13 +296,6 @@ fun Empty(title: String, text: String, figure: Figure = Figure.ROUTE) {
             )
             Spacer(Modifier.height(20.dp))
             Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
         }
     }
 }

@@ -73,12 +73,7 @@ fun RecordingsContent(
     nowUtcMs: Long = System.currentTimeMillis(),
 ) {
     if (all.isEmpty()) {
-        Empty(
-            "Noch keine Aufzeichnungen",
-            "Was die Uhr aufnimmt, erscheint hier automatisch. Unter „Einstellungen“ lassen " +
-                "sich TCX-Dateien aus Google Health einlesen, damit Routen sofort gelernt werden.",
-            Figure.ROUTE,
-        )
+        Empty("Noch keine Aufzeichnungen", Figure.ROUTE)
         return
     }
     val months = remember(sessions) {

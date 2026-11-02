@@ -117,12 +117,6 @@ internal fun ActivityTypeDialog(
                         Text(type.label, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Quiet(
-                    "Routen werden je Art getrennt gebildet, deshalb werden sie neu berechnet. " +
-                        "Das neue Bündel geht an die Uhr, der Eintrag in Health Connect wird " +
-                        "überschrieben.",
-                )
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
@@ -194,8 +188,6 @@ internal fun PriorityPicker(current: Int, onChange: (Int) -> Unit) {
                 ) { Text(Format.priority(v)) }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Quiet("Entscheidet nur zwischen Routen, die sich denselben Weg teilen.")
     }
 }
 
