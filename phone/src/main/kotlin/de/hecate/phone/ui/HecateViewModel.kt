@@ -362,6 +362,9 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
 
     fun checkForUpdates() = viewModelScope.launch { AppGraph.updates.check() }
 
+    /** A watch release, downloaded here and sent to the watch (A.35). */
+    fun sendToWatch(apkUrl: String) = Jobs.enqueueWatchInstall(getApplication(), apkUrl)
+
     fun setWeatherEnabled(on: Boolean) = viewModelScope.launch {
         db.meta().put(MetaEntity(Settings.WEATHER_ENABLED, if (on) "1" else "0"))
         if (on) Jobs.enqueueWeather(getApplication())

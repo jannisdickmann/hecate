@@ -72,6 +72,7 @@ gone).
 - A watch running a build older than this change never reports its version;
   the phone then does not notify about the watch, and the Settings card shows
   the newest watch release with "noch nicht gemeldet" instead.
-- Installing on the watch is still `adb` over wireless debugging; the release
+- (Superseded in part by [A.35](2026-11-02-watch-updates-sent-from-the-phone.md):
+  the phone now sends the APK to the watch.) Installing on the watch is still `adb` over wireless debugging; the release
   page is where the APK comes from, not a way to install it.
 - NFR-7 gains a third use of the phone's network.

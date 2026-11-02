@@ -76,6 +76,26 @@ class UpdateRepositoryTest {
         val watch = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.WATCH))
         assertEquals("Update für Uhr: 1.0.4", watch.extras.getString("android.title"))
         assertEquals("Installiert: 1.0.3", watch.extras.getString("android.text"))
+        // The watch's tap sends the APK to the watch rather than opening it here.
+        val send = shadowOf(watch.contentIntent)
+        assertTrue(watch.contentIntent.isBroadcast)
+        assertEquals(WatchInstallReceiver::class.java.name, send.savedIntent.component?.className)
+        assertEquals(
+            "https://github.com/jannisdickmann/hecate/releases/download/wear-v1.0.4/hecate-wear-v1.0.4.apk",
+            send.savedIntent.getStringExtra(WatchInstallReceiver.EXTRA_URL),
+        )
+    }
+
+    @Test
+    fun `tapping the watch's notification queues the transfer to the watch`() {
+        Fixtures.workManager(context)
+        WatchInstallReceiver().onReceive(
+            context,
+            android.content.Intent().putExtra(WatchInstallReceiver.EXTRA_URL, "https://example.invalid/w.apk"),
+        )
+        val work = androidx.work.WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(de.hecate.phone.work.Jobs.WATCH_INSTALL).get()
+        assertEquals(1, work.size)
     }
 
     @Test

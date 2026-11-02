@@ -24,4 +24,5 @@ object Wire {
     const val PATH_WATCH_VERSION = "/hecate/watch-version"
     const val KEY_VERSION_CODE = "versionCode"
     const val KEY_VERSION_NAME = "versionName"
+    const val PATH_APK = "/hecate/apk"
 }

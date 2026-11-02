@@ -220,9 +220,16 @@ has no network — but tells the phone its version over the Data Layer.
 
 - Phone: open the release page on the phone, download the APK, install it over
   the existing app.
-- Watch: download the APK from the release page, then over wireless debugging
-  (*Testing on the wrist*): `adb -s <watch> install -r hecate-wear-1.0.<n>.apk`.
-  Let the watch upload its sessions first.
+- Watch: tap the notification on the phone (or **Auf Uhr** in Settings →
+  Version). The phone downloads the APK and sends it to the watch, which shows
+  a notification; tap it there and confirm
+  ([A.35](.agents/brain/decisions/2026-11-02-watch-updates-sent-from-the-phone.md)).
+  Not during a recording. Once, allow Hecate to install unknown apps on the
+  watch; if the watch has no screen for that:
+  `adb -s <watch> shell appops set de.hecate REQUEST_INSTALL_PACKAGES allow`.
+  A build older than this feature cannot receive an update; install that one
+  with `adb -s <watch> install -r hecate-wear-1.0.<n>.apk` over wireless
+  debugging (*Testing on the wrist*).
 
 **A local build cannot replace a released one**: it is `versionCode` 1, and
 Android refuses a downgrade without an uninstall — which on the watch costs every

@@ -169,6 +169,10 @@ the database and in every backup and the rule can change without a migration.
   the data item `/hecate/watch-version`, so the phone can tell whether the
   watch is behind the newest release
   ([A.34](decisions/2026-11-01-updates-from-github-releases.md)).
+- `WatchUpdate` / `UpdateActivity` — receive a newer build of this app from the
+  phone over a channel, keep it only if it is this package, newer and signed
+  with the same key, and install it on a tap, never during a recording
+  ([A.35](decisions/2026-11-02-watch-updates-sent-from-the-phone.md)).
 - `SampleFeed` — where `ExerciseSource` stands; a debug-only implementation
   replays a stored session into the recorder
   ([A.28](decisions/2026-09-13-replaying-an-activity-into-the-recorder.md)).
@@ -239,6 +243,9 @@ backup archive and for replay fixtures.
   every start and when the watch reports a new build; one notification per
   release, and the **Version** card in Settings
   ([A.34](decisions/2026-11-01-updates-from-github-releases.md)).
+  `WatchInstaller` / `WatchInstallWorker` download a watch release and send it
+  to the watch over a Data Layer channel
+  ([A.35](decisions/2026-11-02-watch-updates-sent-from-the-phone.md)).
 - Basemap tile store under `filesDir/karte/`, outside Room so that a map never
   enters a backup ([A.29](decisions/2026-09-20-osm-basemap-under-every-track.md)).
 - UI: **Aufzeichnungen** list → **Recording detail**; **Routes** list →
