@@ -18,14 +18,18 @@ enum class UpdateTarget(val tagPrefix: String) {
     WATCH("wear-v"),
 }
 
-/** A release newer than what is installed. [pageUrl] is the GitHub release
- *  page, where the APK is downloaded from. */
+/** A release newer than what is installed: [apkUrl] downloads the APK
+ *  directly, [pageUrl] is the release page, for a release without one. */
 data class AvailableUpdate(
     val target: UpdateTarget,
     val versionName: String,
     val versionCode: Long,
     val pageUrl: String,
-)
+    val apkUrl: String? = null,
+) {
+    /** Where a tap goes: the APK itself, as in Nexus. */
+    val downloadUrl: String get() = apkUrl ?: pageUrl
+}
 
 /**
  * Hecate is sideloaded from GitHub Releases (A.34), so nothing tells an
@@ -49,6 +53,13 @@ object Releases {
         @SerialName("html_url") val htmlUrl: String,
         val draft: Boolean = false,
         val prerelease: Boolean = false,
+        val assets: List<Asset> = emptyList(),
+    )
+
+    @Serializable
+    data class Asset(
+        val name: String,
+        @SerialName("browser_download_url") val downloadUrl: String,
     )
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -61,7 +72,13 @@ object Releases {
             .filter { !it.draft && !it.prerelease && it.tagName.startsWith(target.tagPrefix) }
             .mapNotNull { r ->
                 versionCodeOf(r.tagName, target)?.let {
-                    AvailableUpdate(target, r.tagName.removePrefix(target.tagPrefix), it, r.htmlUrl)
+                    AvailableUpdate(
+                        target,
+                        r.tagName.removePrefix(target.tagPrefix),
+                        it,
+                        r.htmlUrl,
+                        r.assets.firstOrNull { a -> a.name.endsWith(".apk") }?.downloadUrl,
+                    )
                 }
             }
             .maxByOrNull { it.versionCode }

@@ -16,10 +16,8 @@ import de.hecate.core.update.UpdateTarget
 import de.hecate.phone.R
 
 /**
- * One notification per target, tapping it opens the GitHub release page in the
- * browser, where the APK is one tap away. For the watch that page is where the
- * APK is downloaded to be installed with `adb` — the watch has no browser to
- * open it in, which is also why the watch never shows this itself.
+ * One notification per target; tapping it downloads the APK, as Nexus does.
+ * The watch never shows this itself: it has no network and no browser.
  */
 open class UpdateNotifier(private val context: Context) {
 
@@ -35,7 +33,7 @@ open class UpdateNotifier(private val context: Context) {
         val open = PendingIntent.getActivity(
             context,
             update.target.ordinal,
-            Intent(Intent.ACTION_VIEW, update.pageUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(Intent.ACTION_VIEW, update.downloadUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val (title, text) = wording(update, installed)
@@ -43,8 +41,7 @@ open class UpdateNotifier(private val context: Context) {
             .setSmallIcon(R.drawable.ic_stat_hecate)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setContentIntent(open)
+                        .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .build()
@@ -59,16 +56,8 @@ open class UpdateNotifier(private val context: Context) {
         fun notificationId(target: UpdateTarget) = 7_100 + target.ordinal
 
         fun wording(update: AvailableUpdate, installed: InstalledVersion?): Pair<String, String> {
-            val now = installed?.let { " Installiert ist ${it.name}." }.orEmpty()
-            return when (update.target) {
-                UpdateTarget.PHONE ->
-                    "Hecate ${update.versionName} für das Telefon" to
-                        "Eine neue Version ist da.$now Tippen öffnet sie auf GitHub."
-                UpdateTarget.WATCH ->
-                    "Hecate ${update.versionName} für die Uhr" to
-                        "Eine neue Version für die Uhr ist da.$now Tippen öffnet sie auf GitHub; " +
-                        "installiert wird sie mit adb."
-            }
+            val device = if (update.target == UpdateTarget.PHONE) "Telefon" else "Uhr"
+            return "Update für $device: ${update.versionName}" to (installed?.let { "Installiert: ${it.name}" } ?: "")
         }
 
         fun ensureChannel(context: Context) {

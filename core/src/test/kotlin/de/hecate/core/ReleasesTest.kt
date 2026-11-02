@@ -23,6 +23,17 @@ class ReleasesTest {
     }
 
     @Test
+    fun `a tap goes to the APK itself, or to the page when a release has none`() {
+        val phone = assertNotNull(Releases.latest(releases, UpdateTarget.PHONE))
+        assertEquals(
+            "https://github.com/jannisdickmann/hecate/releases/download/phone-v1.0.14/hecate-phone-1.0.14.apk",
+            phone.downloadUrl,
+        )
+        val watch = assertNotNull(Releases.latest(releases, UpdateTarget.WATCH))
+        assertEquals(watch.pageUrl, watch.downloadUrl)
+    }
+
+    @Test
     fun `drafts and prereleases are never offered`() {
         // phone-v1.0.20 is a draft, wear-v1.0.21 a prerelease.
         assertEquals(14, Releases.latest(releases, UpdateTarget.PHONE)?.versionCode)

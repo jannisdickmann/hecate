@@ -40,7 +40,8 @@ class UpdateRepositoryTest {
     fun tearDown() = db.close()
 
     private fun releases(vararg tags: String) = tags.joinToString(",", "[", "]") { tag ->
-        """{"tag_name":"$tag","html_url":"https://github.com/jannisdickmann/hecate/releases/tag/$tag","draft":false,"prerelease":false}"""
+        """{"tag_name":"$tag","html_url":"https://github.com/jannisdickmann/hecate/releases/tag/$tag","draft":false,"prerelease":false,""" +
+            """"assets":[{"name":"hecate-$tag.apk","browser_download_url":"https://github.com/jannisdickmann/hecate/releases/download/$tag/hecate-$tag.apk"}]}"""
     }
 
     private fun repo(
@@ -67,14 +68,14 @@ class UpdateRepositoryTest {
         assertEquals(2, posted().size)
 
         val phone = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.PHONE))
-        assertEquals("Hecate 1.0.6 für das Telefon", phone.extras.getString("android.title"))
+        assertEquals("Update für Telefon: 1.0.6", phone.extras.getString("android.title"))
         val tap = shadowOf(phone.contentIntent).savedIntent
         assertEquals(Intent.ACTION_VIEW, tap.action)
-        assertEquals("https://github.com/jannisdickmann/hecate/releases/tag/phone-v1.0.6", tap.dataString)
+        assertEquals("https://github.com/jannisdickmann/hecate/releases/download/phone-v1.0.6/hecate-phone-v1.0.6.apk", tap.dataString)
 
         val watch = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.WATCH))
-        assertEquals("Hecate 1.0.4 für die Uhr", watch.extras.getString("android.title"))
-        assertTrue(watch.extras.getString("android.text")!!.contains("Installiert ist 1.0.3"))
+        assertEquals("Update für Uhr: 1.0.4", watch.extras.getString("android.title"))
+        assertEquals("Installiert: 1.0.3", watch.extras.getString("android.text"))
     }
 
     @Test
