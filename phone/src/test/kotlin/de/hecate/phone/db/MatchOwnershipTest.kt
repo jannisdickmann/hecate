@@ -59,7 +59,7 @@ class MatchOwnershipTest {
 
     @Test
     fun `only members of an active route keep a route`(): Unit = runBlocking {
-        val commute = db.routes().insert(route("Arbeit zurück Baiersdorf", active = true))
+        val commute = db.routes().insert(route("Arbeit zurück Dorf", active = true))
         val retired = db.routes().insert(route("Arbeit zurück", active = false))
         db.sessions().insert(session("member", commute))
         db.sessions().insert(session("retired-member", retired))

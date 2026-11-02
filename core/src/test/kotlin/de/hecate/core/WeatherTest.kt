@@ -29,7 +29,7 @@ class WeatherTest {
     private fun fixture(name: String): String =
         requireNotNull(javaClass.getResource("/weather/$name")) { name }.readText()
 
-    /** A recording heading north-east from Hanau at a sample a second. */
+    /** A recording heading north-east from a city at a sample a second. */
     private fun samples(minutes: Int, lat0: Double = 50.141, lon0: Double = 8.921, step: Double = 0.00001): List<Sample> =
         (0..minutes * 60).map { s ->
             Sample(tOffsetMs = s * 1000L, activeMs = s * 1000L, lat = lat0 + s * step, lon = lon0 + s * step, altM = null, hrBpm = null)

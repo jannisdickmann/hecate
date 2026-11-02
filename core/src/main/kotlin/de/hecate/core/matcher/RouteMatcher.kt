@@ -434,7 +434,7 @@ class RouteMatcher(
      * Joined anywhere else, the route is compared from the joining point on,
      * which is the only comparison the user's day can bear. Before, it was
      * compared from the route's start: a two-kilometre ride of 18 May, begun on
-     * the last stretch of "Arbeit zurück Baiersdorf", read 42 minutes ahead
+     * the last stretch of "Arbeit zurück Dorf", read 42 minutes ahead
      * from its first minute, the route's usual time to that point counted as
      * time saved — and rides that met the route somewhere further on read the
      * time spent elsewhere as time lost.
@@ -709,7 +709,7 @@ class RouteMatcher(
      * Seniority first: the routes joined earliest — within
      * [Tuning.COMMIT_MIN_M] of the earliest — are the ones that explain the
      * most of today's ride, and only they are considered. The commute home
-     * that left "Arbeit zurück Baiersdorf" for six kilometres along the canal
+     * that left "Arbeit zurück Dorf" for six kilometres along the canal
      * and met it again after them is "Arbeit zurück Kanal" all the way, however
      * highly the user ranked the other: naming it there would claim a ride
      * that did not happen.

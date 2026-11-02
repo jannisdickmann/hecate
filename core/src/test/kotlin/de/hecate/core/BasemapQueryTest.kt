@@ -142,13 +142,13 @@ class BasemapQueryTest {
                         doubleArrayOf(b.minLon + 0.001, b.minLon + 0.02),
                     ),
                 ),
-                listOf(MapPlace(PlaceClass.CITY, LatLon(b.minLat + 0.01, b.minLon + 0.01), "Erlangen", 115_000)),
+                listOf(MapPlace(PlaceClass.CITY, LatLon(b.minLat + 0.01, b.minLon + 0.01), "Stadt", 115_000)),
                 emptyList(),
             ),
         )
         val scene = BasemapQuery.query(store, b, dpPerM = 0.2, cache = TileCache())
         assertEquals(1, scene.features.size)
-        assertEquals("Erlangen", scene.places.single().name)
+        assertEquals("Stadt", scene.places.single().name)
     }
 
     @Test

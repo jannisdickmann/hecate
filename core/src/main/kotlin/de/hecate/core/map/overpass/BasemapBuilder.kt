@@ -130,7 +130,7 @@ object BasemapBuilder {
         // Only places that actually fell inside the fetched tiles. The query
         // asks for place nodes over a box grown by 15 km — so that a city just
         // outside it still gets its label — and naming the region from that
-        // wider set called a valley north of Erlangen "Fürth".
+        // wider set named a valley after the neighbouring city.
         val largest = placesByTile.values.flatten().maxWithOrNull(
             compareBy<MapPlace> { -it.cls.rank }.thenBy { it.population },
         )?.name

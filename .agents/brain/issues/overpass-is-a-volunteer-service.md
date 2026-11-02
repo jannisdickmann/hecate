@@ -17,7 +17,7 @@ Two smaller simplifications under the same heading:
   about scenery would be worse than stale scenery. The per-tile timestamp is
   stored, so a refresh is possible when wanted; `karte --refresh` is the
   laptop-side way.
-- **Water relations are not resolved.** Lake Garda is an OSM multipolygon and
+- **Water relations are not resolved.** A large lake is an OSM multipolygon and
   member ways are treated as independent rings, so a large lake may show a seam
   and an island renders as water. Acceptable on a dim backdrop; recorded so it
   arrives as a known simplification rather than a bug report.

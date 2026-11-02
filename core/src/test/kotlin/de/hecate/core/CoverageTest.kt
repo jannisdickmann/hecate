@@ -29,19 +29,19 @@ class CoverageTest {
 
     @Test
     fun `two distant blobs are two regions, each with its margin`() {
-        val erlangen = LatLon(49.60, 11.00)
-        val garda = LatLon(45.60, 10.60)
-        val regions = Coverage.regions(blob(erlangen, 500) + blob(garda, 400))
+        val city = LatLon(49.60, 11.00)
+        val lake = LatLon(45.60, 10.60)
+        val regions = Coverage.regions(blob(city, 500) + blob(lake, 400))
 
         assertEquals(2, regions.size)
         for (r in regions) {
-            assertTrue(r.bounds.contains(if (r.bounds.contains(erlangen)) erlangen else garda))
+            assertTrue(r.bounds.contains(if (r.bounds.contains(city)) city else lake))
             // Three kilometres of margin, and then out to whole tiles — so the
             // box is at least that much bigger than the blob on every side.
             val height = (r.bounds.maxLat - r.bounds.minLat) * Geo.metersPerDegLat()
             assertTrue(height > 2 * Tuning.MAP_REGION_MARGIN_M, "region only ${height}m tall")
         }
-        assertTrue(regions.none { it.bounds.contains(erlangen) && it.bounds.contains(garda) })
+        assertTrue(regions.none { it.bounds.contains(city) && it.bounds.contains(lake) })
     }
 
     @Test

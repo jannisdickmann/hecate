@@ -204,7 +204,7 @@ object Tuning {
     /** How far [m] the user may travel while the named route does not fit —
      *  not followed, or outside [COMMIT_SEPARATION_M] of the nearest route —
      *  before it is given up. A route medoid is one past recording: a ride of
-     *  27 Apr ran a hundred metres beside "Arbeit zurück Baiersdorf" for three
+     *  27 Apr ran a hundred metres beside "Arbeit zurück Dorf" for three
      *  hundred metres and cut back across to it, and at fifty the name went
      *  out for several seconds. Leaving a route for real is reported by the
      *  deviation alert on its own terms; this only decides how long the name
@@ -905,7 +905,7 @@ object Tuning {
 
     /** Edge [m] of the grid the coverage clusterer works on. Five kilometres is
      *  well under the distance between two places a person would call different
-     *  (Erlangen and Bamberg are 50 km apart) and well over the width of any
+     *  (two neighbouring cities are 50 km apart) and well over the width of any
      *  single ride. */
     const val MAP_CLUSTER_GRID_M: Double = 5_000.0
 
@@ -914,7 +914,7 @@ object Tuning {
     const val MAP_MIN_CLUSTER_SAMPLES: Int = 25
 
     /** How far outside a region place *nodes* are still collected [m].
-     *  Bamberg's node sitting a kilometre outside the box must not cost the
+     *  A city's node sitting a kilometre outside the box must not cost the
      *  label for a city that fills the screen. */
     const val MAP_PLACE_MARGIN_M: Double = 15_000.0
 

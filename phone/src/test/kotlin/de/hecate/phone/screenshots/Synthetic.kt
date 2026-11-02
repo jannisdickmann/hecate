@@ -21,7 +21,7 @@ import kotlin.math.sin
  * Believable recordings for the screenshot harness: no fixture file, no
  * randomness — the same pictures every run, so two runs can be compared.
  *
- * The run is a 10 km loop along the Main at Hanau with a hill on the far side,
+ * The run is a 10 km loop along a river in a city with a hill on the far side,
  * three surges, a two-minute stop at a light, and a shower in the middle of it.
  */
 object Synthetic {
@@ -122,7 +122,7 @@ object Synthetic {
 
     val route = RouteEntity(
         id = 7,
-        name = "Mainufer-Runde",
+        name = "Flussufer-Runde",
         nameIsCustom = true,
         exerciseType = ExerciseType.RUNNING,
         lengthM = 8_240.0,
@@ -164,7 +164,7 @@ object Synthetic {
     /** A history for the lists: sixty recordings over four months. */
     fun history(): List<SessionSummary> {
         val types = listOf(ExerciseType.RUNNING, ExerciseType.BIKING, ExerciseType.RUNNING, ExerciseType.WALKING, ExerciseType.HIKING)
-        val routes = listOf("Mainufer-Runde" to 7L, "Zur Arbeit" to 8L, null, "Wilhelmsbad" to 9L, null)
+        val routes = listOf("Flussufer-Runde" to 7L, "Zur Arbeit" to 8L, null, "Parkrunde" to 9L, null)
         return (0 until 60).map { i ->
             val type = types[i % types.size]
             val km = when (type) {

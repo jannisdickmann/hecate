@@ -31,11 +31,11 @@ class LabelPlacerTest {
         val placed = LabelPlacer.place(
             candidates = listOf(
                 LabelCandidate(place("Kleinseebach", PlaceClass.HAMLET), 200.0, 150.0),
-                LabelCandidate(place("Erlangen", PlaceClass.CITY, 115_000), 205.0, 152.0),
+                LabelCandidate(place("Stadt", PlaceClass.CITY, 115_000), 205.0, 152.0),
             ),
             measure = measure, visible = canvas, maxLabels = 10, marginPx = 4.0,
         )
-        assertEquals(listOf("Erlangen"), placed.map { it.place.name })
+        assertEquals(listOf("Stadt"), placed.map { it.place.name })
     }
 
     @Test
@@ -59,7 +59,7 @@ class LabelPlacerTest {
     fun `a label off the canvas never suppresses a visible one`() {
         val placed = LabelPlacer.place(
             candidates = listOf(
-                LabelCandidate(place("Nürnberg", PlaceClass.CITY, 520_000), 2_000.0, 150.0),
+                LabelCandidate(place("Großstadt", PlaceClass.CITY, 520_000), 2_000.0, 150.0),
                 LabelCandidate(place("Möhrendorf", PlaceClass.VILLAGE, 4_200), 200.0, 150.0),
             ),
             measure = measure, visible = canvas, maxLabels = 10, marginPx = 4.0,
@@ -70,7 +70,7 @@ class LabelPlacerTest {
     @Test
     fun `a label straddling the edge is dropped rather than clipped`() {
         val placed = LabelPlacer.place(
-            candidates = listOf(LabelCandidate(place("Baiersdorf", PlaceClass.TOWN), 396.0, 150.0)),
+            candidates = listOf(LabelCandidate(place("Dorf", PlaceClass.TOWN), 396.0, 150.0)),
             measure = measure, visible = canvas, maxLabels = 10, marginPx = 4.0,
         )
         assertTrue(placed.isEmpty(), "a label hanging off the right edge was kept")

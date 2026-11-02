@@ -133,7 +133,7 @@ object Coverage {
      * A name for a region before anything is known about it.
      *
      * Coordinates, not a guess: nothing on this machine can turn a box into
-     * "Spessart", and a wrong name is worse than a dull one. Once the region has
+     * the name of a range of hills, and a wrong name is worse than a dull one. Once the region has
      * been fetched, [de.hecate.core.map.overpass.BasemapBuilder] replaces this
      * with the largest place inside it, which is the name a person would use.
      */

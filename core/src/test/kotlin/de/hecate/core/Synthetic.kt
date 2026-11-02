@@ -21,7 +21,7 @@ import kotlin.random.Random
  */
 object Synthetic {
 
-    val ORIGIN = LatLon(50.1333, 8.9167) // Hanau
+    val ORIGIN = LatLon(50.1333, 8.9167) // a city
 
     fun at(east: Double, north: Double): LatLon = Geo.fromLocal(ORIGIN, east, north)
 

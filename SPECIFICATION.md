@@ -1550,8 +1550,8 @@ yet — which is the reason to reject it now rather than later, because it was
 landing in the database and in every backup, and would have been waiting there
 for the first feature that did. A plausibility bound, as for heart rate.
 
-**What looked wrong and was not.** Two synthetic TCX imports near Hanau were
-left out of the heatmap; the real routes are 150 km away near Nuremberg and the
+**What looked wrong and was not.** Two synthetic TCX imports in another city were
+left out of the heatmap; the real routes are 150 km away near the home town and the
 radius is 100 km, so that is the feature working. The average-speed field on the
 watch showed "–" throughout a recording; it is the ahead/behind-against-median
 field, correctly empty without a route. And the recordings list opened partway
@@ -2550,8 +2550,8 @@ loses no information.
 
 The recordings in the real history are **not one area**. They run from 45.5 to
 50.0 °N and 7.3 to 11.9 °E, and a fixed 5 km grid with eight-connected flood fill
-puts them in **eleven** disjoint clusters — Erlangen/Nürnberg, the Spessart,
-Bamberg, four in Alsace and Baden, Innsbruck, three around Lake Garda. A single
+puts them in **eleven** disjoint clusters — the home town, a range of hills,
+a neighbouring city, four in one holiday region, one in another, three around a lake. A single
 box round all of it would be about 175,000 km²; the eleven with a 3 km margin are
 **3,334 km²**, of which 207 tiles are within 2 km of somewhere actually ridden.
 
@@ -2567,7 +2567,7 @@ moved with the data, every ride would invalidate the map.
 The plan this was built from extrapolated one urban Overpass query and warned
 that the arithmetic was its weakest part. It was, by an order of magnitude in the
 right direction. One real fetch of 156 km² of mixed town and country north of
-Erlangen, at **both** levels, came to **88 KiB stored** — about 0.56 KB/km²,
+the home town, at **both** levels, came to **88 KiB stored** — about 0.56 KB/km²,
 against an estimate of 5.5. The eleven regions should therefore be a few
 megabytes on disk rather than the 10–25 MB projected. The transfer estimate
 printed by `--dry-run` is still the plan's 44 KB/km² of urban ground and is
@@ -2792,7 +2792,7 @@ Replaying every ride showed what the user had seen on the wrist:
 
 - **A route's last stretch committed to.** Commitment needed 400 m of *session*
   travel and twenty samples of weight. The ride of 10 Oct went eleven
-  kilometres nowhere near a learned route, met "Arbeit zurück Baiersdorf" a
+  kilometres nowhere near a learned route, met "Arbeit zurück Dorf" a
   hundred metres from the front door, and committed to it there; so did three
   weekend rides. The phone then filed the ride under that route, because
   ingest takes the watch's last commitment and re-clustering never took it back.
@@ -2807,8 +2807,8 @@ Replaying every ride showed what the user had seen on the wrist:
   commitment held only while the tie did, so every commute committed to the
   ranked route at 0.4 km, let go at the first place the medoids differed, and
   then committed to whichever route had the better weight — GNSS noise. Five
-  Baiersdorf rides to work were named "Kanal" for ten kilometres, and 15 of the
-  22 Baiersdorf rides showed no route at all somewhere in the middle.
+  Dorf rides to work were named "Kanal" for ten kilometres, and 15 of the
+  22 Dorf rides showed no route at all somewhere in the middle.
 
 #### The rule now
 
@@ -2861,12 +2861,12 @@ Over the 82 non-skiing recordings of that backup, before → after: largest
 single-sample ahead/behind jump 2,330 s → 17 s; jumps over 30 s 18 → 0;
 recordings with |Δ| over ten minutes 12 → 0; recordings that belong to no route
 but had one committed 10 → 5 (the remaining five follow a commute for at least
-1.8 km); Baiersdorf rides with a gap in the middle 15 → 1. Baiersdorf rides are
-"Baiersdorf" throughout except 0.3–0.4 km where that route's medoid takes a
+1.8 km); Dorf rides with a gap in the middle 15 → 1. Dorf rides are
+"Dorf" throughout except 0.3–0.4 km where that route's medoid takes a
 side street the rides do not; Kanal rides are "Kanal" from where the ways part.
 Every Abendrunde walk is named from 100 m and committed from 400 m with no step
 above 12 s, and no leisure ride that only passes the front door is named at
-all. Two Kanal rides to work end on "Baiersdorf" for their last two kilometres,
+all. Two Kanal rides to work end on "Dorf" for their last two kilometres,
 and two rides home for their last metres: each left both variants and rejoined
 both together, which is genuinely ambiguous; the delta is unaffected.
 

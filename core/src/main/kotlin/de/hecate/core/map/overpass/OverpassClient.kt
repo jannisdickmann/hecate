@@ -156,7 +156,7 @@ class UrlOverpassClient(
  * The Overpass QL this app sends, and nothing else.
  *
  * Two statements: the ways inside the box, with their geometry, and the place
- * nodes inside a box grown by [Tuning.MAP_PLACE_MARGIN_M] — because Bamberg's
+ * nodes inside a box grown by [Tuning.MAP_PLACE_MARGIN_M] — because a city's
  * node sitting just outside a region must not cost the label for a city that
  * fills the screen.
  *

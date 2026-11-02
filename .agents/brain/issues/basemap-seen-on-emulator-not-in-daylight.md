@@ -12,7 +12,7 @@ through:
 
 - `karteinfo --svg` renders the store from its decoded tiles with the user's
   recordings in red over it — coverage and alignment, answered correctly on a real
-  fetch of the Regnitz valley north of Erlangen.
+  fetch of a river valley north of the home town.
 - The codec, viewport query, label placer, coverage clusterer, fetch planner and
   level-of-detail table are unit-tested; import, delete, a corrupt import and an
   empty store are tested under Robolectric.

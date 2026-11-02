@@ -760,7 +760,7 @@ and to a mobile plan, and it is the only way to *look* at the result:
 ./gradlew :core:run --args="karte --archive backup.zip --out map/"
 
 # One region by hand, without a backup
-./gradlew :core:run --args="karte --bbox 49.50,10.90,49.72,11.15 --out map/"
+./gradlew :core:run --args="karte --bbox <south>,<west>,<north>,<east> --out map/"
 
 # Look at it: one SVG per region, your own recordings in red over the map
 ./gradlew :core:run --args="karteinfo --store map/ --archive backup.zip --svg map/preview --stats"
