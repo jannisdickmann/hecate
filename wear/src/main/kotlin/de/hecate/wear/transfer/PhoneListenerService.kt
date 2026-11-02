@@ -2,6 +2,7 @@ package de.hecate.wear.transfer
 
 import android.util.Log
 import com.google.android.gms.tasks.Tasks
+import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -10,12 +11,14 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import de.hecate.wear.AppGraph
 import de.hecate.wear.Wire
+import de.hecate.wear.update.WatchUpdate
 import kotlinx.coroutines.runBlocking
 
 /**
  * Receives everything the phone sends: route bundles (data items, because they
- * must arrive eventually) and ingest acknowledgements (messages, because a lost
- * one is repaired by the next upload attempt).
+ * must arrive eventually), ingest acknowledgements (messages, because a lost
+ * one is repaired by the next upload attempt) and newer builds of this app
+ * (a channel, because an APK is tens of megabytes).
  */
 class PhoneListenerService : WearableListenerService() {
 
@@ -44,6 +47,13 @@ class PhoneListenerService : WearableListenerService() {
         AppGraph.bundles.store(bytes)
         AppGraph.recorder.update { it.copy(bundleVersion = version) }
         Log.i(TAG, "Routen-Bundle v$version empfangen (${bytes.size} B)")
+    }
+
+    /** A newer watch build from the phone (A.35). */
+    override fun onChannelOpened(channel: ChannelClient.Channel) {
+        if (channel.path != Wire.PATH_APK) return
+        runCatching { WatchUpdate.receive(this, channel) }
+            .onFailure { Log.e(TAG, "Update konnte nicht empfangen werden", it) }
     }
 
     override fun onMessageReceived(event: MessageEvent) {

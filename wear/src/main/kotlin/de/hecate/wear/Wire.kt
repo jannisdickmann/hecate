@@ -41,4 +41,7 @@ object Wire {
     const val PATH_WATCH_VERSION = "/hecate/watch-version"
     const val KEY_VERSION_CODE = "versionCode"
     const val KEY_VERSION_NAME = "versionName"
+
+    /** Channel path for a newer watch APK, phone → watch (A.35). */
+    const val PATH_APK = "/hecate/apk"
 }
