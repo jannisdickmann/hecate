@@ -16,8 +16,9 @@ import de.hecate.core.update.UpdateTarget
 import de.hecate.phone.R
 
 /**
- * One notification per target; tapping it downloads the APK, as Nexus does.
- * The watch never shows this itself: it has no network and no browser.
+ * One notification per target. Tapping the phone's downloads the APK, as
+ * Nexus does; tapping the watch's sends the APK to the watch (A.35), which
+ * never checks for itself: it has no network and no browser.
  */
 open class UpdateNotifier(private val context: Context) {
 
@@ -30,12 +31,24 @@ open class UpdateNotifier(private val context: Context) {
             return false
         }
         ensureChannel(context)
-        val open = PendingIntent.getActivity(
-            context,
-            update.target.ordinal,
-            Intent(Intent.ACTION_VIEW, update.downloadUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        // The phone's APK opens in the browser, which installs it; the watch's
+        // is sent to the watch (A.35), which has neither network nor browser.
+        val apk = update.apkUrl
+        val open = if (update.target == UpdateTarget.WATCH && apk != null) {
+            PendingIntent.getBroadcast(
+                context,
+                update.target.ordinal,
+                Intent(context, WatchInstallReceiver::class.java).putExtra(WatchInstallReceiver.EXTRA_URL, apk),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        } else {
+            PendingIntent.getActivity(
+                context,
+                update.target.ordinal,
+                Intent(Intent.ACTION_VIEW, update.downloadUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
         val (title, text) = wording(update, installed)
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_hecate)
@@ -50,8 +63,33 @@ open class UpdateNotifier(private val context: Context) {
         }.isSuccess
     }
 
+    enum class Transfer(val title: String, val ongoing: Boolean) {
+        SENDING("Wird an die Uhr gesendet…", true),
+        SENT("Auf der Uhr installieren", false),
+        NO_WATCH("Uhr nicht verbunden", false),
+        FAILED("Senden fehlgeschlagen", false),
+    }
+
+    /** The one notification about a transfer to the watch, replaced as it goes. */
+    open fun watchTransfer(state: Transfer) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        ensureChannel(context)
+        val builder = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_hecate)
+            .setContentTitle(state.title)
+            .setOngoing(state.ongoing)
+            .setAutoCancel(!state.ongoing)
+        if (state.ongoing) builder.setProgress(0, 0, true)
+        runCatching { NotificationManagerCompat.from(context).notify(TRANSFER_ID, builder.build()) }
+    }
+
     companion object {
         const val CHANNEL = "updates"
+        const val TRANSFER_ID = 7_199
 
         fun notificationId(target: UpdateTarget) = 7_100 + target.ordinal
 

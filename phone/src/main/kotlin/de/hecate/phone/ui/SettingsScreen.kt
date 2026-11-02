@@ -81,6 +81,7 @@ class SettingsActions(
     val onExportArchive: () -> Unit = {},
     val onRestoreArchive: () -> Unit = {},
     val onCheckUpdates: () -> Unit = {},
+    val onSendToWatch: (apkUrl: String) -> Unit = {},
 )
 
 /**
@@ -126,6 +127,7 @@ fun SettingsScreen(
             onExportArchive = onExportArchive,
             onRestoreArchive = onRestoreArchive,
             onCheckUpdates = { vm.checkForUpdates() },
+            onSendToWatch = { vm.sendToWatch(it) },
         ),
     )
 }
@@ -200,7 +202,8 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
         status.phone?.name ?: "–",
         status.phoneUpdate,
         upToDate = status.checkedAtUtcMs != null,
-        onOpen = { uri.openUri(it) },
+        action = "Laden",
+        onAction = { uri.openUri(it.downloadUrl) },
     )
     SettingsDivider()
     VersionRow(
@@ -208,7 +211,8 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
         status.watch?.name ?: "unbekannt",
         status.watchUpdate ?: status.latestWatch.takeIf { status.watch == null },
         upToDate = status.checkedAtUtcMs != null && status.watch != null,
-        onOpen = { uri.openUri(it) },
+        action = "Auf Uhr",
+        onAction = { u -> u.apkUrl?.let(actions.onSendToWatch) ?: uri.openUri(u.pageUrl) },
     )
     SettingsDivider()
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -233,7 +237,14 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
 private fun localOffsetMinutes(utcMs: Long): Int = java.util.TimeZone.getDefault().getOffset(utcMs) / 60_000
 
 @Composable
-private fun VersionRow(device: String, installed: String, update: AvailableUpdate?, upToDate: Boolean, onOpen: (String) -> Unit) {
+private fun VersionRow(
+    device: String,
+    installed: String,
+    update: AvailableUpdate?,
+    upToDate: Boolean,
+    action: String,
+    onAction: (AvailableUpdate) -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(device, style = MaterialTheme.typography.titleSmall)
@@ -250,7 +261,7 @@ private fun VersionRow(device: String, installed: String, update: AvailableUpdat
         }
         if (update != null) {
             Spacer(Modifier.width(12.dp))
-            FilledTonalButton(onClick = { onOpen(update.downloadUrl) }) { Text("Laden") }
+            FilledTonalButton(onClick = { onAction(update) }) { Text(action) }
         }
     }
 }

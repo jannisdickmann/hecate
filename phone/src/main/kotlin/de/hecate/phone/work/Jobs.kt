@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import de.hecate.phone.map.BasemapPrefetchWorker
 import java.util.concurrent.TimeUnit
 
@@ -97,6 +98,21 @@ object Jobs {
                 .build(),
         )
     }
+
+    /** Sends a watch release to the watch (A.35). REPLACE: a second tap
+     *  restarts rather than queues a second 30 MB transfer. */
+    fun enqueueWatchInstall(context: Context, apkUrl: String) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            WATCH_INSTALL,
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<WatchInstallWorker>()
+                .setInputData(workDataOf(WatchInstallWorker.KEY_URL to apkUrl))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build(),
+        )
+    }
+
+    const val WATCH_INSTALL = "hecate.update.watch"
 
     private const val UPDATE_DAILY = "hecate.update.daily"
 

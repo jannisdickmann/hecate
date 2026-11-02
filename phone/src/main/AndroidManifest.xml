@@ -82,6 +82,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- The watch-update notification's tap (A.35). -->
+        <receiver
+            android:name=".update.WatchInstallReceiver"
+            android:exported="false" />
+
         <!-- Receives session assets from the watch (§5.4). -->
         <service
             android:name=".ingest.IngestService"
