@@ -66,7 +66,8 @@ gone).
 - **A local build cannot replace a released one.** It is `versionCode` 1, and
   Android refuses a downgrade without an uninstall. Once CI builds are
   installed, either install CI builds only, or build locally with
-  `HECATE_VERSION_CODE` above the installed one.
+  `HECATE_VERSION_CODE` equal to the installed one — not above it: a code
+  higher than the next CI run number blocks every CI build until an uninstall.
 - **Do not rename `android-phone.yml` or `android-wear.yml`**: a new file name
   starts its run number at one.
 - A watch running a build older than this change never reports its version;

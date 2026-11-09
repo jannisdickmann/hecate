@@ -233,8 +233,11 @@ has no network — but tells the phone its version over the Data Layer.
 
 **A local build cannot replace a released one**: it is `versionCode` 1, and
 Android refuses a downgrade without an uninstall — which on the watch costs every
-session not yet uploaded. Once a release is installed, build locally with a
-higher code if you must: `HECATE_VERSION_CODE=9999 ./gradlew :wear:assembleRelease`.
+session not yet uploaded. Once a release is installed, build locally with the
+installed code (`adb -s <watch> shell dumpsys package de.hecate | grep versionCode`):
+`HECATE_VERSION_CODE=4 ./gradlew :wear:installRelease`. An equal code installs
+over it; a higher one, such as 9999, would block every later CI build the same
+way until an uninstall.
 
 Do not rename the two workflow files: a renamed workflow starts its run number,
 and with it the version code, at one.
