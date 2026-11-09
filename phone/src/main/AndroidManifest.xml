@@ -19,6 +19,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A.35: a watch update runs as a foreground worker, so a long transfer
+         over Bluetooth is not cut off by WorkManager's background limit. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Health Connect write permissions (§6.4: granted by hand after install). -->
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
@@ -86,6 +90,12 @@
         <receiver
             android:name=".update.WatchInstallReceiver"
             android:exported="false" />
+
+        <!-- WorkManager's foreground service, typed for the watch update (A.35). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <!-- Receives session assets from the watch (§5.4). -->
         <service

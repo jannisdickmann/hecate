@@ -51,3 +51,40 @@ with `PackageInstaller` on the watch.
   later skips the confirmation — is untested until the first real transfer.
 - An APK is ~30 MB over Bluetooth if the watch is not on Wi-Fi; minutes, not
   seconds.
+
+## Revision (same day): the first real transfer failed
+
+The phone showed "Senden fehlgeschlagen" after minutes. The watch was still
+on `wear-v1.0.4`, cut before the receiver existed: nothing there listened on
+`/hecate/apk`, so the phone's write filled the channel and blocked until the
+Data Layer gave up. Three further defects would have hit even a current
+watch:
+
+- The phone closed the channel right after its last write, which can drop
+  bytes still in flight — the watch would get a truncated APK, reject it
+  silently, and the phone would claim success.
+- WorkManager stops a background worker after ten minutes; ~30 MB over
+  Bluetooth can take longer.
+- Nothing on the watch told the phone whether the build was kept.
+
+Changed:
+
+- **The watch advertises a capability**, `hecate_apk` (`wear/res/values/
+  wear.xml`). The phone sends only to nodes that have it; a connected watch
+  without it is "Uhr-App zu alt" at once, before any download.
+- **The watch answers with the close code**: it reads to EOF, verifies, and
+  closes the channel with `APK_ACCEPTED` or `APK_REJECTED`. The phone closes
+  only its output stream and waits up to two minutes for that answer;
+  "Von der Uhr abgelehnt" means the APK arrived and failed `verify` (other
+  signing key, not newer, not this package).
+- **The transfer is a foreground worker** (`dataSync`), so the ten-minute
+  limit does not apply. If the system refuses the foreground start, it runs
+  in the background as before.
+
+Still true: a watch without the `hecate_apk` capability has to get a build
+with it by adb once. The capability check makes that visible instead of a
+long hang. `wear-v1.0.6` and `phone-v1.0.6` were cut from `main` before this
+revision: that watch build has the receiver but not the capability or the
+close-code answer, and that phone build has the old sender. The first
+release pair carrying this revision is the first to update the watch end to
+end.

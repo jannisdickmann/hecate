@@ -17,6 +17,7 @@ import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Wearable
 import de.hecate.wear.AppVersion
 import de.hecate.wear.R
+import de.hecate.wear.Wire
 import java.io.File
 
 /**
@@ -40,14 +41,17 @@ object WatchUpdate {
     fun receive(context: Context, channel: ChannelClient.Channel) {
         val client = Wearable.getChannelClient(context)
         val part = File(context.filesDir, "update.apk.part")
-        try {
+        // The close code is the phone's answer: it waits for it before saying
+        // the update arrived. A failure while reading closes with REJECTED too.
+        var code = Wire.APK_REJECTED
+        val info = try {
             Tasks.await(client.getInputStream(channel)).use { input ->
                 part.outputStream().use { input.copyTo(it) }
             }
+            verify(context, part).also { if (it != null) code = Wire.APK_ACCEPTED }
         } finally {
-            runCatching { client.close(channel) }
+            runCatching { Tasks.await(client.close(channel, code)) }
         }
-        val info = verify(context, part)
         if (info == null) {
             Log.w(TAG, "Empfangene APK abgelehnt")
             part.delete()
