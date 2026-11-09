@@ -2,9 +2,7 @@ package de.hecate.phone.work
 
 import android.content.Context
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
@@ -44,10 +42,7 @@ class WatchInstallWorker(context: Context, params: WorkerParameters) : Coroutine
                 WatchInstaller.Step.SENDING -> UpdateNotifier.Transfer.SENDING
                 WatchInstaller.Step.CHECKING -> UpdateNotifier.Transfer.CHECKING
             }
-            runCatching {
-                NotificationManagerCompat.from(applicationContext)
-                    .notify(progressId, notifier.transferNotification(state, percent))
-            }
+            UpdateNotifier.post(applicationContext, progressId, notifier.transferNotification(state, percent))
         }
         notifier.watchTransfer(
             when (outcome) {
@@ -66,11 +61,7 @@ class WatchInstallWorker(context: Context, params: WorkerParameters) : Coroutine
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notification = UpdateNotifier(applicationContext)
             .transferNotification(UpdateNotifier.Transfer.DOWNLOADING)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            ForegroundInfo(FOREGROUND_ID, notification)
-        }
+        return ForegroundInfo(FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     }
 
     companion object {

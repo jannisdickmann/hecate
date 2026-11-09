@@ -3,7 +3,6 @@ package de.hecate.phone.work
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.util.Log
-import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
@@ -46,12 +45,11 @@ class SelfUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 val percent = WatchInstaller.percent(done, total)
                 if (percent != 100 && now - lastPost < PROGRESS_INTERVAL_MS) return@download
                 lastPost = now
-                runCatching {
-                    NotificationManagerCompat.from(context).notify(
-                        progressId,
-                        notifier.transferNotification(UpdateNotifier.Transfer.DOWNLOADING, percent),
-                    )
-                }
+                UpdateNotifier.post(
+                    context,
+                    progressId,
+                    notifier.transferNotification(UpdateNotifier.Transfer.DOWNLOADING, percent),
+                )
             }
             val (verdict, info) = SelfUpdate.verify(context, apk)
             Log.i(TAG, "APK geladen (${apk.length()} B): $verdict ${info?.versionName}")

@@ -117,6 +117,16 @@ open class UpdateNotifier(private val context: Context) {
             return "Update für $device: ${update.versionName}" to (installed?.let { "Installiert: ${it.name}" } ?: "")
         }
 
+        /** Posts [notification] under [id] if Android lets it, else nothing. */
+        fun post(context: Context, id: Int, notification: Notification) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+            runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
+        }
+
         fun ensureChannel(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(CHANNEL) != null) return
