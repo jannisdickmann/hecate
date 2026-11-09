@@ -59,7 +59,7 @@ class UpdateRepositoryTest {
     private fun posted() = shadowOf(notifications).allNotifications
 
     @Test
-    fun `a newer phone and a newer watch release are each announced, and open their page`(): Unit = runBlocking {
+    fun `a newer phone and a newer watch release are each announced, and their APKs installed from the app`(): Unit = runBlocking {
         val status = repo({ releases("phone-v1.0.6", "wear-v1.0.4", "phone-v1.0.5") }).check()
 
         assertEquals(6, status.phoneUpdate?.versionCode)
@@ -69,9 +69,15 @@ class UpdateRepositoryTest {
 
         val phone = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.PHONE))
         assertEquals("Update für Telefon: 1.0.6", phone.extras.getString("android.title"))
+        // The phone's tap downloads and installs in the app (A.36).
+        assertTrue(phone.contentIntent.isBroadcast)
         val tap = shadowOf(phone.contentIntent).savedIntent
-        assertEquals(Intent.ACTION_VIEW, tap.action)
-        assertEquals("https://github.com/jannisdickmann/hecate/releases/download/phone-v1.0.6/hecate-phone-v1.0.6.apk", tap.dataString)
+        assertEquals(SelfUpdateReceiver::class.java.name, tap.component?.className)
+        assertEquals(SelfUpdateReceiver.ACTION_START, tap.action)
+        assertEquals(
+            "https://github.com/jannisdickmann/hecate/releases/download/phone-v1.0.6/hecate-phone-v1.0.6.apk",
+            tap.getStringExtra(SelfUpdateReceiver.EXTRA_URL),
+        )
 
         val watch = shadowOf(notifications).getNotification(UpdateNotifier.notificationId(UpdateTarget.WATCH))
         assertEquals("Update für Uhr: 1.0.4", watch.extras.getString("android.title"))
@@ -95,6 +101,18 @@ class UpdateRepositoryTest {
         )
         val work = androidx.work.WorkManager.getInstance(context)
             .getWorkInfosForUniqueWork(de.hecate.phone.work.Jobs.WATCH_INSTALL).get()
+        assertEquals(1, work.size)
+    }
+
+    @Test
+    fun `tapping the phone's notification queues its own update`() {
+        Fixtures.workManager(context)
+        SelfUpdateReceiver().onReceive(
+            context,
+            Intent(SelfUpdateReceiver.ACTION_START).putExtra(SelfUpdateReceiver.EXTRA_URL, "https://example.invalid/p.apk"),
+        )
+        val work = androidx.work.WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(de.hecate.phone.work.Jobs.SELF_UPDATE).get()
         assertEquals(1, work.size)
     }
 

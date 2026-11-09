@@ -114,6 +114,21 @@ object Jobs {
 
     const val WATCH_INSTALL = "hecate.update.watch"
 
+    /** Downloads and installs a phone release (A.36). REPLACE, as for the
+     *  watch: a second tap restarts the download. */
+    fun enqueueSelfUpdate(context: Context, apkUrl: String) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            SELF_UPDATE,
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<SelfUpdateWorker>()
+                .setInputData(workDataOf(SelfUpdateWorker.KEY_URL to apkUrl))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build(),
+        )
+    }
+
+    const val SELF_UPDATE = "hecate.update.phone"
+
     private const val UPDATE_DAILY = "hecate.update.daily"
 
     /** Public so the settings card can say a check is under way. */

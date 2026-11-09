@@ -23,6 +23,8 @@
          over Bluetooth is not cut off by WorkManager's background limit. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- A.36: the phone installs its own update through the system installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Health Connect write permissions (§6.4: granted by hand after install). -->
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
@@ -89,6 +91,11 @@
         <!-- The watch-update notification's tap (A.35). -->
         <receiver
             android:name=".update.WatchInstallReceiver"
+            android:exported="false" />
+
+        <!-- The phone-update notification's tap and the installer's answer (A.36). -->
+        <receiver
+            android:name=".update.SelfUpdateReceiver"
             android:exported="false" />
 
         <!-- WorkManager's foreground service, typed for the watch update (A.35). -->

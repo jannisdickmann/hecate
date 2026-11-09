@@ -246,6 +246,9 @@ backup archive and for replay fixtures.
   `WatchInstaller` / `WatchInstallWorker` download a watch release and send it
   to the watch over a Data Layer channel
   ([A.35](decisions/2026-11-02-watch-updates-sent-from-the-phone.md)).
+  `SelfUpdate` / `SelfUpdateWorker` / `SelfUpdateReceiver` download a phone
+  release and install it over this app through a `PackageInstaller` session
+  ([A.36](decisions/2026-11-09-the-phone-installs-its-own-update.md)).
 - Basemap tile store under `filesDir/karte/`, outside Room so that a map never
   enters a backup ([A.29](decisions/2026-09-20-osm-basemap-under-every-track.md)).
 - UI: **Aufzeichnungen** list → **Recording detail**; **Routes** list →

@@ -23,6 +23,7 @@ import de.hecate.core.profile.Analysis
 import de.hecate.core.profile.Elevation
 import de.hecate.core.profile.Timeline
 import de.hecate.phone.AppGraph
+import de.hecate.phone.update.SelfUpdate
 import de.hecate.phone.update.UpdateStatus
 import de.hecate.core.archive.Archive
 import de.hecate.core.weather.WeatherSummary
@@ -361,6 +362,14 @@ class HecateViewModel(app: Application) : AndroidViewModel(app) {
     val updates: StateFlow<UpdateStatus> = AppGraph.updates.status
 
     fun checkForUpdates() = viewModelScope.launch { AppGraph.updates.check() }
+
+    /** A phone release, downloaded and installed here (A.36). Without the
+     *  grant to install apps, its settings screen first. */
+    fun installPhoneUpdate(apkUrl: String) {
+        val app = getApplication<Application>()
+        if (SelfUpdate.canInstall(app)) Jobs.enqueueSelfUpdate(app, apkUrl)
+        else runCatching { app.startActivity(SelfUpdate.allowIntent(app)) }
+    }
 
     /** A watch release, downloaded here and sent to the watch (A.35). */
     fun sendToWatch(apkUrl: String) = Jobs.enqueueWatchInstall(getApplication(), apkUrl)

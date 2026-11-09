@@ -17,9 +17,9 @@ import de.hecate.core.update.UpdateTarget
 import de.hecate.phone.R
 
 /**
- * One notification per target. Tapping the phone's downloads the APK, as
- * Nexus does; tapping the watch's sends the APK to the watch (A.35), which
- * never checks for itself: it has no network and no browser.
+ * One notification per target. Tapping the phone's downloads and installs the
+ * APK in the app (A.36); tapping the watch's sends the APK to the watch
+ * (A.35), which never checks for itself: it has no network and no browser.
  */
 open class UpdateNotifier(private val context: Context) {
 
@@ -32,21 +32,28 @@ open class UpdateNotifier(private val context: Context) {
             return false
         }
         ensureChannel(context)
-        // The phone's APK opens in the browser, which installs it; the watch's
-        // is sent to the watch (A.35), which has neither network nor browser.
+        // The phone installs its own APK (A.36); the watch's is sent to the
+        // watch (A.35). A release without an APK opens its page.
         val apk = update.apkUrl
-        val open = if (update.target == UpdateTarget.WATCH && apk != null) {
+        val open = if (apk != null) {
+            val tap = when (update.target) {
+                UpdateTarget.PHONE -> Intent(context, SelfUpdateReceiver::class.java)
+                    .setAction(SelfUpdateReceiver.ACTION_START)
+                    .putExtra(SelfUpdateReceiver.EXTRA_URL, apk)
+                UpdateTarget.WATCH -> Intent(context, WatchInstallReceiver::class.java)
+                    .putExtra(WatchInstallReceiver.EXTRA_URL, apk)
+            }
             PendingIntent.getBroadcast(
                 context,
                 update.target.ordinal,
-                Intent(context, WatchInstallReceiver::class.java).putExtra(WatchInstallReceiver.EXTRA_URL, apk),
+                tap,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         } else {
             PendingIntent.getActivity(
                 context,
                 update.target.ordinal,
-                Intent(Intent.ACTION_VIEW, update.downloadUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                Intent(Intent.ACTION_VIEW, update.pageUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }
@@ -55,7 +62,7 @@ open class UpdateNotifier(private val context: Context) {
             .setSmallIcon(R.drawable.ic_stat_hecate)
             .setContentTitle(title)
             .setContentText(text)
-                        .setContentIntent(open)
+            .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .build()

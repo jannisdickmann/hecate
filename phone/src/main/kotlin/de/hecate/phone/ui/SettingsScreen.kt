@@ -82,6 +82,7 @@ class SettingsActions(
     val onRestoreArchive: () -> Unit = {},
     val onCheckUpdates: () -> Unit = {},
     val onSendToWatch: (apkUrl: String) -> Unit = {},
+    val onInstallPhoneUpdate: (apkUrl: String) -> Unit = {},
 )
 
 /**
@@ -128,6 +129,7 @@ fun SettingsScreen(
             onRestoreArchive = onRestoreArchive,
             onCheckUpdates = { vm.checkForUpdates() },
             onSendToWatch = { vm.sendToWatch(it) },
+            onInstallPhoneUpdate = { vm.installPhoneUpdate(it) },
         ),
     )
 }
@@ -202,8 +204,8 @@ private fun UpdateSettings(status: UpdateStatus, actions: SettingsActions) {
         status.phone?.name ?: "–",
         status.phoneUpdate,
         upToDate = status.checkedAtUtcMs != null,
-        action = "Laden",
-        onAction = { uri.openUri(it.downloadUrl) },
+        action = "Installieren",
+        onAction = { u -> u.apkUrl?.let(actions.onInstallPhoneUpdate) ?: uri.openUri(u.pageUrl) },
     )
     SettingsDivider()
     VersionRow(

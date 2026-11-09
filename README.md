@@ -214,12 +214,15 @@ a release signed with any other key, Nexus's included, cannot update them.
 
 **Updating.** The phone checks GitHub's releases once a day, on every start, and
 whenever the watch reports a different build, and posts a notification for each
-new phone or watch release; tapping it opens the release page. Settings →
-**Version** shows the same for as long as it is true. The watch never checks — it
+new phone or watch release. Settings → **Version** shows the same for as long
+as it is true. The watch never checks — it
 has no network — but tells the phone its version over the Data Layer.
 
-- Phone: open the release page on the phone, download the APK, install it over
-  the existing app.
+- Phone: tap the notification (or **Installieren** in Settings → Version).
+  Hecate downloads the APK and installs it over itself
+  ([A.36](.agents/brain/decisions/2026-11-09-the-phone-installs-its-own-update.md)).
+  The first time, allow Hecate to install unknown apps and confirm the
+  system's prompt; later updates may need no confirmation.
 - Watch: tap the notification on the phone (or **Auf Uhr** in Settings →
   Version). The phone downloads the APK and sends it to the watch, which shows
   a notification; tap it there and confirm
