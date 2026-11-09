@@ -108,3 +108,16 @@ Changed, phone only:
   it waits at most 30 s.
 - Each step is logged (`WatchInstaller`): download size, send duration, the
   watch's answer.
+
+Seen on the watch (Wear OS 6, Pixel Watch 4), answering the open questions
+above:
+
+- The tap on the watch notification led to the **system installer's
+  confirmation** (`STATUS_PENDING_USER_ACTION`), not to an unknown-sources
+  screen: the `REQUEST_INSTALL_PACKAGES` grant had been made by adb before.
+  The dialog has a large blank gap between its question and its button —
+  the system's layout, not `UpdateActivity`, which shows a single line.
+- Installing took seconds.
+- Still open: this install made Hecate its own installer of record, so the
+  next update may pass without the confirmation (`USER_ACTION_NOT_REQUIRED`).
+  Watch for it on the next transfer.
