@@ -65,7 +65,9 @@ open class UpdateNotifier(private val context: Context) {
     }
 
     enum class Transfer(val title: String, val ongoing: Boolean) {
+        DOWNLOADING("Wird geladen…", true),
         SENDING("Wird an die Uhr gesendet…", true),
+        CHECKING("Wird auf der Uhr geprüft…", true),
         SENT("Auf der Uhr installieren", false),
         NO_WATCH("Uhr nicht verbunden", false),
         WATCH_TOO_OLD("Uhr-App zu alt", false),
@@ -83,15 +85,17 @@ open class UpdateNotifier(private val context: Context) {
         runCatching { NotificationManagerCompat.from(context).notify(TRANSFER_ID, transferNotification(state)) }
     }
 
-    /** Also the foreground notification of the transfer's worker. */
-    fun transferNotification(state: Transfer): Notification {
+    /** Also the foreground notification of the transfer's worker. [percent]
+     *  fills the bar; null leaves it indeterminate. */
+    fun transferNotification(state: Transfer, percent: Int? = null): Notification {
         ensureChannel(context)
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_hecate)
             .setContentTitle(state.title)
             .setOngoing(state.ongoing)
             .setAutoCancel(!state.ongoing)
-        if (state.ongoing) builder.setProgress(0, 0, true)
+            .setOnlyAlertOnce(true)
+        if (state.ongoing) builder.setProgress(100, percent ?: 0, percent == null)
         return builder.build()
     }
 

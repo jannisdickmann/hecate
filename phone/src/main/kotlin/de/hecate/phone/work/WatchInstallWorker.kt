@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
@@ -22,11 +23,32 @@ class WatchInstallWorker(context: Context, params: WorkerParameters) : Coroutine
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val url = inputData.getString(KEY_URL) ?: return@withContext Result.failure()
         val notifier = UpdateNotifier(applicationContext)
+        // Progress goes on the foreground notification, or on the transfer's
+        // own one when the system refused the foreground start.
+        var progressId = FOREGROUND_ID
         runCatching { setForeground(getForegroundInfo()) }.onFailure {
             Log.w(TAG, "Kein Vordergrund für die Übertragung", it)
-            notifier.watchTransfer(UpdateNotifier.Transfer.SENDING)
+            progressId = UpdateNotifier.TRANSFER_ID
+            notifier.watchTransfer(UpdateNotifier.Transfer.DOWNLOADING)
         }
-        val outcome = WatchInstaller(applicationContext).send(url)
+        var lastStep: WatchInstaller.Step? = null
+        var lastPost = 0L
+        val outcome = WatchInstaller(applicationContext).send(url) { step, percent ->
+            // Android drops updates posted faster than a few per second.
+            val now = System.currentTimeMillis()
+            if (step == lastStep && percent != 100 && now - lastPost < PROGRESS_INTERVAL_MS) return@send
+            lastStep = step
+            lastPost = now
+            val state = when (step) {
+                WatchInstaller.Step.DOWNLOADING -> UpdateNotifier.Transfer.DOWNLOADING
+                WatchInstaller.Step.SENDING -> UpdateNotifier.Transfer.SENDING
+                WatchInstaller.Step.CHECKING -> UpdateNotifier.Transfer.CHECKING
+            }
+            runCatching {
+                NotificationManagerCompat.from(applicationContext)
+                    .notify(progressId, notifier.transferNotification(state, percent))
+            }
+        }
         notifier.watchTransfer(
             when (outcome) {
                 WatchInstaller.Outcome.SENT -> UpdateNotifier.Transfer.SENT
@@ -43,7 +65,7 @@ class WatchInstallWorker(context: Context, params: WorkerParameters) : Coroutine
      *  and the result on [UpdateNotifier.TRANSFER_ID] must stay. */
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notification = UpdateNotifier(applicationContext)
-            .transferNotification(UpdateNotifier.Transfer.SENDING)
+            .transferNotification(UpdateNotifier.Transfer.DOWNLOADING)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ForegroundInfo(FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
@@ -55,5 +77,6 @@ class WatchInstallWorker(context: Context, params: WorkerParameters) : Coroutine
         const val KEY_URL = "url"
         private const val TAG = "WatchInstallWorker"
         private const val FOREGROUND_ID = UpdateNotifier.TRANSFER_ID + 1
+        private const val PROGRESS_INTERVAL_MS = 1_000L
     }
 }

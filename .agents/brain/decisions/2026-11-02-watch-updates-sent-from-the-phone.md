@@ -88,3 +88,23 @@ revision: that watch build has the receiver but not the capability or the
 close-code answer, and that phone build has the old sender. The first
 release pair carrying this revision is the first to update the watch end to
 end.
+
+## Revision (2026-11-09): the first transfer end to end
+
+Phone `1.0.10` sent a watch release to a watch on the capability build: the
+worker ran from 21:49:07 to 21:53:32, about four and a half minutes for
+download and send together, and ended with `APK_ACCEPTED`. The watch
+notification came only at the end, and the phone showed one indeterminate
+spinner throughout — it looked like a hang.
+
+Changed, phone only:
+
+- **The notification shows the step and its progress**: "Wird geladen…" and
+  "Wird an die Uhr gesendet…" with a filling bar, then "Wird auf der Uhr
+  geprüft…" while the watch verifies. Updates at most once a second.
+- **A send that moves no byte for 60 s is given up**: a watchdog closes the
+  channel, which frees the blocked write, and the result is "Senden
+  fehlgeschlagen" instead of an endless spinner. Every Data Layer call before
+  it waits at most 30 s.
+- Each step is logged (`WatchInstaller`): download size, send duration, the
+  watch's answer.
