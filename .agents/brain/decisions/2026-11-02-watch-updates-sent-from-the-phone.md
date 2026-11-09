@@ -81,5 +81,10 @@ Changed:
   limit does not apply. If the system refuses the foreground start, it runs
   in the background as before.
 
-Still true: a watch on 1.0.4 or older has to get `wear-v1.0.6` or later by
-adb once. The capability check makes that visible instead of a long hang.
+Still true: a watch without the `hecate_apk` capability has to get a build
+with it by adb once. The capability check makes that visible instead of a
+long hang. `wear-v1.0.6` and `phone-v1.0.6` were cut from `main` before this
+revision: that watch build has the receiver but not the capability or the
+close-code answer, and that phone build has the old sender. The first
+release pair carrying this revision is the first to update the watch end to
+end.
